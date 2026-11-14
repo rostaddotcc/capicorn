@@ -1,0 +1,40 @@
+[package]
+name = "capicorn"
+version = "0.1.0"
+description = "Open-source Snagit-style screen capture and annotation"
+authors = ["rostad"]
+license = "MIT"
+edition = "2021"
+
+[lib]
+name = "capicorn_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+base64 = "0.22"
+image = { version = "0.25", default-features = false, features = ["png"] }
+arboard = { version = "3", features = ["wayland-data-control"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+ashpd = { version = "0.14", default-features = false, features = ["screenshot", "tokio"] }
+
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+xcap = "0.9"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true

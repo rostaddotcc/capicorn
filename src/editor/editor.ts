@@ -11,6 +11,9 @@ import * as fabric from "fabric";
 import {
   ACCENT,
   BLUR_BLOCK,
+  MAX_STROKE_WIDTH,
+  MIN_STROKE_WIDTH,
+  STROKE_WIDTH,
   type Box,
   type Point,
   type Tool,
@@ -63,6 +66,11 @@ export class Editor {
   private tool: ToolId = "select";
   private cropBox: Box | null = null;
 
+  /** Ink colour applied to NEW annotations (existing ones keep their colour). */
+  private inkColor = ACCENT;
+  /** Stroke width applied to NEW annotations. */
+  private inkWidth = STROKE_WIDTH;
+
   private history: HistoryEntry[] = [];
   private cursor = -1;
   /** True while a history state is being applied — blocks recursive commits. */
@@ -95,6 +103,8 @@ export class Editor {
       commit: () => this.commit(),
       setCrop: (box) => this.setCrop(box),
       nextStepNumber: () => this.nextStepNumber(),
+      color: () => this.inkColor,
+      strokeWidth: () => this.inkWidth,
     };
 
     this.canvas.on("mouse:down", this.onMouseDown);
@@ -272,6 +282,31 @@ export class Editor {
 
   canRedo(): boolean {
     return this.cursor < this.history.length - 1;
+  }
+
+  /** Ink colour for new annotations. Does not recolour existing objects. */
+  setColor(color: string): void {
+    if (typeof color !== "string") return;
+    const next = color.trim();
+    if (!next) return;
+    this.inkColor = next;
+    this.notify();
+  }
+
+  getColor(): string {
+    return this.inkColor;
+  }
+
+  /** Stroke width for new annotations, clamped to 1..12 and rounded. */
+  setStrokeWidth(width: number): void {
+    if (typeof width !== "number" || !Number.isFinite(width)) return;
+    const clamped = Math.min(Math.max(width, MIN_STROKE_WIDTH), MAX_STROKE_WIDTH);
+    this.inkWidth = Math.round(clamped);
+    this.notify();
+  }
+
+  getStrokeWidth(): number {
+    return this.inkWidth;
   }
 
   /* --------------------------------------------------------------- tool glue */

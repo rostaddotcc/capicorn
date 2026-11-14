@@ -19,9 +19,13 @@ export interface Box {
   height: number;
 }
 
-/** Accent colour used by every annotation. */
+/** Default accent colour (also used for the editor's crop chrome). */
 export const ACCENT = "#ff3b30";
+/** Default annotation stroke width. */
 export const STROKE_WIDTH = 3;
+/** Bounds accepted by Editor#setStrokeWidth. */
+export const MIN_STROKE_WIDTH = 1;
+export const MAX_STROKE_WIDTH = 12;
 export const FONT_STACK =
   "Inter, 'Helvetica Neue', system-ui, -apple-system, sans-serif";
 /** Pixelation block size, in canvas px, at 1x (scaled by the export multiplier). */
@@ -53,6 +57,10 @@ export interface ToolHost {
   commit(): void;
   setCrop(box: Box | null): void;
   nextStepNumber(): number;
+  /** Active annotation ink colour (user selected). */
+  color(): string;
+  /** Active annotation stroke width (user selected). */
+  strokeWidth(): number;
 }
 
 export interface Tool {
@@ -200,8 +208,8 @@ class RectTool extends DragTool {
       originX: "left",
       originY: "top",
       fill: "transparent",
-      stroke: ACCENT,
-      strokeWidth: STROKE_WIDTH,
+      stroke: this.host.color(),
+      strokeWidth: this.host.strokeWidth(),
       strokeUniform: true,
       selectable: false,
       evented: false,
@@ -342,9 +350,10 @@ class ArrowTool extends DragTool {
   private head: fabric.Triangle | null = null;
 
   protected begin(point: Point): void {
+    const ink = this.host.color();
     const shaft = new fabric.Line([point.x, point.y, point.x + 1, point.y], {
-      stroke: ACCENT,
-      strokeWidth: STROKE_WIDTH,
+      stroke: ink,
+      strokeWidth: this.host.strokeWidth(),
       strokeLineCap: "round",
       selectable: false,
       evented: false,
@@ -357,7 +366,7 @@ class ArrowTool extends DragTool {
       originY: "center",
       width: 18,
       height: 20,
-      fill: ACCENT,
+      fill: ink,
       selectable: false,
       evented: false,
       objectCaching: false,
@@ -398,8 +407,8 @@ class ArrowTool extends DragTool {
     if (shaft) this.host.removeObject(shaft);
     if (head) this.host.removeObject(head);
     if (Math.hypot(end.x - start.x, end.y - start.y) < MIN_DRAG) return;
-    const arrow = new fabric.Path(arrowPath(start, end), {
-      fill: ACCENT,
+    const arrow = new fabric.Path(arrowPath(start, end, this.host.strokeWidth() * 2), {
+      fill: this.host.color(),
       stroke: "transparent",
       strokeWidth: 0,
       selectable: false,
@@ -440,6 +449,7 @@ class TextTool implements Tool {
 
   onPointerDown(point: Point): void {
     const canvas = this.host.canvas;
+    const ink = this.host.color();
     const text = new fabric.IText("Text", {
       left: point.x,
       top: point.y,
@@ -448,12 +458,12 @@ class TextTool implements Tool {
       fontFamily: FONT_STACK,
       fontSize: 28,
       fontWeight: "600",
-      fill: ACCENT,
+      fill: ink,
       textBackgroundColor: "",
       padding: 4,
-      borderColor: ACCENT,
-      editingBorderColor: ACCENT,
-      cursorColor: ACCENT,
+      borderColor: ink,
+      editingBorderColor: ink,
+      cursorColor: ink,
       selectable: false,
       evented: false,
     });
@@ -510,7 +520,7 @@ class StepTool implements Tool {
       top: 0,
       originX: "center",
       originY: "center",
-      fill: ACCENT,
+      fill: this.host.color(),
       stroke: "#ffffff",
       strokeWidth: 2,
       strokeUniform: true,

@@ -22,11 +22,34 @@ pub struct CaptureResult {
     pub height: u32,
 }
 
+/// How long to let the compositor redraw after hiding our own window before
+/// grabbing the screen. Short enough to feel instant, long enough that the
+/// window (and its shadow/animation) is genuinely gone — otherwise repeated
+/// captures would nest the app inside its own screenshot.
+const HIDE_SETTLE_MS: u64 = 220;
+
 #[tauri::command]
-pub async fn capture_screenshot() -> Result<CaptureResult, String> {
-    let (data_url, width, height) = crate::capture::capture_full()
-        .await
-        .map_err(|e| e.to_string())?;
+pub async fn capture_screenshot(app: tauri::AppHandle) -> Result<CaptureResult, String> {
+    use tauri::Manager as _;
+
+    let win = app.get_webview_window("main");
+
+    if let Some(win) = win.as_ref() {
+        let _ = win.hide();
+        tokio::time::sleep(std::time::Duration::from_millis(HIDE_SETTLE_MS)).await;
+    }
+
+    // Capture first, restore second, return last: the restore must happen on
+    // both the success and the error path, so the window can never be left
+    // hidden behind a failed screenshot.
+    let captured = crate::capture::capture_full().await;
+
+    if let Some(win) = win.as_ref() {
+        let _ = win.show();
+        let _ = win.set_focus();
+    }
+
+    let (data_url, width, height) = captured.map_err(|e| e.to_string())?;
     Ok(CaptureResult {
         data_url,
         width,

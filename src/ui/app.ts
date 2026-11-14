@@ -311,29 +311,72 @@ export function mountApp(root: HTMLElement): void {
     if (value) setMenuOpen(false);
   }
 
+  /**
+   * Let the webview settle into the new viewport size. Two animation frames are
+   * enough when frames are flowing; the timeout races them so a throttled or
+   * occluded window can never stall the capture flow.
+   */
+  function settle(): Promise<void> {
+    const frames = new Promise<void>((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+    });
+    const timer = new Promise<void>((resolve) => {
+      window.setTimeout(resolve, 120);
+    });
+    return Promise.race([frames, timer]);
+  }
+
+  /**
+   * Snagit-style region capture: go fullscreen so the window IS the desktop,
+   * freeze the screen, drag a box over it, restore the window, then crop.
+   * The window is ALWAYS restored, on success, cancel and error alike.
+   */
+  async function runRegionCapture(): Promise<void> {
+    let full = false;
+    try {
+      await invoke("set_fullscreen", { full: true });
+      full = true;
+      await settle();
+
+      const shot = await invoke<CaptureResult>("capture_screenshot");
+      setStatus("Drag to select a region — Enter to confirm, Esc to cancel.");
+      const box = await selectRegion(shot.dataUrl);
+
+      await invoke("set_fullscreen", { full: false });
+      full = false;
+
+      if (!box) {
+        setStatus("Region capture cancelled");
+        return;
+      }
+      const cropped = await cropDataUrl(shot.dataUrl, box);
+      await editor.load(cropped);
+      setImageState(true);
+      setStatus(`Captured region ${box.width} × ${box.height}`, "success");
+    } finally {
+      if (full) {
+        try {
+          await invoke("set_fullscreen", { full: false });
+        } catch {
+          /* restore failed — the window is left as-is rather than stuck half-way */
+        }
+      }
+    }
+  }
+
   async function runCapture(requested: CaptureMode = mode): Promise<void> {
     if (busy) return;
     setBusy(true);
-    setStatus(requested === "full" ? "Capturing screen…" : "Capturing screen for region…");
+    setStatus(requested === "full" ? "Capturing screen…" : "Preparing region capture…");
     try {
-      const res = await invoke<CaptureResult>("capture_screenshot");
       if (requested === "full") {
+        const res = await invoke<CaptureResult>("capture_screenshot");
         await editor.load(res.dataUrl);
         setImageState(true);
         setStatus(`Captured ${res.width} × ${res.height}`, "success");
         return;
       }
-
-      setStatus("Drag to select a region — Enter to confirm, Esc to cancel.");
-      const box = await selectRegion(res.dataUrl, stageEl);
-      if (!box) {
-        setStatus("Region capture cancelled");
-        return;
-      }
-      const cropped = await cropDataUrl(res.dataUrl, box);
-      await editor.load(cropped);
-      setImageState(true);
-      setStatus(`Captured region ${box.width} × ${box.height}`, "success");
+      await runRegionCapture();
     } catch (e) {
       setStatus(`Capture failed: ${errText(e)}`, "error");
     } finally {

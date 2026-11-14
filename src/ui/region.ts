@@ -36,10 +36,14 @@ function loadImage(src: string): Promise<HTMLImageElement> {
 const clamp = (v: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, v));
 
 /**
- * Show a fit-to-host screenshot with a crosshair drag selector.
+ * Show a fit-to-viewport screenshot in a FIXED, viewport-covering overlay with a
+ * crosshair drag selector. Call this while the app window is fullscreen so the
+ * frozen screenshot maps ~1:1 onto the real screen.
  * Resolves the selection rectangle in NATURAL image pixels, or null when cancelled.
+ *
+ * @param _host kept for call-site compatibility; the overlay always mounts on <body>.
  */
-export function selectRegion(dataUrl: string, host: HTMLElement): Promise<Box | null> {
+export function selectRegion(dataUrl: string, _host?: HTMLElement): Promise<Box | null> {
   return new Promise<Box | null>((resolve) => {
     const overlay = document.createElement("div");
     overlay.className = "region-overlay";
@@ -62,10 +66,11 @@ export function selectRegion(dataUrl: string, host: HTMLElement): Promise<Box | 
     const hint = document.createElement("div");
     hint.className = "region-hint";
     hint.innerHTML =
-      "<span><strong>Drag</strong> to select a region</span><span class=\"region-hint-keys\"><kbd>Enter</kbd> confirm · <kbd>Esc</kbd> cancel</span>";
+      "<span><strong>Drag</strong> to select a region of the screen</span><span class=\"region-hint-keys\"><kbd>Enter</kbd> confirm · <kbd>Esc</kbd> cancel</span>";
 
+    document.querySelectorAll(".region-overlay").forEach((el) => el.remove());
     overlay.append(img, shadeBox, label, hint);
-    host.appendChild(overlay);
+    document.body.appendChild(overlay);
 
     let natural = { w: 0, h: 0 };
     let rect: Fit | null = null;
@@ -138,12 +143,8 @@ export function selectRegion(dataUrl: string, host: HTMLElement): Promise<Box | 
       if (ev.button !== 0 || !rect) return;
       ev.preventDefault();
       const p = overlayPoint(ev);
-      const inside =
-        p.x >= rect.left &&
-        p.x <= rect.left + rect.width &&
-        p.y >= rect.top &&
-        p.y <= rect.top + rect.height;
-      if (!inside) return;
+      // The overlay spans the whole (fullscreen) window, so a drag may start on the
+      // letterbox area too — coordinates are clamped to the image in toNatural().
       dragging = true;
       try {
         overlay.setPointerCapture(ev.pointerId);

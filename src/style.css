@@ -730,16 +730,18 @@ kbd {
   white-space: nowrap;
 }
 
-/* ---------- Region selection overlay ---------- */
+/* ---------- Region selection overlay (fullscreen, whole-screen selector) ---------- */
 
 .region-overlay {
-  position: absolute;
+  position: fixed;
   inset: 0;
-  z-index: 70;
+  z-index: 9999;
   overflow: hidden;
   cursor: crosshair;
   touch-action: none;
   user-select: none;
+  /* The frozen screenshot sits on top; this is the letterbox colour on odd aspect ratios. */
+  background: #0b0912;
   opacity: 0;
   transition: opacity 120ms ease;
 }
@@ -758,7 +760,6 @@ kbd {
   pointer-events: none;
   user-select: none;
   -webkit-user-drag: none;
-  border-radius: 4px;
 }
 
 .region-selection {
@@ -788,6 +789,7 @@ kbd {
 
 .region-hint {
   position: absolute;
+  z-index: 3;
   bottom: 14px;
   left: 50%;
   transform: translateX(-50%);

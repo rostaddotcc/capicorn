@@ -6,6 +6,7 @@
 //! | `save_png`           | `dataUrl`, `suggestedName`           | saved path (`string`)                    |
 //! | `copy_png`           | `dataUrl`                            | `void`                                   |
 //! | `get_version`        | —                                    | crate version (`string`)                 |
+//! | `set_fullscreen`     | `full`                               | `void`                                   |
 //!
 //! `dataUrl` is always a full `data:image/png;base64,…` URL. Errors become
 //! rejected promises carrying the message string.
@@ -102,6 +103,21 @@ pub async fn copy_png(data_url: String) -> Result<(), String> {
 #[tauri::command]
 pub fn get_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
+}
+
+/// Toggle true fullscreen on the main window.
+///
+/// The frontend uses this so a whole-screen region capture isn't competing with
+/// the window's own chrome. A missing window (already closing) is not an error:
+/// there is simply nothing left to resize.
+#[tauri::command]
+pub fn set_fullscreen(app: tauri::AppHandle, full: bool) -> Result<(), String> {
+    use tauri::Manager as _;
+
+    if let Some(win) = app.get_webview_window("main") {
+        win.set_fullscreen(full).map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 #[cfg(test)]
 mod tests {

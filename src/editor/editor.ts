@@ -9,11 +9,21 @@
 
 import * as fabric from "fabric";
 import {
+  DEFAULT_BLUR_RADIUS,
+  applyBlurRegion,
+  clampBlurRadius,
+  highlighter as applyHighlighter,
+  spotlight as applySpotlight,
+  toDevice,
+  type BlurMode,
+  type DeviceRect,
+} from "./blur";
+import {
   ACCENT,
-  BLUR_BLOCK,
   MAX_STROKE_WIDTH,
   MIN_STROKE_WIDTH,
   STROKE_WIDTH,
+  blurRegionPreview,
   type Box,
   type ImageInfo,
   type Point,
@@ -23,7 +33,11 @@ import {
   createTool,
   fitBox,
   isBlurRegion,
+  isHighlighterRegion,
+  isSpotlightRegion,
 } from "./tools";
+
+export type { BlurMode } from "./blur";
 
 export type ToolId =
   | "select"
@@ -32,6 +46,9 @@ export type ToolId =
   | "text"
   | "rect"
   | "blur"
+  | "spotlight"
+  | "highlighter"
+  | "callout"
   | "step"
   | "bucket";
 
@@ -42,6 +59,9 @@ const TOOL_IDS: readonly ToolId[] = [
   "text",
   "rect",
   "blur",
+  "spotlight",
+  "highlighter",
+  "callout",
   "step",
   "bucket",
 ];
@@ -67,6 +87,10 @@ interface HistoryEntry {
 const isToolId = (value: string): value is ToolId =>
   (TOOL_IDS as readonly string[]).includes(value);
 
+/** Objects that are swapped for pixels on export instead of being drawn. */
+const isEffectRegion = (object: fabric.FabricObject): boolean =>
+  isBlurRegion(object) || isSpotlightRegion(object) || isHighlighterRegion(object);
+
 export class Editor {
   private readonly container: HTMLElement;
   private readonly canvas: fabric.Canvas;
@@ -86,6 +110,10 @@ export class Editor {
   private inkColor = ACCENT;
   /** Stroke width applied to NEW annotations. */
   private inkWidth = STROKE_WIDTH;
+  /** Redaction mode applied to NEW blur/redaction regions. */
+  private blurMode: BlurMode = "gaussian";
+  /** Gaussian radius (or pixelate block size) in scene px, for NEW regions. */
+  private blurRadius = DEFAULT_BLUR_RADIUS;
   /** Caption typography applied to NEW text objects. */
   private fontFamily = DEFAULT_FONT_FAMILY;
   private fontSize = DEFAULT_FONT_SIZE;
@@ -128,6 +156,8 @@ export class Editor {
       nextStepNumber: () => this.nextStepNumber(),
       color: () => this.inkColor,
       strokeWidth: () => this.inkWidth,
+      blurMode: () => this.blurMode,
+      blurRadius: () => this.blurRadius,
     };
 
     this.canvas.on("mouse:down", this.onMouseDown);
@@ -218,8 +248,8 @@ export class Editor {
     const wasRestoring = this.restoring;
     this.restoring = true;
 
-    const blurRegions = this.canvas.getObjects().filter(isBlurRegion);
-    const hidden: fabric.FabricObject[] = [...blurRegions, ...this.chrome];
+    const effects = this.canvas.getObjects().filter(isEffectRegion);
+    const hidden: fabric.FabricObject[] = [...effects, ...this.chrome];
     const visibility = hidden.map((object) => object.visible);
     for (const object of hidden) object.visible = false;
 
@@ -242,7 +272,7 @@ export class Editor {
       this.restoring = wasRestoring;
     }
 
-    this.pixelate(imageLayer, blurRegions, box, multiplier);
+    this.applyEffects(imageLayer, effects, box, multiplier);
 
     const output = document.createElement("canvas");
     output.width = Math.max(1, imageLayer.width);
@@ -330,6 +360,54 @@ export class Editor {
 
   getStrokeWidth(): number {
     return this.inkWidth;
+  }
+
+  /**
+   * Redaction mode for NEW blur regions. If blur regions are selected, they are
+   * retuned in place as well (so an existing region can be flipped between
+   * gaussian / pixelate / blackout without redrawing it).
+   */
+  setBlurMode(mode: BlurMode): void {
+    if (mode !== "gaussian" && mode !== "pixelate" && mode !== "blackout") return;
+    const changed = this.blurMode !== mode;
+    this.blurMode = mode;
+    const retuned = this.retuneBlurSelection();
+    if (changed && !retuned) this.notify();
+  }
+
+  getBlurMode(): BlurMode {
+    return this.blurMode;
+  }
+
+  /** Gaussian radius / pixelate block size, in scene px, clamped to 2..60. */
+  setBlurRadius(radius: number): void {
+    if (typeof radius !== "number" || !Number.isFinite(radius)) return;
+    const next = clampBlurRadius(radius);
+    const changed = this.blurRadius !== next;
+    this.blurRadius = next;
+    const retuned = this.retuneBlurSelection();
+    if (changed && !retuned) this.notify();
+  }
+
+  getBlurRadius(): number {
+    return this.blurRadius;
+  }
+
+  /** Apply the current mode/radius to selected blur regions. True if any. */
+  private retuneBlurSelection(): boolean {
+    if (this.restoring) return false;
+    const targets = this.canvas.getActiveObjects().filter(isBlurRegion);
+    if (!targets.length) return false;
+    for (const region of targets) {
+      region.mode = this.blurMode;
+      region.radius = this.blurRadius;
+      const preview = blurRegionPreview(region.mode);
+      region.set({ fill: preview.fill, stroke: preview.stroke });
+      region.dirty = true;
+    }
+    this.commit();
+    this.canvas.requestRenderAll();
+    return true;
   }
 
   /** True once the canvas holds any state beyond the freshly loaded capture. */
@@ -727,6 +805,10 @@ export class Editor {
         object.scaleY *= scale;
         object.setPositionByOrigin(new fabric.Point(x, y), "center", "center");
         object.setCoords();
+        // Blur strength is authored in scene px, so it must follow the zoom too.
+        if (isBlurRegion(object)) {
+          object.radius = clampBlurRadius(object.radius * scale);
+        }
       }
       const crop = this.cropBox;
       if (crop) {
@@ -838,39 +920,43 @@ export class Editor {
     return Math.max(1, Math.min(native, MAX_EXPORT_EDGE / edge));
   }
 
-  private pixelate(
+  /**
+   * Turn effect regions into real pixels on the flattened image layer, at
+   * export resolution, in a fixed order: blur/redaction first, then the
+   * highlighter tint, then the spotlight dimming (so the lit hole always shows
+   * the finished region).
+   */
+  private applyEffects(
     layer: HTMLCanvasElement,
-    regions: fabric.FabricObject[],
+    effects: fabric.FabricObject[],
     box: Box,
     multiplier: number,
   ): void {
-    if (!regions.length) return;
-    const context = layer.getContext("2d");
-    if (!context) return;
-    const block = Math.max(4, Math.round(BLUR_BLOCK * multiplier));
+    if (!effects.length) return;
+    const size = { width: layer.width, height: layer.height };
+    const cache = new Map<fabric.FabricObject, DeviceRect>();
+    const device = (object: fabric.FabricObject): DeviceRect => {
+      const cached = cache.get(object);
+      if (cached) return cached;
+      const rect = toDevice(object.getBoundingRect(), box, multiplier, size);
+      cache.set(object, rect);
+      return rect;
+    };
 
-    for (const region of regions) {
-      const area = region.getBoundingRect();
-      const sx = Math.round((area.left - box.left) * multiplier);
-      const sy = Math.round((area.top - box.top) * multiplier);
-      const sw = Math.round(area.width * multiplier);
-      const sh = Math.round(area.height * multiplier);
-      if (sw < 2 || sh < 2) continue;
-
-      const scratch = document.createElement("canvas");
-      scratch.width = Math.max(1, Math.round(sw / block));
-      scratch.height = Math.max(1, Math.round(sh / block));
-      const scratchContext = scratch.getContext("2d");
-      if (!scratchContext) continue;
-
-      scratchContext.imageSmoothingEnabled = true;
-      scratchContext.drawImage(layer, sx, sy, sw, sh, 0, 0, scratch.width, scratch.height);
-
-      context.save();
-      context.imageSmoothingEnabled = false;
-      context.drawImage(scratch, 0, 0, scratch.width, scratch.height, sx, sy, sw, sh);
-      context.restore();
+    const spotlights: DeviceRect[] = [];
+    for (const object of effects) {
+      const rect = device(object);
+      if (isBlurRegion(object)) {
+        // Radius is authored in scene px; scale it to the export pixel grid.
+        applyBlurRegion(layer, rect, object.mode, Math.max(1, object.radius * multiplier));
+      } else if (isHighlighterRegion(object)) {
+        applyHighlighter(layer, rect, object.ink, object.alpha);
+      } else if (isSpotlightRegion(object)) {
+        spotlights.push(rect);
+      }
     }
+
+    if (spotlights.length) applySpotlight(layer, spotlights);
   }
 
   /* ------------------------------------------------------------------ events */

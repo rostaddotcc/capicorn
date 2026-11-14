@@ -1,7 +1,7 @@
 {
   "name": "capicorn",
   "private": true,
-  "version": "0.3.0",
+  "version": "0.4.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -12,7 +12,8 @@
   "dependencies": {
     "@tauri-apps/api": "^2.0.0",
     "@tauri-apps/plugin-dialog": "^2.0.0",
-    "fabric": "^6.0.0"
+    "fabric": "^6.0.0",
+    "stackblur-canvas": "^3.0.0"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.0.0",

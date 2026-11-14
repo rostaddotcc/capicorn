@@ -17,6 +17,9 @@ importers:
       fabric:
         specifier: ^6.0.0
         version: 6.9.1
+      stackblur-canvas:
+        specifier: ^3.0.0
+        version: 3.0.1
     devDependencies:
       '@tauri-apps/cli':
         specifier: ^2.0.0
@@ -857,6 +860,10 @@ packages:
   source-map@0.6.1:
     resolution: {integrity: sha512-UjgapumWlbMhkBgzT7Ykc5YXUT46F0iKu8SGXq0bcwP5dz/h0Plj6enJqjz1Zbq2l5WaqYnrVbwWOWMyF3F47g==}
     engines: {node: '>=0.10.0'}
+
+  stackblur-canvas@3.0.1:
+    resolution: {integrity: sha512-eJpxkL5PR39dioN3ZapIIhkjQd01wxcigCnBURzbRofZk5M+cHZUA8VwBelHLhsFW20gO9vdH6hFRIekA+jJfA==}
+    engines: {node: '>=0.1.16'}
 
   string-width@4.2.3:
     resolution: {integrity: sha512-wKyQRQpjJ0sIp62ErSZdGsjMJWsap5oRNihHhu6G7JVO/9jIB6UyevL+tXuOqrng8j/cxKTWyWUwvSTriiZz/g==}
@@ -1810,6 +1817,8 @@ snapshots:
 
   source-map@0.6.1:
     optional: true
+
+  stackblur-canvas@3.0.1: {}
 
   string-width@4.2.3:
     dependencies:

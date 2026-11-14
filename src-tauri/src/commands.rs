@@ -11,6 +11,10 @@
 //! | `pick_save_dir`      | —                                    | chosen folder (`string`)                 |
 //! | `save_png_to_dir`    | `dataUrl`, `dir`, `filename`         | saved path (`string`)                    |
 //!
+//! `save_image` (PNG/JPEG/WebP + quality) lives in `export.rs`; the close-guard
+//! commands (`force_close`, `set_dirty`, `is_dirty`, `set_minimize_to_tray`,
+//! `get_minimize_to_tray`) live in `windows.rs`.
+//!
 //! `dataUrl` is always a full `data:image/png;base64,…` URL. Errors become
 //! rejected promises carrying the message string.
 
@@ -132,41 +136,12 @@ pub async fn pick_save_dir(app: tauri::AppHandle) -> Result<String, String> {
 
 /// Write a screenshot into `dir` under `filename`, creating `dir` if needed.
 ///
-/// The filename is untrusted frontend input, so anything that could escape the
-/// target directory (separators, `..`, empty) falls back to `capicorn.png`.
+/// Thin PNG-only wrapper over `export::write_export`: same decode/validate,
+/// filename sanitising and `create_dir_all`, with the extension forced to
+/// `.png`. The PNG bytes are written verbatim (no re-encode).
 #[tauri::command]
 pub async fn save_png_to_dir(data_url: String, dir: String, filename: String) -> Result<String, String> {
-    let png = crate::capture::decode_png_data_url(&data_url).map_err(|e| e.to_string())?;
-    image::load_from_memory(&png).map_err(|e| format!("invalid PNG payload: {e}"))?;
-
-    if dir.trim().is_empty() {
-        return Err("no save directory given".to_string());
-    }
-    let dir = std::path::PathBuf::from(&dir);
-    std::fs::create_dir_all(&dir)
-        .map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
-
-    let name = safe_filename(&filename);
-    let path = dir.join(&name);
-    std::fs::write(&path, &png).map_err(|e| format!("cannot write {}: {e}", path.display()))?;
-
-    Ok(path.to_string_lossy().into_owned())
-}
-
-/// Reduce arbitrary user input to a single plain file name inside the target dir.
-fn safe_filename(filename: &str) -> String {
-    let trimmed = filename.trim();
-    let hostile = trimmed.is_empty()
-        || trimmed == "."
-        || trimmed == ".."
-        || trimmed.contains('/')
-        || trimmed.contains('\\')
-        || trimmed.contains('\0');
-    if hostile {
-        "capicorn.png".to_string()
-    } else {
-        trimmed.to_string()
-    }
+    crate::export::write_export(&data_url, &dir, &filename, "png", 100)
 }
 
 #[tauri::command]

@@ -5,7 +5,16 @@
 // interactivity; tools only draw/place objects and report completion.
 
 import * as fabric from "fabric";
+import {
+  DEFAULT_BLUR_RADIUS,
+  HIGHLIGHTER_ALPHA,
+  SPOTLIGHT_DIM,
+  clampBlurRadius,
+  type BlurMode,
+} from "./blur";
 import type { ToolId } from "./editor";
+
+export type { BlurMode } from "./blur";
 
 export interface Point {
   x: number;
@@ -34,17 +43,108 @@ export const BLUR_BLOCK = 12;
 const MIN_DRAG = 8;
 
 /**
- * Blur regions are Rectangles with their own serialized type, so a restored
- * canvas (undo/redo) still knows which rectangles must be pixelated on export.
+ * Region objects (blur / spotlight / highlighter) are Rectangles with their own
+ * serialized type, so a restored canvas (undo/redo) still knows which live
+ * objects are export-time effects rather than ink. Their tuning (blur mode and
+ * radius, highlighter ink) rides along in the serialized JSON, so undo/redo and
+ * layout changes never reset a region to the defaults.
  */
+type RectOptions = Partial<fabric.RectProps>;
+
 export class BlurRegion extends fabric.Rect {
   static type = "capicorn_blur";
+  /** Keep the tuning in the serialized JSON (undo/redo, save/load). */
+  static customProperties = ["mode", "radius"];
+  mode: BlurMode = "gaussian";
+  /** Gaussian radius / pixelate block size, in scene px. */
+  radius = DEFAULT_BLUR_RADIUS;
+
+  constructor(options: RectOptions & { mode?: BlurMode; radius?: number } = {}) {
+    const { mode, radius, ...rect } = options;
+    super(rect as RectOptions);
+    if (mode === "gaussian" || mode === "pixelate" || mode === "blackout") {
+      this.mode = mode;
+    }
+    if (typeof radius === "number" && Number.isFinite(radius)) {
+      this.radius = clampBlurRadius(radius);
+    }
+  }
 }
 fabric.classRegistry.setClass(BlurRegion, "capicorn_blur");
 
 export const isBlurRegion = (
   object: fabric.FabricObject,
 ): object is BlurRegion => object instanceof BlurRegion;
+
+/**
+ * Spotlight: dims everything OUTSIDE the region on export. The live preview
+ * paints the same dimming itself (drawing outside its own bounds), so what you
+ * drag is what you get.
+ */
+export class SpotlightRegion extends fabric.Rect {
+  static type = "capicorn_spotlight";
+
+  constructor(options: RectOptions = {}) {
+    super(options);
+    // A cached object would clip the dimming to its own bounding box.
+    this.objectCaching = false;
+  }
+
+  _render(context: CanvasRenderingContext2D): void {
+    const width = this.width ?? 0;
+    const height = this.height ?? 0;
+    if (width <= 0 || height <= 0) return;
+    const reach = 100000;
+
+    context.save();
+    context.fillStyle = SPOTLIGHT_DIM;
+    context.beginPath();
+    context.rect(-reach, -reach, width + reach * 2, height + reach * 2);
+    context.rect(0, 0, width, height);
+    context.fill("evenodd");
+    context.restore();
+
+    context.save();
+    context.strokeStyle = "rgba(255, 255, 255, 0.9)";
+    context.lineWidth = 1;
+    context.setLineDash([6, 4]);
+    context.strokeRect(0.5, 0.5, width - 1, height - 1);
+    context.restore();
+  }
+}
+fabric.classRegistry.setClass(SpotlightRegion, "capicorn_spotlight");
+
+export const isSpotlightRegion = (
+  object: fabric.FabricObject,
+): object is SpotlightRegion => object instanceof SpotlightRegion;
+
+/** Highlighter: translucent ink rectangle, multiplied into the pixels. */
+export class HighlighterRegion extends fabric.Rect {
+  static type = "capicorn_highlight";
+  static customProperties = ["ink", "alpha"];
+  /** Colour baked in at creation, so later ink changes do not recolour it. */
+  ink = "#ffe066";
+  alpha = HIGHLIGHTER_ALPHA;
+
+  constructor(options: RectOptions & { ink?: string; alpha?: number } = {}) {
+    const { ink, alpha, ...rect } = options;
+    super(rect as RectOptions);
+    if (typeof ink === "string" && ink.trim()) this.ink = ink.trim();
+    if (typeof alpha === "number" && Number.isFinite(alpha)) {
+      this.alpha = Math.min(Math.max(alpha, 0.05), 1);
+    }
+    this.set({
+      fill: this.ink,
+      opacity: this.alpha,
+      globalCompositeOperation: "multiply",
+    });
+  }
+}
+fabric.classRegistry.setClass(HighlighterRegion, "capicorn_highlight");
+
+export const isHighlighterRegion = (
+  object: fabric.FabricObject,
+): object is HighlighterRegion => object instanceof HighlighterRegion;
 
 /** The source screenshot as the canvas currently holds it. */
 export interface ImageInfo {
@@ -86,6 +186,10 @@ export interface ToolHost {
   color(): string;
   /** Active annotation stroke width (user selected). */
   strokeWidth(): number;
+  /** Redaction mode for NEW blur regions. */
+  blurMode(): BlurMode;
+  /** Gaussian radius / pixelate block size for NEW blur regions, in scene px. */
+  blurRadius(): number;
 }
 
 export interface Tool {
@@ -276,26 +380,31 @@ class RectTool extends DragTool {
   }
 }
 
-class BlurTool extends DragTool {
-  readonly id: ToolId = "blur";
-  private shape: BlurRegion | null = null;
+/** Blur-mode preview styling: the region itself never exports, only its effect. */
+export const blurRegionPreview = (mode: BlurMode): { fill: string; stroke: string } => {
+  switch (mode) {
+    case "blackout":
+      return { fill: "rgba(17, 24, 39, 0.88)", stroke: "rgba(17, 24, 39, 0.95)" };
+    case "pixelate":
+      return { fill: "rgba(17, 24, 39, 0.34)", stroke: "rgba(255, 255, 255, 0.85)" };
+    case "gaussian":
+    default:
+      return { fill: "rgba(120, 150, 255, 0.22)", stroke: "rgba(255, 255, 255, 0.9)" };
+  }
+};
+
+/**
+ * Shared drag-a-region behaviour for the export-time effect tools: the object
+ * lives on the canvas (movable, scalable, undoable) and is swapped for pixels
+ * only when Editor flattens.
+ */
+abstract class RegionTool<T extends fabric.Rect> extends DragTool {
+  private shape: T | null = null;
+
+  protected abstract createRegion(point: Point): T;
 
   protected begin(point: Point): void {
-    const shape = new BlurRegion({
-      left: point.x,
-      top: point.y,
-      width: 1,
-      height: 1,
-      originX: "left",
-      originY: "top",
-      fill: "rgba(17, 24, 39, 0.28)",
-      stroke: "rgba(255, 255, 255, 0.85)",
-      strokeWidth: 1,
-      strokeDashArray: [6, 4],
-      selectable: false,
-      evented: false,
-      objectCaching: false,
-    });
+    const shape = this.createRegion(point);
     this.shape = shape;
     this.host.addObject(shape);
   }
@@ -329,6 +438,75 @@ class BlurTool extends DragTool {
     const shape = this.shape;
     this.shape = null;
     this.host.removeObject(shape);
+  }
+}
+
+class BlurTool extends RegionTool<BlurRegion> {
+  readonly id: ToolId = "blur";
+
+  protected createRegion(point: Point): BlurRegion {
+    const mode = this.host.blurMode();
+    const preview = blurRegionPreview(mode);
+    return new BlurRegion({
+      left: point.x,
+      top: point.y,
+      width: 1,
+      height: 1,
+      originX: "left",
+      originY: "top",
+      mode,
+      radius: this.host.blurRadius(),
+      fill: preview.fill,
+      stroke: preview.stroke,
+      strokeWidth: 1,
+      strokeDashArray: [6, 4],
+      selectable: false,
+      evented: false,
+      objectCaching: false,
+    });
+  }
+}
+
+class SpotlightTool extends RegionTool<SpotlightRegion> {
+  readonly id: ToolId = "spotlight";
+
+  protected createRegion(point: Point): SpotlightRegion {
+    return new SpotlightRegion({
+      left: point.x,
+      top: point.y,
+      width: 1,
+      height: 1,
+      originX: "left",
+      originY: "top",
+      // The dimming is painted by the region itself (see SpotlightRegion._render).
+      fill: "transparent",
+      stroke: "transparent",
+      strokeWidth: 0,
+      selectable: false,
+      evented: false,
+      objectCaching: false,
+    });
+  }
+}
+
+class HighlighterTool extends RegionTool<HighlighterRegion> {
+  readonly id: ToolId = "highlighter";
+
+  protected createRegion(point: Point): HighlighterRegion {
+    return new HighlighterRegion({
+      left: point.x,
+      top: point.y,
+      width: 1,
+      height: 1,
+      originX: "left",
+      originY: "top",
+      ink: this.host.color(),
+      stroke: "transparent",
+      strokeWidth: 0,
+      selectable: false,
+      evented: false,
+      objectCaching: false,
+    });
   }
 }
 
@@ -576,6 +754,176 @@ class StepTool implements Tool {
     group.setCoords();
     this.host.addObject(group);
     this.host.commit();
+  }
+}
+
+/* --------------------------------------------------------------- callout */
+
+/** Rounded callout defaults. */
+const CALLOUT_PAD = 16;
+const CALLOUT_RADIUS = 14;
+const CALLOUT_MIN_WIDTH = 140;
+const CALLOUT_MIN_HEIGHT = 72;
+const CALLOUT_DEFAULT = { width: 240, height: 112 };
+const CALLOUT_TAIL_WIDTH = 32;
+const CALLOUT_TAIL_HEIGHT = 26;
+
+/**
+ * Speech-balloon style callout: rounded body + pointer tail + editable caption,
+ * bundled into one Group so it moves, scales, undoes and exports as a unit.
+ * Click places a default-sized callout; dragging sizes it.
+ */
+class CalloutTool extends DragTool {
+  readonly id: ToolId = "callout";
+  private preview: fabric.Rect | null = null;
+
+  protected begin(point: Point): void {
+    const preview = new fabric.Rect({
+      left: point.x,
+      top: point.y,
+      width: 1,
+      height: 1,
+      originX: "left",
+      originY: "top",
+      rx: CALLOUT_RADIUS,
+      ry: CALLOUT_RADIUS,
+      fill: "rgba(255, 255, 255, 0.22)",
+      stroke: this.host.color(),
+      strokeWidth: 1,
+      strokeDashArray: [8, 5],
+      selectable: false,
+      evented: false,
+      objectCaching: false,
+    });
+    this.preview = preview;
+    this.host.addObject(preview);
+  }
+
+  protected update(start: Point, point: Point): void {
+    const preview = this.preview;
+    if (!preview) return;
+    const box = normalizeBox(start, point);
+    preview.set({
+      left: box.left,
+      top: box.top,
+      width: Math.max(box.width, 1),
+      height: Math.max(box.height, 1),
+    });
+    preview.setCoords();
+  }
+
+  protected finish(start: Point, end: Point): void {
+    this.abort();
+    const box = normalizeBox(start, end);
+    const small = box.width < MIN_DRAG || box.height < MIN_DRAG;
+    const left = Math.min(box.left, start.x);
+    const top = Math.min(box.top, start.y);
+    const width = small ? CALLOUT_DEFAULT.width : Math.max(box.width, CALLOUT_MIN_WIDTH);
+    const height = small ? CALLOUT_DEFAULT.height : Math.max(box.height, CALLOUT_MIN_HEIGHT);
+
+    const { group, text } = this.build(left, top, width, height);
+    this.host.addObject(group);
+    group.setCoords();
+    this.host.commit();
+
+    // Drop straight into text editing; if the engine refuses, the user can
+    // still double-click the caption with the select tool.
+    const canvas = this.host.canvas;
+    try {
+      canvas.setActiveObject(group);
+      text.enterEditing();
+      text.selectAll();
+      canvas.requestRenderAll();
+    } catch {
+      canvas.requestRenderAll();
+    }
+  }
+
+  protected abort(): void {
+    if (!this.preview) return;
+    const preview = this.preview;
+    this.preview = null;
+    this.host.removeObject(preview);
+  }
+
+  private build(
+    left: number,
+    top: number,
+    width: number,
+    height: number,
+  ): { group: fabric.Group; text: fabric.IText } {
+    const ink = this.host.color();
+    const style = this.host.textStyle();
+    const fontSize = Math.max(
+      10,
+      Math.round(Math.min(style.fontSize, height / 3, width / 8)),
+    );
+
+    // Tail first so the body's fill hides the seam where they overlap.
+    const tail = new fabric.Triangle({
+      left: CALLOUT_PAD + CALLOUT_TAIL_WIDTH / 2,
+      top: height + CALLOUT_TAIL_HEIGHT / 2 - 2,
+      originX: "center",
+      originY: "center",
+      width: CALLOUT_TAIL_WIDTH,
+      height: CALLOUT_TAIL_HEIGHT,
+      angle: 180,
+      fill: "#ffffff",
+      stroke: ink,
+      strokeWidth: 2,
+      strokeUniform: true,
+      selectable: false,
+      evented: false,
+    });
+
+    const body = new fabric.Rect({
+      left: 0,
+      top: 0,
+      originX: "left",
+      originY: "top",
+      width,
+      height,
+      rx: CALLOUT_RADIUS,
+      ry: CALLOUT_RADIUS,
+      fill: "#ffffff",
+      stroke: ink,
+      strokeWidth: 2,
+      strokeUniform: true,
+      selectable: false,
+      evented: false,
+    });
+
+    const text = new fabric.IText("Callout", {
+      left: CALLOUT_PAD,
+      top: CALLOUT_PAD,
+      originX: "left",
+      originY: "top",
+      width: Math.max(40, width - CALLOUT_PAD * 2),
+      fontFamily: style.fontFamily || FONT_STACK,
+      fontSize,
+      fontWeight: style.fontWeight,
+      fontStyle: style.fontStyle,
+      fill: ink,
+      textBackgroundColor: "",
+      borderColor: ink,
+      editingBorderColor: ink,
+      cursorColor: ink,
+      selectable: false,
+      evented: false,
+    });
+
+    const group = new fabric.Group([tail, body, text], {
+      subTargetCheck: true,
+      interactive: true,
+      objectCaching: false,
+      selectable: false,
+      evented: false,
+      hoverCursor: "move",
+      borderColor: ink,
+    });
+    group.set({ left, top });
+    group.setCoords();
+    return { group, text };
   }
 }
 
@@ -910,6 +1258,12 @@ export const createTool = (id: ToolId, host: ToolHost): Tool => {
       return new RectTool(host);
     case "blur":
       return new BlurTool(host);
+    case "spotlight":
+      return new SpotlightTool(host);
+    case "highlighter":
+      return new HighlighterTool(host);
+    case "callout":
+      return new CalloutTool(host);
     case "text":
       return new TextTool(host);
     case "crop":

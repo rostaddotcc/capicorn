@@ -1,9 +1,22 @@
 // Capicorn app shell — top bar, annotation toolbar, editor stage, status line.
 // Talks to the locked Editor API and the locked Tauri command set only.
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { Editor, type ToolId } from "../editor/editor";
 import { cropDataUrl, selectRegion } from "./region";
-import { SettingsPanel, applyTheme, readTheme, type Theme } from "./settings";
+import {
+  DEFAULT_PATTERN,
+  SettingsPanel,
+  applyTheme,
+  buildFilename,
+  formatLabel,
+  readExportSettings,
+  readTheme,
+  saveExportSettings,
+  type ExportFormat,
+  type ExportSettings,
+  type Theme,
+} from "./settings";
 
 type CaptureResult = { dataUrl: string; width: number; height: number };
 type StatusKind = "info" | "success" | "error";
@@ -19,10 +32,20 @@ type InkApi = {
 type InkEditor = Editor & InkApi;
 
 /**
- * Wave 4 adds the bucket tool to `ToolId`. Widen locally so the shell typechecks
- * against either revision of the editor module while the two tracks land.
+ * Wave 4 added the bucket tool and Wave 5 adds spotlight / highlighter /
+ * callout to `ToolId`. Widen locally so the shell typechecks against either
+ * revision of the editor module while the tracks land.
  */
-type ShellToolId = ToolId | "bucket";
+type ShellToolId = ToolId | "bucket" | "spotlight" | "highlighter" | "callout";
+
+/** Wave 5 blur tuning. Optional so the shell builds against either editor revision. */
+type BlurMode = "gaussian" | "pixelate" | "blackout";
+type BlurApi = {
+  setBlurMode?(mode: BlurMode): void;
+  getBlurMode?(): BlurMode;
+  setBlurRadius?(radius: number): void;
+  getBlurRadius?(): number;
+};
 
 type ChangeDetail = { tool?: ToolId; canUndo?: boolean; canRedo?: boolean };
 
@@ -104,6 +127,30 @@ const TOOLS: ReadonlyArray<{ id: ShellToolId; label: string; hint: string; icon:
     ),
   },
   {
+    id: "spotlight",
+    label: "Spotlight",
+    hint: "Dim everything outside a region (L)",
+    icon: icon(
+      `<circle cx="8" cy="8" r="3.1"/><path d="M2.4 2.4 4.5 4.5M13.6 2.4 11.5 4.5M2.4 13.6 4.5 11.5M13.6 13.6 11.5 11.5"/>`,
+    ),
+  },
+  {
+    id: "highlighter",
+    label: "Highlight",
+    hint: "Swipe a translucent highlighter (H)",
+    icon: icon(
+      `<path d="M3.6 12.4 8.9 7.1l2 2-5.3 5.3-2.6.7z"/><path d="M8.9 7.1 10.7 5.3l2 2-1.8 1.8z"/><path d="M2.8 14.4h4.4"/>`,
+    ),
+  },
+  {
+    id: "callout",
+    label: "Callout",
+    hint: "Speech-bubble note (K)",
+    icon: icon(
+      `<path d="M2.6 3.4h10.8v6.6H8.4l-3 2.8V10H2.6z"/><path d="M5.2 6.2h5.6M5.2 8h3.4"/>`,
+    ),
+  },
+  {
     id: "step",
     label: "Step",
     hint: "Numbered callout steps (S)",
@@ -140,6 +187,12 @@ const FONT_KEY = "capicorn:font-family";
 const SIZE_KEY = "capicorn:font-size";
 const BOLD_KEY = "capicorn:text-bold";
 const ITALIC_KEY = "capicorn:text-italic";
+const BLUR_MODE_KEY = "capicorn:blur-mode";
+const BLUR_RADIUS_KEY = "capicorn:blur-radius";
+const DEFAULT_BLUR_MODE: BlurMode = "gaussian";
+const DEFAULT_BLUR_RADIUS = 12;
+const MIN_BLUR_RADIUS = 2;
+const MAX_BLUR_RADIUS = 60;
 
 /** Text formatting slice of the Editor (landed by track E alongside this shell). */
 type TextApi = {
@@ -214,12 +267,17 @@ const readSize = (): number => {
 
 const readBool = (key: string): boolean => readStore(key) === "true";
 
-/** Local-time stamp for file names: 20261114-194512. */
-const timestamp = (date = new Date()): string => {
-  const pad = (n: number): string => String(n).padStart(2, "0");
-  return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}-${pad(
-    date.getHours(),
-  )}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
+const readBlurMode = (): BlurMode => {
+  const stored = readStore(BLUR_MODE_KEY) ?? "";
+  return stored === "pixelate" || stored === "blackout" ? stored : DEFAULT_BLUR_MODE;
+};
+
+const readBlurRadius = (): number => {
+  const raw = readStore(BLUR_RADIUS_KEY);
+  if (raw === null || raw.trim() === "") return DEFAULT_BLUR_RADIUS;
+  const stored = Number(raw);
+  if (!Number.isFinite(stored) || stored <= 0) return DEFAULT_BLUR_RADIUS;
+  return Math.min(MAX_BLUR_RADIUS, Math.max(MIN_BLUR_RADIUS, Math.round(stored)));
 };
 
 export function mountApp(root: HTMLElement): void {
@@ -323,6 +381,22 @@ export function mountApp(root: HTMLElement): void {
       <span class="textbar-hint" id="textbar-hint">Click anywhere to add text</span>
     </nav>
 
+    <nav class="blurbar" id="blurbar" aria-label="Blur options" hidden>
+      <span class="textbar-label">Blur</span>
+      <div class="segmented segmented-sm" id="blur-modes" role="radiogroup" aria-label="Blur mode">
+        <button type="button" role="radio" data-blur-mode="gaussian" aria-checked="false">Gaussian</button>
+        <button type="button" role="radio" data-blur-mode="pixelate" aria-checked="false">Pixelate</button>
+        <button type="button" role="radio" data-blur-mode="blackout" aria-checked="false">Blackout</button>
+      </div>
+      <span class="toolbar-sep" aria-hidden="true"></span>
+      <div class="radius-field" id="blur-radius-field">
+        <label class="radius-label" for="blur-radius">Intensity</label>
+        <input type="range" class="slider slider-sm" id="blur-radius" min="2" max="60" step="1" value="${DEFAULT_BLUR_RADIUS}" aria-label="Blur intensity" />
+        <output class="radius-value" id="blur-radius-out" for="blur-radius">${DEFAULT_BLUR_RADIUS}</output>
+      </div>
+      <span class="blurbar-hint" id="blur-hint">Drag over anything private.</span>
+    </nav>
+
     <main class="stage">
       <div class="editor-shell" id="editor"></div>
       <div class="empty-state" id="empty">
@@ -337,7 +411,37 @@ export function mountApp(root: HTMLElement): void {
       <span class="status-dot" id="dot" data-kind="info" aria-hidden="true"></span>
       <span class="status-text" id="status" role="status" aria-live="polite">Ready</span>
       <span class="status-keys"><kbd>Ctrl</kbd><kbd>Z</kbd> undo · <kbd>Ctrl</kbd><kbd>S</kbd> save copy</span>
-    </footer>`;
+    </footer>
+
+    <div class="countdown" id="countdown" hidden role="dialog" aria-modal="true" aria-labelledby="countdown-num">
+      <div class="countdown-card">
+        <p class="countdown-kicker" id="countdown-kicker">Capture in</p>
+        <span class="countdown-num" id="countdown-num" aria-live="assertive">3</span>
+        <p class="countdown-hint" id="countdown-hint">Full screen · press Esc to cancel</p>
+        <button type="button" class="btn-secondary countdown-cancel" id="countdown-cancel">Cancel</button>
+      </div>
+    </div>
+
+    <div class="modal-backdrop close-guard" id="close-guard" hidden>
+      <div class="modal modal-sm" role="alertdialog" aria-modal="true" aria-labelledby="guard-title" aria-describedby="guard-desc" tabindex="-1">
+        <header class="modal-head">
+          <div class="modal-heading">
+            <h2 class="modal-title" id="guard-title">Save changes before closing?</h2>
+            <p class="modal-desc" id="guard-desc">Your annotations are not on disk yet.</p>
+          </div>
+        </header>
+        <div class="modal-body guard-body">
+          <p class="guard-swatch"><span class="guard-dot" aria-hidden="true"></span><span id="guard-file">Capicorn capture</span></p>
+        </div>
+        <footer class="modal-foot guard-foot">
+          <button type="button" class="btn-secondary" id="guard-cancel">Cancel</button>
+          <div class="guard-actions">
+            <button type="button" class="btn-ghost-danger" id="guard-discard">Discard</button>
+            <button type="button" class="btn-primary" id="guard-save">Save &amp; close</button>
+          </div>
+        </footer>
+      </div>
+    </div>`;
 
   const $ = <T extends HTMLElement>(sel: string): T => root.querySelector(sel) as T;
 
@@ -369,6 +473,21 @@ export function mountApp(root: HTMLElement): void {
   const sizeUpBtn = $<HTMLButtonElement>("#size-up");
   const boldBtn = $<HTMLButtonElement>("#text-bold");
   const italicBtn = $<HTMLButtonElement>("#text-italic");
+  const blurBar = $<HTMLElement>("#blurbar");
+  const blurModesEl = $<HTMLDivElement>("#blur-modes");
+  const blurRadiusInput = $<HTMLInputElement>("#blur-radius");
+  const blurRadiusOut = $<HTMLOutputElement>("#blur-radius-out");
+  const blurHint = $<HTMLSpanElement>("#blur-hint");
+  const radiusField = $<HTMLDivElement>("#blur-radius-field");
+  const countdownEl = $<HTMLDivElement>("#countdown");
+  const countdownNum = $<HTMLSpanElement>("#countdown-num");
+  const countdownHint = $<HTMLParagraphElement>("#countdown-hint");
+  const countdownCancelBtn = $<HTMLButtonElement>("#countdown-cancel");
+  const guardEl = $<HTMLDivElement>("#close-guard");
+  const guardFileEl = $<HTMLSpanElement>("#guard-file");
+  const guardSaveBtn = $<HTMLButtonElement>("#guard-save");
+  const guardDiscardBtn = $<HTMLButtonElement>("#guard-discard");
+  const guardCancelBtn = $<HTMLButtonElement>("#guard-cancel");
 
   const editor = new Editor(editorEl) as InkEditor;
   const toolButtons = new Map<ShellToolId, HTMLButtonElement>();
@@ -378,6 +497,12 @@ export function mountApp(root: HTMLElement): void {
   let theme: Theme = currentTheme;
   let saveDir: string | null = readStore(DIR_KEY);
   let panel: SettingsPanel | null = null;
+  let settings: ExportSettings = readExportSettings();
+  let blurMode: BlurMode = readBlurMode();
+  let blurRadius = readBlurRadius();
+  /** Live countdown, so a second capture (or Esc) can cancel the first. */
+  let countdownCancel: (() => void) | null = null;
+  let guardBusy = false;
 
   function setStatus(message: string, kind: StatusKind = "info"): void {
     statusEl.textContent = message;
@@ -401,6 +526,53 @@ export function mountApp(root: HTMLElement): void {
     syncThemeButton();
     panel?.refresh(next);
   }
+
+  /* -------------------------------------------------------------- settings */
+
+  /** Persist + apply an export/general preference change from the panel. */
+  function updateSettings(patch: Partial<ExportSettings>, opts: { silent?: boolean } = {}): void {
+    if (patch.minimizeToTray !== undefined) {
+      const enabled = patch.minimizeToTray;
+      const previous = settings.minimizeToTray;
+      settings = { ...settings, minimizeToTray: enabled };
+      saveExportSettings(settings);
+      void invoke("set_minimize_to_tray", { enabled }).catch(() => {
+        settings = { ...settings, minimizeToTray: previous };
+        saveExportSettings(settings);
+        panel?.refresh();
+        setStatus("Minimize to tray is not available in this build.", "error");
+      });
+      if (!opts.silent) setStatus(enabled ? "Closing minimizes Capicorn to the tray" : "Closing quits Capicorn");
+      panel?.refresh();
+      return;
+    }
+
+    settings = { ...settings, ...patch };
+    saveExportSettings(settings);
+    if (!opts.silent) {
+      if (patch.timer !== undefined) {
+        setStatus(
+          settings.timer > 0
+            ? `Capture delay: ${settings.timer} s — press Capture to start the countdown`
+            : "Capture delay: off — captures immediately",
+        );
+      } else if (patch.format !== undefined) {
+        setStatus(
+          `Export format: ${formatLabel(settings.format)}${
+            settings.format === "png" ? "" : ` · quality ${settings.quality}`
+          }`,
+        );
+      } else if (patch.quality !== undefined) {
+        setStatus(`Export quality: ${settings.quality}`);
+      } else if (patch.filename !== undefined) {
+        setStatus(`Filename pattern: ${expandName(settings.filename)}`);
+      }
+    }
+    panel?.refresh();
+  }
+
+  /** Filename the next save would produce (guard text + status). */
+  const expandName = (pattern: string): string => buildFilename(pattern, settings.format, new Date());
 
   /* --------------------------------------------------------------- saving */
 
@@ -442,37 +614,62 @@ export function mountApp(root: HTMLElement): void {
     }
   }
 
+  /**
+   * Write a data URL through `save_image` using the chosen format, quality and
+   * filename pattern. Throws on failure so each caller can word its own status.
+   */
+  async function writeImage(
+    dataUrl: string,
+    edited: boolean,
+  ): Promise<{ path: string; filename: string } | null> {
+    const dir = await ensureSaveDir();
+    if (!dir) return null;
+    const filename = buildFilename(
+      settings.filename,
+      settings.format,
+      new Date(),
+      edited ? "-edited" : "",
+    );
+    const path = await invoke<string>("save_image", {
+      dataUrl,
+      dir,
+      filename,
+      format: settings.format,
+      quality: Math.round(settings.quality),
+    });
+    return { path: typeof path === "string" && path ? path : `${dir}/${filename}`, filename };
+  }
+
   /** Auto-save a freshly loaded capture. Never throws — capture must survive. */
   async function autoSave(dataUrl: string): Promise<void> {
-    const dir = await ensureSaveDir();
-    if (!dir) return;
-    const filename = `Capicorn-${timestamp()}.png`;
     try {
-      await invoke<string>("save_png_to_dir", { dataUrl, dir, filename });
-      setStatus(`Saved to ${dir}`, "success");
+      const saved = await writeImage(dataUrl, false);
+      if (!saved) return;
+      setStatus(`Saved ${saved.filename}`, "success");
     } catch (e) {
       setStatus(`Capture kept in the editor — auto-save failed: ${errText(e)}`, "error");
     }
   }
 
   /** Ctrl+S / Save: only writes when the capture actually changed. */
-  async function saveEdited(): Promise<void> {
+  async function saveEdited(): Promise<boolean> {
     if (!hasImage) {
       setStatus("Nothing to save yet — capture a screen first.", "error");
-      return;
+      return false;
     }
     if (!isDirty()) {
       setStatus("No changes to save");
-      return;
+      return false;
     }
-    const dir = await ensureSaveDir();
-    if (!dir) return;
-    const filename = `Capicorn-${timestamp()}-edited.png`;
     try {
-      await invoke<string>("save_png_to_dir", { dataUrl: editor.flatten(), dir, filename });
-      setStatus(`Saved copy ${filename}`, "success");
+      const saved = await writeImage(editor.flatten(), true);
+      if (!saved) return false;
+      setStatus(`Saved copy ${saved.filename}`, "success");
+      syncDirty();
+      return true;
     } catch (e) {
       setStatus(`Save failed: ${errText(e)}`, "error");
+      return false;
     }
   }
 
@@ -480,6 +677,181 @@ export function mountApp(root: HTMLElement): void {
   function isDirty(): boolean {
     const probe = editor as unknown as { isDirty?: () => boolean };
     return typeof probe.isDirty === "function" ? probe.isDirty() : editor.canUndo();
+  }
+
+  /** Tell the Rust side whether closing needs a guard. Best-effort. */
+  function syncDirty(): void {
+    void invoke("set_dirty", { dirty: hasImage && isDirty() }).catch(() => {
+      /* older backend without set_dirty — the guard then simply never fires */
+    });
+  }
+
+  /* ------------------------------------------------------------ countdown */
+
+  /**
+   * Show a cancellable countdown before the grab. Resolves true when it runs
+   * out and false when the user cancels (Esc, the button, or a new capture).
+   */
+  function runCountdown(seconds: number, requested: CaptureMode): Promise<boolean> {
+    countdownCancel?.();
+    return new Promise<boolean>((resolve) => {
+      let remaining = Math.max(1, Math.round(seconds));
+      let settled = false;
+      const timers: number[] = [];
+
+      const settle = (capture: boolean): void => {
+        if (settled) return;
+        settled = true;
+        for (const id of timers) window.clearTimeout(id);
+        timers.length = 0;
+        countdownCancelBtn.removeEventListener("click", cancel);
+        document.removeEventListener("keydown", cancel, true);
+        countdownEl.classList.remove("is-open");
+        countdownEl.hidden = true;
+        document.body.classList.remove("is-counting");
+        if (countdownCancel === cancel) countdownCancel = null;
+        resolve(capture);
+      };
+
+      const cancel = (): void => settle(false);
+
+      const tick = (): void => {
+        if (remaining <= 0) {
+          settle(true);
+          return;
+        }
+        countdownNum.textContent = String(remaining);
+        countdownNum.classList.remove("is-tick");
+        void countdownNum.offsetWidth;
+        countdownNum.classList.add("is-tick");
+        remaining -= 1;
+        timers.push(window.setTimeout(tick, 1000));
+      };
+
+      countdownHint.textContent =
+        requested === "full" ? "Full screen · Esc to cancel" : "Region · Esc to cancel";
+      countdownEl.hidden = false;
+      document.body.classList.add("is-counting");
+      void countdownEl.offsetWidth;
+      countdownEl.classList.add("is-open");
+      countdownCancel = cancel;
+      countdownCancelBtn.addEventListener("click", cancel);
+      document.addEventListener("keydown", cancel, true);
+      countdownCancelBtn.focus({ preventScroll: true });
+      tick();
+    });
+  }
+
+  /* ------------------------------------------------------------ close guard */
+
+  function guardKeyDown(ev: KeyboardEvent): void {
+    if (guardEl.hidden) return;
+    if (ev.key === "Escape") {
+      ev.preventDefault();
+      ev.stopPropagation();
+      dismissGuard("Close cancelled — your capture is still here.");
+      return;
+    }
+    if (ev.key !== "Tab") return;
+    const items = [guardCancelBtn, guardDiscardBtn, guardSaveBtn].filter((b) => !b.disabled);
+    const active = document.activeElement as HTMLElement | null;
+    const index = items.indexOf(active as HTMLButtonElement);
+    ev.preventDefault();
+    const step = ev.shiftKey ? -1 : 1;
+    const next = items[(index + step + items.length) % items.length];
+    next?.focus();
+  }
+
+  function dismissGuard(message?: string): void {
+    if (guardEl.hidden) return;
+    guardEl.classList.remove("is-open");
+    guardEl.hidden = true;
+    document.removeEventListener("keydown", guardKeyDown, true);
+    guardBusy = false;
+    guardSaveBtn.disabled = false;
+    guardDiscardBtn.disabled = false;
+    if (message) setStatus(message);
+  }
+
+  function showGuard(): void {
+    if (!guardEl.hidden) return;
+    countdownCancel?.();
+    guardFileEl.textContent = expandName(settings.filename);
+    guardEl.hidden = false;
+    void guardEl.offsetWidth;
+    guardEl.classList.add("is-open");
+    guardSaveBtn.disabled = !(hasImage && isDirty());
+    guardDiscardBtn.disabled = false;
+    guardCancelBtn.disabled = false;
+    document.addEventListener("keydown", guardKeyDown, true);
+    (guardSaveBtn.disabled ? guardDiscardBtn : guardSaveBtn).focus({ preventScroll: true });
+  }
+
+  /** Ask Rust to close for real; resolves false when the invoke failed. */
+  async function forceClose(): Promise<boolean> {
+    try {
+      await invoke("force_close");
+      return true;
+    } catch (e) {
+      setStatus(`Could not close the window: ${errText(e)}`, "error");
+      return false;
+    }
+  }
+
+  async function onGuardSave(): Promise<void> {
+    if (guardBusy) return;
+    guardBusy = true;
+    guardSaveBtn.disabled = true;
+    guardDiscardBtn.disabled = true;
+    guardCancelBtn.disabled = true;
+    if (hasImage && isDirty()) {
+      try {
+        const saved = await writeImage(editor.flatten(), true);
+        if (!saved) {
+          guardBusy = false;
+          guardSaveBtn.disabled = false;
+          guardDiscardBtn.disabled = false;
+          guardCancelBtn.disabled = false;
+          return;
+        }
+        setStatus(`Saved copy ${saved.filename}`, "success");
+      } catch (e) {
+        setStatus(`Save failed: ${errText(e)}`, "error");
+        guardBusy = false;
+        guardSaveBtn.disabled = false;
+        guardDiscardBtn.disabled = false;
+        guardCancelBtn.disabled = false;
+        return;
+      }
+    }
+    const closed = await forceClose();
+    if (closed) {
+      guardBusy = false;
+      dismissGuard();
+    } else {
+      guardBusy = false;
+      guardSaveBtn.disabled = !(hasImage && isDirty());
+      guardDiscardBtn.disabled = false;
+      guardCancelBtn.disabled = false;
+    }
+  }
+
+  async function onGuardDiscard(): Promise<void> {
+    if (guardBusy) return;
+    guardBusy = true;
+    guardSaveBtn.disabled = true;
+    guardDiscardBtn.disabled = true;
+    guardCancelBtn.disabled = true;
+    const closed = await forceClose();
+    if (closed) {
+      guardBusy = false;
+      dismissGuard();
+    } else {
+      guardBusy = false;
+      guardSaveBtn.disabled = !(hasImage && isDirty());
+      guardDiscardBtn.disabled = false;
+      guardCancelBtn.disabled = false;
+    }
   }
 
   /* ------------------------------------------------------------- history */
@@ -505,6 +877,7 @@ export function mountApp(root: HTMLElement): void {
     copyBtn.disabled = !loaded;
     saveBtn.disabled = !loaded;
     syncHistory();
+    syncDirty();
   }
 
   /* ---------------------------------------------------------------- capture */
@@ -612,15 +985,26 @@ export function mountApp(root: HTMLElement): void {
   }
 
   async function runCapture(requested: CaptureMode = mode): Promise<void> {
-    if (busy) return;
+    if (busy || !guardEl.hidden) return;
     setBusy(true);
-    setStatus(requested === "full" ? "Capturing screen…" : "Preparing region capture…");
     try {
+      if (settings.timer > 0) {
+        setStatus(`Capturing in ${settings.timer} s — Esc to cancel`);
+        const proceed = await runCountdown(settings.timer, requested);
+        if (!proceed) {
+          setStatus("Capture cancelled");
+          return;
+        }
+        // Let the overlay finish fading out before the screen is grabbed.
+        await settle();
+      }
+      setStatus(requested === "full" ? "Capturing screen…" : "Preparing region capture…");
       if (requested === "full") {
         const res = await invoke<CaptureResult>("capture_screenshot");
         await editor.load(res.dataUrl);
         setImageState(true);
         setStatus(`Captured ${res.width} × ${res.height}`, "success");
+        syncDirty();
         await autoSave(res.dataUrl);
         return;
       }
@@ -766,6 +1150,79 @@ export function mountApp(root: HTMLElement): void {
     paintTextToggles();
   }
 
+  /* ----------------------------------------------------------------- blur */
+
+  const blurApi = editor as unknown as BlurApi;
+
+  function paintBlur(): void {
+    for (const btn of Array.from(
+      blurModesEl.querySelectorAll<HTMLButtonElement>("[data-blur-mode]"),
+    )) {
+      const active = btn.dataset.blurMode === blurMode;
+      btn.classList.toggle("is-active", active);
+      btn.setAttribute("aria-checked", String(active));
+      btn.tabIndex = active ? 0 : -1;
+    }
+    blurRadiusInput.value = String(blurRadius);
+    blurRadiusOut.textContent = String(blurRadius);
+    blurRadiusInput.style.setProperty(
+      "--fill",
+      `${((blurRadius - MIN_BLUR_RADIUS) / (MAX_BLUR_RADIUS - MIN_BLUR_RADIUS)) * 100}%`,
+    );
+    const usesIntensity = blurMode !== "blackout";
+    radiusField.classList.toggle("is-muted", !usesIntensity);
+    blurRadiusInput.disabled = !usesIntensity;
+    blurHint.textContent =
+      blurMode === "gaussian"
+        ? "Gaussian softens the area — intensity sets how far it smears."
+        : blurMode === "pixelate"
+          ? "Pixelate blocks the area — intensity sets the block size."
+          : "Blackout paints the area solid; intensity is unused.";
+  }
+
+  function applyBlurMode(next: BlurMode, announce = true): void {
+    blurMode = next;
+    try {
+      blurApi.setBlurMode?.(next);
+    } catch (e) {
+      setStatus(`Blur mode failed: ${errText(e)}`, "error");
+      return;
+    }
+    writeStore(BLUR_MODE_KEY, next);
+    paintBlur();
+    if (announce) setStatus(`Blur mode: ${next}`);
+  }
+
+  function applyBlurRadius(next: number, announce = true): void {
+    const clamped = Math.min(
+      MAX_BLUR_RADIUS,
+      Math.max(MIN_BLUR_RADIUS, Math.round(next) || DEFAULT_BLUR_RADIUS),
+    );
+    blurRadius = clamped;
+    try {
+      blurApi.setBlurRadius?.(clamped);
+    } catch (e) {
+      setStatus(`Blur intensity failed: ${errText(e)}`, "error");
+      return;
+    }
+    writeStore(BLUR_RADIUS_KEY, String(clamped));
+    paintBlur();
+    if (announce) setStatus(`Blur intensity: ${clamped}`);
+  }
+
+  /** Adopt whatever the editor reports once its blur setters are present. */
+  function syncBlurFromEditor(): void {
+    const mode = blurApi.getBlurMode?.();
+    if (mode === "gaussian" || mode === "pixelate" || mode === "blackout") {
+      blurMode = mode;
+    }
+    const radius = blurApi.getBlurRadius?.();
+    if (typeof radius === "number" && Number.isFinite(radius)) {
+      blurRadius = Math.min(MAX_BLUR_RADIUS, Math.max(MIN_BLUR_RADIUS, Math.round(radius)));
+    }
+    paintBlur();
+  }
+
   /* ---------------------------------------------------------------- wiring */
 
   toolsEl.innerHTML = TOOLS.map(
@@ -813,9 +1270,38 @@ export function mountApp(root: HTMLElement): void {
   boldBtn.addEventListener("click", () => applyBold(!textBold));
   italicBtn.addEventListener("click", () => applyItalic(!textItalic));
 
+  for (const btn of Array.from(
+    blurModesEl.querySelectorAll<HTMLButtonElement>("[data-blur-mode]"),
+  )) {
+    btn.addEventListener("click", () => {
+      const value = btn.dataset.blurMode;
+      applyBlurMode(value === "pixelate" || value === "blackout" ? value : "gaussian");
+    });
+  }
+  blurRadiusInput.addEventListener("input", () => applyBlurRadius(Number(blurRadiusInput.value), false));
+  blurRadiusInput.addEventListener("change", () => applyBlurRadius(Number(blurRadiusInput.value)));
+  blurModesEl.addEventListener("keydown", (ev) => {
+    if (ev.key !== "ArrowRight" && ev.key !== "ArrowLeft") return;
+    const order: BlurMode[] = ["gaussian", "pixelate", "blackout"];
+    const index = order.indexOf(blurMode);
+    ev.preventDefault();
+    const step = ev.key === "ArrowRight" ? 1 : -1;
+    const next = order[(index + step + order.length) % order.length];
+    applyBlurMode(next);
+    blurModesEl
+      .querySelector<HTMLButtonElement>(`[data-blur-mode="${next}"]`)
+      ?.focus({ preventScroll: true });
+  });
+
   function selectTool(id: ShellToolId, announce = true): void {
-    editor.setTool(id as ToolId);
+    try {
+      editor.setTool(id as ToolId);
+    } catch (e) {
+      setStatus(`${id} is not available in this build: ${errText(e)}`, "error");
+      return;
+    }
     textBar.hidden = id !== "text";
+    blurBar.hidden = id !== "blur";
     for (const [key, btn] of toolButtons) {
       const active = key === id;
       btn.classList.toggle("is-active", active);
@@ -845,6 +1331,17 @@ export function mountApp(root: HTMLElement): void {
     changeSaveDir: () => pickSaveDir(),
     getVersion: () => (versionEl.hidden ? null : versionEl.textContent),
     setTheme: (next) => setTheme(next),
+    getSettings: () => settings,
+    updateSettings: (patch, opts) => updateSettings(patch, opts),
+  });
+
+  guardSaveBtn.addEventListener("click", () => void onGuardSave());
+  guardDiscardBtn.addEventListener("click", () => void onGuardDiscard());
+  guardCancelBtn.addEventListener("click", () =>
+    dismissGuard("Close cancelled — your capture is still here."),
+  );
+  guardEl.addEventListener("pointerdown", (ev) => {
+    if (ev.target === guardEl) dismissGuard("Close cancelled — your capture is still here.");
   });
 
   themeBtn.addEventListener("click", () => setTheme(theme === "dark" ? "light" : "dark"));
@@ -901,6 +1398,7 @@ export function mountApp(root: HTMLElement): void {
     const canRedo = typeof detail?.canRedo === "boolean" ? detail.canRedo : editor.canRedo();
     undoBtn.disabled = !hasImage || !canUndo;
     redoBtn.disabled = !hasImage || !canRedo;
+    syncDirty();
   });
 
   undoBtn.addEventListener("click", () => {
@@ -951,6 +1449,28 @@ export function mountApp(root: HTMLElement): void {
   };
   window.addEventListener("keydown", onKeyDown);
 
+  /* ------------------------------------------------------------- tauri glue */
+
+  // Rust asks us to run a capture (tray menu item, future global hotkey).
+  void listen("tray-capture", () => {
+    void runCapture();
+  }).catch(() => {
+    /* plain browser or an older backend without the tray */
+  });
+
+  // Rust intercepts the close while the canvas is dirty and asks us to guard it.
+  void listen("close-requested", () => {
+    syncDirty();
+    showGuard();
+  }).catch(() => {
+    /* no close guard outside the Tauri window */
+  });
+
+  // Keep the Rust-side tray preference mirrored with our stored value.
+  void invoke("set_minimize_to_tray", { enabled: settings.minimizeToTray }).catch(() => {
+    /* command missing on older builds — the toggle reports that itself */
+  });
+
   const onUnload = (): void => {
     window.removeEventListener("keydown", onKeyDown);
     document.removeEventListener("pointerdown", onDocPointerDown);
@@ -982,6 +1502,10 @@ export function mountApp(root: HTMLElement): void {
   applyBold(textBold, false);
   applyItalic(textItalic, false);
   syncTextFromEditor();
+
+  applyBlurMode(blurMode, false);
+  applyBlurRadius(blurRadius, false);
+  syncBlurFromEditor();
 
   setStatus("Ready — press PrintScreen for the full screen, Shift+PrintScreen for a region.");
 

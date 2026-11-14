@@ -1418,6 +1418,269 @@ kbd {
   padding: 0 4px;
 }
 
+/* ------------------------------------ scrolling capture: live status card */
+
+.scroll-card {
+  position: fixed;
+  top: 18px;
+  right: 18px;
+  z-index: 12000;
+  width: min(312px, calc(100vw - 36px));
+  display: grid;
+  gap: 10px;
+  padding: 13px 14px 11px;
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  backdrop-filter: blur(14px) saturate(1.2);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: 0 18px 44px -22px rgba(18, 14, 34, 0.55), 0 2px 6px -2px rgba(18, 14, 34, 0.18);
+  color: var(--fg);
+  font-size: 12px;
+  overflow: hidden;
+  animation: scroll-card-in 180ms var(--ease);
+  transition: box-shadow 160ms var(--ease), border-color 160ms var(--ease);
+}
+
+.scroll-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 2.5px;
+  background: var(--accent);
+}
+
+.scroll-card.has-warning {
+  border-color: color-mix(in srgb, var(--warning) 42%, var(--border));
+}
+
+.scroll-card.has-warning::before {
+  background: var(--warning);
+}
+
+.scroll-card.is-pointer {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-ring), 0 18px 44px -22px rgba(18, 14, 34, 0.55);
+}
+
+@keyframes scroll-card-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.scroll-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.scroll-live {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--accent-solid);
+  box-shadow: 0 0 0 0 var(--accent-ring);
+  animation: scroll-live-pulse 1.8s ease-out infinite;
+}
+
+@keyframes scroll-live-pulse {
+  0% {
+    box-shadow: 0 0 0 0 var(--accent-ring);
+  }
+  70% {
+    box-shadow: 0 0 0 6px transparent;
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+.scroll-title {
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.scroll-region {
+  margin-left: auto;
+  flex: none;
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-subtle);
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+}
+
+.scroll-metrics {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.scroll-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 6px 8px;
+  border-radius: 9px;
+  background: var(--surface-soft);
+  border: 1px solid transparent;
+}
+
+.scroll-num {
+  font-size: 17px;
+  font-weight: 650;
+  line-height: 1.15;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+.scroll-unit {
+  font-size: 10px;
+  color: var(--fg-subtle);
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.scroll-bar {
+  height: 3px;
+  border-radius: 999px;
+  background: var(--surface-sunken);
+  overflow: hidden;
+}
+
+.scroll-bar-fill {
+  display: block;
+  height: 100%;
+  width: 2%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--accent-muted), var(--accent-solid));
+  transition: width 220ms var(--ease);
+}
+
+.scroll-card.has-warning .scroll-bar-fill {
+  background: linear-gradient(90deg, var(--accent-muted), var(--warning));
+}
+
+.scroll-warn {
+  margin: 0;
+  padding: 6px 8px;
+  border-radius: 8px;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--warning);
+  background: color-mix(in srgb, var(--warning) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--warning) 26%, transparent);
+  overflow-wrap: anywhere;
+}
+
+.scroll-warn[hidden] {
+  display: none;
+}
+
+.scroll-hint {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--fg-muted);
+  overflow-wrap: anywhere;
+}
+
+.scroll-hint strong {
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.scroll-actions {
+  display: grid;
+  grid-template-columns: 1fr 1.25fr;
+  gap: 7px;
+}
+
+.scroll-btn {
+  height: 28px;
+  border-radius: 8px;
+  font-size: 11.5px;
+  font-weight: 600;
+  border: 1px solid transparent;
+  transition: background-color 120ms var(--ease), border-color 120ms var(--ease),
+    transform 90ms var(--ease);
+}
+
+.scroll-btn:active {
+  transform: translateY(0.5px);
+}
+
+.scroll-btn-ghost {
+  color: var(--fg-muted);
+  border-color: var(--border);
+  background: transparent;
+}
+
+.scroll-btn-ghost:hover {
+  background: var(--surface-soft);
+  color: var(--fg);
+}
+
+.scroll-btn-primary {
+  color: #fff;
+  background: var(--accent-solid);
+  box-shadow: 0 6px 14px -9px var(--accent-strong);
+}
+
+.scroll-btn-primary:hover {
+  background: var(--accent-solid-hover);
+}
+
+.scroll-note {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  font-size: 10px;
+  color: var(--fg-subtle);
+}
+
+.scroll-note kbd {
+  font-size: 9.5px;
+  padding: 0 4px;
+}
+
+.scroll-card :is(.scroll-btn, [data-act]):focus-visible {
+  outline: 2px solid var(--accent-ring);
+  outline-offset: 1px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scroll-card {
+    animation: none;
+  }
+  .scroll-live {
+    animation: none;
+  }
+  .scroll-bar-fill {
+    transition: none;
+  }
+}
+
+/* A blank spacer keeps the menu's 4-column grid aligned on rows without a key. */
+.menu-key-space {
+  display: block;
+  width: 0;
+}
+
 /* ------------------------------------------------------- settings controls */
 
 .setting-row {

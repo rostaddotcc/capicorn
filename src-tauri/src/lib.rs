@@ -5,6 +5,7 @@ mod export;
 mod hotkeys;
 mod ocr;
 mod recording;
+mod scrolling;
 mod tray;
 mod windows;
 
@@ -21,6 +22,9 @@ pub fn run() {
         // Screen recording (Wave 8): stop signal, capture thread and — on Linux —
         // the live ScreenCast portal session (see `recording.rs`).
         .manage(recording::RecordingState::new())
+        // Scrolling capture (Wave 9): portal cast + stitcher thread (see
+        // `scrolling/mod.rs`).
+        .manage(scrolling::ScrollingState::new())
         .invoke_handler(tauri::generate_handler![
             commands::capture_screenshot,
             commands::save_png,
@@ -54,7 +58,12 @@ pub fn run() {
             // Wave 8: screen recording (ScreenCast portal -> PipeWire -> ffmpeg)
             recording::start_recording,
             recording::stop_recording,
-            recording::is_recording
+            recording::is_recording,
+            // Wave 9: scrolling capture (manual-scroll stitch)
+            scrolling::scrolling_start,
+            scrolling::scrolling_done,
+            scrolling::scrolling_cancel,
+            scrolling::set_click_through
         ])
         .setup(|app| {
             // Order matters: the close guard must exist before the window can be

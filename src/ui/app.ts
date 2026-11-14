@@ -25,7 +25,15 @@ import {
 
 type CaptureResult = { dataUrl: string; width: number; height: number };
 type StatusKind = "info" | "success" | "error";
-type CaptureMode = "full" | "region";
+type CaptureMode = "full" | "region" | "scrolling";
+
+/** Backend progress payload for a live manual-scroll stitch. */
+type ScrollingStatus = {
+  frames?: number;
+  height?: number;
+  confidence?: number;
+  warning?: string | null;
+};
 
 /** Additive Editor API (Wave 2/3, contract-locked). */
 type InkApi = {
@@ -85,6 +93,9 @@ const ICONS = {
   full: icon(`<rect x="2.2" y="2.8" width="11.6" height="8.4" rx="1.4"/><path d="M5.4 13.4h5.2"/>`),
   region: icon(
     `<path d="M2.6 6V3.6A1 1 0 0 1 3.6 2.6H6M10 2.6h2.4a1 1 0 0 1 1 1V6M13.4 10v2.4a1 1 0 0 1-1 1H10M6 13.4H3.6a1 1 0 0 1-1-1V10"/>`,
+  ),
+  scrolling: icon(
+    `<rect x="2.6" y="2.6" width="10.8" height="10.8" rx="1.6"/><path d="M8 4.9v6.2M5.9 6.9 8 4.8l2.1 2.1M10.1 9.1 8 11.2 5.9 9.1"/>`,
   ),
   check: icon(`<path d="M3 8.6 6.4 12l6.6-7.6"/>`, 14, 2.1),
   undo: icon(`<path d="M6.2 4.2 3.4 7l2.8 2.8"/><path d="M3.6 7h5.2a3.6 3.6 0 0 1 0 7.2H6.4"/>`),
@@ -342,7 +353,10 @@ const writeStore = (key: string, value: string): void => {
   }
 };
 
-const readMode = (): CaptureMode => (readStore(MODE_KEY) === "region" ? "region" : "full");
+const readMode = (): CaptureMode => {
+  const stored = readStore(MODE_KEY);
+  return stored === "region" || stored === "scrolling" ? stored : "full";
+};
 
 const readColor = (): string => {
   const stored = readStore(INK_KEY) ?? "";
@@ -528,6 +542,12 @@ export function mountApp(root: HTMLElement): void {
               <span class="menu-label">Select region</span>
               <span class="menu-check">${ICONS.check}</span>
               <kbd class="menu-key">Shift+PrintScreen</kbd>
+            </button>
+            <button type="button" class="menu-item" role="menuitem" data-mode="scrolling" aria-checked="false" title="Select a region, then scroll the page yourself — Capicorn stitches it into one tall image">
+              <span class="menu-icon">${ICONS.scrolling}</span>
+              <span class="menu-label">Scrolling capture</span>
+              <span class="menu-check">${ICONS.check}</span>
+              <span class="menu-key-space" aria-hidden="true"></span>
             </button>
           </div>
         </div>
@@ -1397,20 +1417,34 @@ export function mountApp(root: HTMLElement): void {
       item.classList.toggle("is-active", active);
       item.setAttribute("aria-checked", String(active));
     }
-    modeLabelEl.textContent = next === "full" ? "Full" : "Region";
-    captureBtn.title =
-      next === "full"
-        ? "Capture full screen (PrintScreen)"
-        : "Select a region to capture (Shift+PrintScreen)";
-    captureBtn.setAttribute(
-      "aria-label",
-      next === "full" ? "Capture full screen" : "Select region to capture",
-    );
+    const labels: Record<CaptureMode, { short: string; title: string; aria: string }> = {
+      full: {
+        short: "Full",
+        title: "Capture full screen (PrintScreen)",
+        aria: "Capture full screen",
+      },
+      region: {
+        short: "Region",
+        title: "Select a region to capture (Shift+PrintScreen)",
+        aria: "Select region to capture",
+      },
+      scrolling: {
+        short: "Scroll",
+        title: "Scrolling capture — select a region, then scroll it yourself",
+        aria: "Start a scrolling capture",
+      },
+    };
+    const copy = labels[next];
+    modeLabelEl.textContent = copy.short;
+    captureBtn.title = copy.title;
+    captureBtn.setAttribute("aria-label", copy.aria);
     if (announce) {
       setStatus(
         next === "full"
           ? "Capture mode: full screen."
-          : "Capture mode: select region — press Capture, then drag on the screen.",
+          : next === "region"
+            ? "Capture mode: select region — press Capture, then drag on the screen."
+            : "Scrolling capture: press Capture, drag a region, then scroll it yourself.",
       );
     }
   }
@@ -1596,6 +1630,269 @@ export function mountApp(root: HTMLElement): void {
     }
   }
 
+  /* ---------------------------------------------------- scrolling capture */
+
+  /** Live hook into the visible status card (null while no cast is running). */
+  let scrollFeed: ((status: ScrollingStatus) => void) | null = null;
+  /** Frames accepted by the backend for the take that just finished. */
+  let scrollFrames = 0;
+
+  const SCROLL_HEIGHT_CAP = 40000;
+
+  /** Friendly copy for the portal / screen-lock / height-cap failure modes. */
+  function scrollErrorText(e: unknown): string {
+    const raw = errText(e).trim();
+    if (/lock/i.test(raw)) {
+      return "The screen is locked — unlock it, then start the scrolling capture again.";
+    }
+    if (/(height|too tall|too high|maximum|max_?height|\bcap\b)/i.test(raw)) {
+      return "That would pass the 40 000 px height limit. Select a shorter region, or capture the page in two passes.";
+    }
+    if (/portal|permission|denied|refus|share|screencast|pipewire/i.test(raw)) {
+      return "Screen sharing wasn't allowed. Approve the system prompt (or pick this window) and try again.";
+    }
+    return `Scrolling capture failed: ${raw}`;
+  }
+
+  /**
+   * Float the live progress card and resolve on Enter / Done / Esc / Cancel.
+   * The window is click-through while this is open, so `Alt` briefly hands the
+   * pointer back for clicking Done (auto-restores after 5 s).
+   */
+  function showScrollCard(box: { width: number; height: number }): Promise<"done" | "cancel"> {
+    return new Promise<"done" | "cancel">((resolve) => {
+      const el = document.createElement("div");
+      el.className = "scroll-card";
+      el.tabIndex = -1;
+      el.setAttribute("role", "dialog");
+      el.setAttribute("aria-label", "Scrolling capture in progress");
+      el.innerHTML = `
+        <div class="scroll-card-head">
+          <span class="scroll-live" aria-hidden="true"></span>
+          <span class="scroll-title">Scrolling capture</span>
+          <span class="scroll-region">${box.width} × ${box.height}</span>
+        </div>
+        <div class="scroll-metrics">
+          <span class="scroll-metric"><span class="scroll-num" data-frames>0</span><span class="scroll-unit">frames</span></span>
+          <span class="scroll-metric"><span class="scroll-num" data-height>0</span><span class="scroll-unit">px captured</span></span>
+        </div>
+        <div class="scroll-bar" aria-hidden="true"><span class="scroll-bar-fill" data-bar></span></div>
+        <p class="scroll-warn" data-warn role="status" aria-live="polite" hidden></p>
+        <p class="scroll-hint" data-hint>Scroll the window, then press <kbd>Enter</kbd> or <strong>Done</strong>.</p>
+        <div class="scroll-actions">
+          <button type="button" class="scroll-btn scroll-btn-ghost" data-act="cancel">Cancel</button>
+          <button type="button" class="scroll-btn scroll-btn-primary" data-act="done">Done</button>
+        </div>
+        <p class="scroll-note" data-note><kbd>Alt</kbd> mouse control · <kbd>Esc</kbd> cancel</p>
+      `;
+
+      document.querySelectorAll(".scroll-card").forEach((old) => old.remove());
+      document.body.appendChild(el);
+
+      const framesEl = el.querySelector<HTMLElement>("[data-frames]");
+      const heightEl = el.querySelector<HTMLElement>("[data-height]");
+      const barEl = el.querySelector<HTMLElement>("[data-bar]");
+      const warnEl = el.querySelector<HTMLElement>("[data-warn]");
+      const hintEl = el.querySelector<HTMLElement>("[data-hint]");
+      const noteEl = el.querySelector<HTMLElement>("[data-note]");
+
+      let settled = false;
+      let pointerTimer = 0;
+
+      const setClickThrough = (ignore: boolean): void => {
+        void invoke("set_click_through", { ignore }).catch(() => {
+          /* an older backend without click-through — the card still drives the flow */
+        });
+      };
+
+      const armPointer = (): void => {
+        if (settled) return;
+        setClickThrough(false);
+        el.classList.add("is-pointer");
+        if (noteEl) {
+          noteEl.innerHTML = "<kbd>Alt</kbd> mouse control is on — click Done, it returns to pass-through in 5 s.";
+        }
+        window.clearTimeout(pointerTimer);
+        pointerTimer = window.setTimeout(() => {
+          el.classList.remove("is-pointer");
+          if (noteEl) noteEl.innerHTML = "<kbd>Alt</kbd> mouse control · <kbd>Esc</kbd> cancel";
+          if (!settled) setClickThrough(true);
+        }, 5000);
+      };
+
+      const update = (status: ScrollingStatus): void => {
+        // Backend numbers can be missing or negative mid-stream; clamp defensively.
+        const frames = Number(status.frames);
+        const height = Number(status.height);
+        const nFrames = Number.isFinite(frames) ? Math.max(0, Math.round(frames)) : 0;
+        const nHeight = Number.isFinite(height) ? Math.max(0, Math.round(height)) : 0;
+        scrollFrames = nFrames;
+        if (framesEl) framesEl.textContent = String(nFrames);
+        if (heightEl) heightEl.textContent = nHeight.toLocaleString("en-US");
+        if (barEl) {
+          const pct = Math.min(100, Math.max(2, (nHeight / SCROLL_HEIGHT_CAP) * 100));
+          barEl.style.width = `${pct}%`;
+        }
+
+        const warning = typeof status.warning === "string" ? status.warning.trim() : "";
+        const confidence = Number(status.confidence);
+        const shaky = Number.isFinite(confidence) && confidence > 0 && confidence < 0.45;
+        if (!warnEl) return;
+        if (warning) {
+          warnEl.hidden = false;
+          warnEl.dataset.kind = "hard";
+          const guided = /[—–-]{1,2}\s/.test(warning);
+          warnEl.textContent =
+            /fast|speed|slow/i.test(warning) && !guided
+              ? `${warning} — pause a moment before the next scroll.`
+              : warning;
+          el.classList.add("has-warning");
+        } else if (shaky) {
+          warnEl.hidden = false;
+          warnEl.dataset.kind = "soft";
+          warnEl.textContent = "That last step was hard to match — scroll a little more slowly.";
+          el.classList.add("has-warning");
+        } else {
+          warnEl.hidden = true;
+          el.classList.remove("has-warning");
+        }
+      };
+
+      const finish = (how: "done" | "cancel"): void => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(pointerTimer);
+        window.removeEventListener("keydown", onKey, true);
+        scrollFeed = null;
+        el.remove();
+        resolve(how);
+      };
+
+      const onKey = (ev: KeyboardEvent): void => {
+        if (ev.key === "Enter" || ev.code === "NumpadEnter") {
+          ev.preventDefault();
+          ev.stopPropagation();
+          finish("done");
+        } else if (ev.key === "Escape") {
+          ev.preventDefault();
+          ev.stopPropagation();
+          finish("cancel");
+        } else if (ev.key === "Alt") {
+          ev.preventDefault();
+          armPointer();
+        }
+      };
+
+      el.addEventListener("click", (ev) => {
+        const act = (ev.target as HTMLElement | null)?.closest<HTMLElement>("[data-act]")?.dataset.act;
+        if (act === "done") finish("done");
+        else if (act === "cancel") finish("cancel");
+      });
+
+      if (hintEl) {
+        hintEl.innerHTML = "Scroll the window, then press <kbd>Enter</kbd> or <strong>Done</strong>.";
+      }
+
+      scrollFeed = update;
+      window.addEventListener("keydown", onKey, true);
+      el.focus({ preventScroll: true });
+    });
+  }
+
+  /**
+   * Manual-scroll capture: freeze + select a region, hand the wheel back to the
+   * app underneath, let the user scroll, then stitched frames land in the editor.
+   * Locked backend contract: scrolling_start / scrolling_done / scrolling_cancel.
+   */
+  async function runScrollingCapture(): Promise<void> {
+    let full = false;
+    let clickThrough = false;
+    let casting = false;
+    try {
+      await invoke("set_fullscreen", { full: true });
+      full = true;
+      await settle();
+
+      setStatus("Drag over the area you want to scroll — Esc to cancel.");
+      const shot = await invoke<CaptureResult>("capture_screenshot");
+      const box = await selectRegion(shot.dataUrl);
+
+      await invoke("set_fullscreen", { full: false });
+      full = false;
+
+      if (!box) {
+        setStatus("Scrolling capture cancelled");
+        return;
+      }
+
+      await invoke("set_click_through", { ignore: true });
+      clickThrough = true;
+      scrollFrames = 0;
+      await invoke("scrolling_start", { region: box });
+      casting = true;
+      setStatus("Scrolling capture running — scroll the window, then press Enter.");
+
+      const decision = await showScrollCard(box);
+      const frames = Math.max(1, scrollFrames);
+
+      if (decision === "cancel") {
+        casting = false;
+        await invoke("scrolling_cancel").catch(() => {
+          /* already torn down on the Rust side */
+        });
+        setStatus("Scrolling capture cancelled");
+        return;
+      }
+
+      const res = await invoke<CaptureResult>("scrolling_done");
+      casting = false;
+
+      await editor.load(res.dataUrl);
+      setImageState(true);
+      await addRecent(res.dataUrl, "Scrolling");
+      syncDirty();
+
+      let note = "";
+      let failed = false;
+      try {
+        const saved = await writeImage(res.dataUrl, false);
+        if (saved) note = ` · saved ${saved.filename}`;
+      } catch (e) {
+        failed = true;
+        note = ` · auto-save failed: ${errText(e)}`;
+      }
+      setStatus(
+        `Scrolling capture: ${res.width} × ${res.height}, ${frames} frames${note}`,
+        failed ? "error" : "success",
+      );
+    } catch (e) {
+      setStatus(scrollErrorText(e), "error");
+    } finally {
+      scrollFeed = null;
+      if (clickThrough) {
+        try {
+          await invoke("set_click_through", { ignore: false });
+        } catch {
+          /* ignore — the backend restores it when the cast ends */
+        }
+      }
+      if (casting) {
+        try {
+          await invoke("scrolling_cancel");
+        } catch {
+          /* nothing left to cancel */
+        }
+      }
+      if (full) {
+        try {
+          await invoke("set_fullscreen", { full: false });
+        } catch {
+          /* restore failed — the window is left as-is rather than stuck half-way */
+        }
+      }
+    }
+  }
+
   async function runCapture(requested: CaptureMode = mode): Promise<void> {
     if (busy || !guardEl.hidden) return;
     if (recording) {
@@ -1604,7 +1901,7 @@ export function mountApp(root: HTMLElement): void {
     }
     setBusy(true);
     try {
-      if (settings.timer > 0) {
+      if (settings.timer > 0 && requested !== "scrolling") {
         setStatus(`Capturing in ${settings.timer} s — Esc to cancel`);
         const proceed = await runCountdown(settings.timer, requested);
         if (!proceed) {
@@ -1614,7 +1911,13 @@ export function mountApp(root: HTMLElement): void {
         // Let the overlay finish fading out before the screen is grabbed.
         await settle();
       }
-      setStatus(requested === "full" ? "Capturing screen…" : "Preparing region capture…");
+      setStatus(
+        requested === "full"
+          ? "Capturing screen…"
+          : requested === "scrolling"
+            ? "Preparing scrolling capture…"
+            : "Preparing region capture…",
+      );
       if (requested === "full") {
         const res = await invoke<CaptureResult>("capture_screenshot");
         await editor.load(res.dataUrl);
@@ -1623,6 +1926,10 @@ export function mountApp(root: HTMLElement): void {
         await addRecent(res.dataUrl, "Full screen");
         syncDirty();
         await autoSave(res.dataUrl);
+        return;
+      }
+      if (requested === "scrolling") {
+        await runScrollingCapture();
         return;
       }
       await runRegionCapture();
@@ -2386,10 +2693,13 @@ export function mountApp(root: HTMLElement): void {
 
   for (const item of Array.from(menuEl.querySelectorAll<HTMLButtonElement>(".menu-item"))) {
     item.addEventListener("click", () => {
-      const next: CaptureMode = item.dataset.mode === "region" ? "region" : "full";
+      const raw = item.dataset.mode;
+      const next: CaptureMode = raw === "region" ? "region" : raw === "scrolling" ? "scrolling" : "full";
       setMode(next, true);
       setMenuOpen(false);
       caretBtn.focus({ preventScroll: true });
+      // Scrolling capture is its own flow — picking it opens the region overlay.
+      if (next === "scrolling") void runCapture("scrolling");
     });
   }
 
@@ -2554,6 +2864,16 @@ export function mountApp(root: HTMLElement): void {
     void runCapture(requested);
   }).catch(() => {
     /* widget window absent */
+  });
+
+  // Live progress for a manual-scroll stitch (frames accepted, stitched height,
+  // match confidence and any "too fast" warning). No cast running → dropped.
+  void listen<ScrollingStatus>("scrolling-status", (ev) => {
+    const payload = ev.payload;
+    if (!payload || typeof payload !== "object") return;
+    scrollFeed?.(payload);
+  }).catch(() => {
+    /* backend without the scrolling module */
   });
 
   // Recording state is authoritative on the Rust side (stop button, hotkey,

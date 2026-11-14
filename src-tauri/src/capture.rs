@@ -37,6 +37,70 @@ pub async fn capture_full() -> anyhow::Result<(String, u32, u32)> {
     png_bytes_to_data_url(&png)
 }
 
+/// One user-picked window, grabbed as a single frame (Wave 10).
+///
+/// The *Screenshot* portal can only grab whole screens, so this goes through the
+/// *ScreenCast* portal with `SourceType::WINDOW`: the OS picker lists the open
+/// windows and the user chooses one. Returns (png_data_url, width, height).
+#[cfg(target_os = "linux")]
+pub async fn capture_window() -> anyhow::Result<(String, u32, u32)> {
+    grab_one(crate::portal_capture::SourceKind::Window).await
+}
+
+/// One user-picked monitor (same portal path as [`capture_window`], with
+/// `SourceType::MONITOR`) — multi-monitor setups pick the output in the OS
+/// dialog.
+#[cfg(target_os = "linux")]
+pub async fn capture_monitor() -> anyhow::Result<(String, u32, u32)> {
+    grab_one(crate::portal_capture::SourceKind::Monitor).await
+}
+
+/// Grab one frame through the ScreenCast portal and encode it as a PNG data URL.
+#[cfg(target_os = "linux")]
+async fn grab_one(kind: crate::portal_capture::SourceKind) -> anyhow::Result<(String, u32, u32)> {
+    let frame = crate::portal_capture::grab(kind)
+        .await
+        .map_err(anyhow::Error::msg)?;
+    rgb24_to_data_url(&frame.rgb, frame.width, frame.height)
+}
+
+/// Encode a tightly-packed `rgb24` buffer as a PNG data URL.
+///
+/// Validates the buffer length first: `RgbImage::from_raw` returns `None` on a
+/// short buffer, and handing that to the encoder would be a silent blank image.
+pub fn rgb24_to_data_url(rgb: &[u8], width: u32, height: u32) -> anyhow::Result<(String, u32, u32)> {
+    let expected = width as usize * height as usize * 3;
+    if width == 0 || height == 0 || rgb.len() < expected {
+        anyhow::bail!(
+            "captured frame is {} bytes, expected {expected} for {width}x{height}",
+            rgb.len()
+        );
+    }
+
+    let image = image::RgbImage::from_raw(width, height, rgb[..expected].to_vec())
+        .ok_or_else(|| anyhow::anyhow!("cannot build a {width}x{height} RGB image"))?;
+
+    let mut png = Vec::new();
+    let mut cursor = std::io::Cursor::new(&mut png);
+    image::DynamicImage::ImageRgb8(image)
+        .write_to(&mut cursor, image::ImageFormat::Png)
+        .map_err(|e| anyhow::anyhow!("failed to encode the captured frame as PNG: {e}"))?;
+
+    png_bytes_to_data_url(&png)
+}
+
+/// Window/monitor capture is portal-based, so non-Linux builds report the same
+/// honest "not here yet" error as the recording backend instead of pretending.
+#[cfg(not(target_os = "linux"))]
+pub async fn capture_window() -> anyhow::Result<(String, u32, u32)> {
+    anyhow::bail!("window capture is not supported on this platform yet")
+}
+
+#[cfg(not(target_os = "linux"))]
+pub async fn capture_monitor() -> anyhow::Result<(String, u32, u32)> {
+    anyhow::bail!("monitor capture is not supported on this platform yet")
+}
+
 /// Convert the portal's `file://` URI into a local path.
 ///
 /// ashpd 0.14 models URIs as an opaque string, so decoding happens here:
@@ -195,5 +259,27 @@ mod tests {
     #[test]
     fn encode_rejects_garbage() {
         assert!(png_bytes_to_data_url(b"definitely not a png").is_err());
+    }
+
+    #[test]
+    fn rgb24_frames_encode_to_a_png_data_url() {
+        // 2x1 rgb24: one red pixel, one blue pixel.
+        let rgb = [255u8, 0, 0, 0, 0, 255];
+        let (data_url, width, height) = rgb24_to_data_url(&rgb, 2, 1).expect("encode rgb24");
+        assert_eq!((width, height), (2, 1));
+
+        let png = decode_png_data_url(&data_url).expect("decode back");
+        let img = image::load_from_memory(&png).expect("decode png");
+        assert_eq!((img.width(), img.height()), (2, 1));
+        let rgba = img.to_rgba8();
+        assert_eq!(rgba.get_pixel(0, 0).0, [255, 0, 0, 255], "red stays red");
+        assert_eq!(rgba.get_pixel(1, 0).0, [0, 0, 255, 255], "blue stays blue");
+    }
+
+    #[test]
+    fn rgb24_short_buffers_are_rejected() {
+        // 4x4 rgb24 needs 48 bytes; 47 must not become a blank image.
+        assert!(rgb24_to_data_url(&[0u8; 47], 4, 4).is_err());
+        assert!(rgb24_to_data_url(&[], 0, 0).is_err());
     }
 }

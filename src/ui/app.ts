@@ -25,7 +25,36 @@ import {
 
 type CaptureResult = { dataUrl: string; width: number; height: number };
 type StatusKind = "info" | "success" | "error";
-type CaptureMode = "full" | "region" | "scrolling";
+type CaptureMode = "full" | "region" | "window" | "monitor" | "scrolling";
+
+/** Modes that hand the choice to the OS portal picker. */
+const PICKER_MODES = ["window", "monitor"] as const;
+type PickerMode = (typeof PICKER_MODES)[number];
+
+const isPickerMode = (value: string | undefined): value is PickerMode =>
+  value === "window" || value === "monitor";
+
+/** Status line shown while a mode is being prepared. */
+const CAPTURE_READY: Record<CaptureMode, string> = {
+  full: "Capturing screen…",
+  region: "Preparing region capture…",
+  window: "Opening the window picker…",
+  monitor: "Opening the screen picker…",
+  scrolling: "Preparing scrolling capture…",
+};
+
+/** What the countdown overlay calls the pending grab. */
+const CAPTURE_HINT: Record<CaptureMode, string> = {
+  full: "Full screen",
+  region: "Region",
+  window: "Window",
+  monitor: "Screen",
+  scrolling: "Scrolling capture",
+};
+
+/** Portal dismissals and denials arrive as plain errors — read them as cancels. */
+const isCancelled = (message: string): boolean =>
+  /cancel|dismiss|denied|deny|abort|nothing selected/i.test(message);
 
 /** Backend progress payload for a live manual-scroll stitch. */
 type ScrollingStatus = {
@@ -98,6 +127,12 @@ const ICONS = {
   ),
   caret: icon(`<path d="M4.6 6.4 8 9.8l3.4-3.4"/>`, 12),
   full: icon(`<rect x="2.2" y="2.8" width="11.6" height="8.4" rx="1.4"/><path d="M5.4 13.4h5.2"/>`),
+  window: icon(
+    `<rect x="2.4" y="2.8" width="11.2" height="10.4" rx="1.6"/><path d="M2.4 5.9h11.2"/>`,
+  ),
+  monitor: icon(
+    `<rect x="1.6" y="2.6" width="8" height="5.6" rx="1.3"/><rect x="6" y="7" width="8.4" height="5.8" rx="1.3"/>`,
+  ),
   region: icon(
     `<path d="M2.6 6V3.6A1 1 0 0 1 3.6 2.6H6M10 2.6h2.4a1 1 0 0 1 1 1V6M13.4 10v2.4a1 1 0 0 1-1 1H10M6 13.4H3.6a1 1 0 0 1-1-1V10"/>`,
   ),
@@ -386,7 +421,12 @@ const writeStore = (key: string, value: string): void => {
 
 const readMode = (): CaptureMode => {
   const stored = readStore(MODE_KEY);
-  return stored === "region" || stored === "scrolling" ? stored : "full";
+  return stored === "region" ||
+    stored === "window" ||
+    stored === "monitor" ||
+    stored === "scrolling"
+    ? stored
+    : "full";
 };
 
 const readColor = (): string => {
@@ -562,19 +602,32 @@ export function mountApp(root: HTMLElement): void {
             ${ICONS.caret}
           </button>
           <div class="capture-menu" id="capture-menu" role="menu" aria-label="Capture mode" hidden>
-            <button type="button" class="menu-item" role="menuitemradio" data-mode="full" aria-checked="true">
+            <button type="button" class="menu-item" role="menuitemradio" data-mode="full" aria-checked="true" title="Grab every screen at once, straight away">
               <span class="menu-icon">${ICONS.full}</span>
               <span class="menu-label">Full screen</span>
               <span class="menu-check">${ICONS.check}</span>
               <kbd class="menu-key">PrintScreen</kbd>
             </button>
-            <button type="button" class="menu-item" role="menuitemradio" data-mode="region" aria-checked="false">
+            <button type="button" class="menu-item" role="menuitemradio" data-mode="region" aria-checked="false" title="Drag a rectangle on the screen, straight away">
               <span class="menu-icon">${ICONS.region}</span>
               <span class="menu-label">Select region</span>
               <span class="menu-check">${ICONS.check}</span>
-              <kbd class="menu-key">Shift+PrintScreen</kbd>
+              <span class="menu-keys"><kbd>Shift</kbd><kbd>PrintScreen</kbd></span>
             </button>
-            <button type="button" class="menu-item" role="menuitem" data-mode="scrolling" aria-checked="false" title="Select a region, then scroll the page yourself — Capicorn stitches it into one tall image">
+            <button type="button" class="menu-item" role="menuitemradio" data-mode="window" aria-checked="false" title="Pick one window in the system dialog">
+              <span class="menu-icon">${ICONS.window}</span>
+              <span class="menu-label">Window</span>
+              <span class="menu-check">${ICONS.check}</span>
+              <span class="menu-key-space" aria-hidden="true"></span>
+            </button>
+            <button type="button" class="menu-item" role="menuitemradio" data-mode="monitor" aria-checked="false" title="Pick one monitor in the system dialog">
+              <span class="menu-icon">${ICONS.monitor}</span>
+              <span class="menu-label">Choose screen</span>
+              <span class="menu-check">${ICONS.check}</span>
+              <span class="menu-key-space" aria-hidden="true"></span>
+            </button>
+            <div class="menu-sep" role="separator" aria-hidden="true"></div>
+            <button type="button" class="menu-item" role="menuitemradio" data-mode="scrolling" aria-checked="false" title="Select a region, then scroll the page yourself — Capicorn stitches it into one tall image">
               <span class="menu-icon">${ICONS.scrolling}</span>
               <span class="menu-label">Scrolling capture</span>
               <span class="menu-check">${ICONS.check}</span>
@@ -1246,12 +1299,15 @@ export function mountApp(root: HTMLElement): void {
     return { path: typeof path === "string" && path ? path : `${dir}/${filename}`, filename };
   }
 
-  /** Auto-save a freshly loaded capture. Never throws — capture must survive. */
-  async function autoSave(dataUrl: string): Promise<void> {
+  /**
+   * Auto-save a freshly loaded capture. Never throws — capture must survive.
+   * `prefix` replaces the bare "Saved …" wording (e.g. "Captured window 800 × 600").
+   */
+  async function autoSave(dataUrl: string, prefix?: string): Promise<void> {
     try {
       const saved = await writeImage(dataUrl, false);
       if (!saved) return;
-      setStatus(`Saved ${saved.filename}`, "success");
+      setStatus(prefix ? `${prefix} — saved ${saved.filename}` : `Saved ${saved.filename}`, "success");
     } catch (e) {
       setStatus(`Capture kept in the editor — auto-save failed: ${errText(e)}`, "error");
     }
@@ -1334,8 +1390,7 @@ export function mountApp(root: HTMLElement): void {
         timers.push(window.setTimeout(tick, 1000));
       };
 
-      countdownHint.textContent =
-        requested === "full" ? "Full screen · Esc to cancel" : "Region · Esc to cancel";
+      countdownHint.textContent = `${CAPTURE_HINT[requested]} · Esc to cancel`;
       countdownEl.hidden = false;
       document.body.classList.add("is-counting");
       void countdownEl.offsetWidth;
@@ -1492,18 +1547,46 @@ export function mountApp(root: HTMLElement): void {
 
   /* ---------------------------------------------------------------- capture */
 
+  /**
+   * Menu visibility is tracked in JS (not via `hidden` alone) so the close
+   * animation can play out before the panel is actually removed.
+   */
+  let menuOpen = false;
+  let menuCloseTimer: number | null = null;
+
   function setMenuOpen(open: boolean): void {
-    if (open === !menuEl.hidden) return;
-    menuEl.hidden = !open;
-    menuEl.classList.toggle("is-open", open);
+    if (menuCloseTimer !== null) {
+      window.clearTimeout(menuCloseTimer);
+      menuCloseTimer = null;
+    }
+    const wasOpen = menuOpen;
+    menuOpen = open;
     splitEl.classList.toggle("is-open", open);
     caretBtn.setAttribute("aria-expanded", String(open));
+
     if (open) {
+      menuEl.classList.remove("is-closing");
+      if (!wasOpen) {
+        menuEl.hidden = false;
+        menuEl.classList.remove("is-open");
+        void menuEl.offsetWidth;
+        menuEl.classList.add("is-open");
+      }
       const active = menuEl.querySelector<HTMLButtonElement>(".menu-item.is-active");
       (active ?? menuEl.querySelector<HTMLButtonElement>(".menu-item"))?.focus({
         preventScroll: true,
       });
+      return;
     }
+
+    if (!wasOpen || menuEl.hidden) return;
+    menuEl.classList.remove("is-open");
+    menuEl.classList.add("is-closing");
+    menuCloseTimer = window.setTimeout(() => {
+      menuCloseTimer = null;
+      menuEl.hidden = true;
+      menuEl.classList.remove("is-closing");
+    }, 130);
   }
 
   function setMode(next: CaptureMode, announce = false): void {
@@ -1514,36 +1597,46 @@ export function mountApp(root: HTMLElement): void {
       item.classList.toggle("is-active", active);
       item.setAttribute("aria-checked", String(active));
     }
-    const labels: Record<CaptureMode, { short: string; title: string; aria: string }> = {
+    const labels: Record<
+      CaptureMode,
+      { short: string; title: string; aria: string; announce: string }
+    > = {
       full: {
         short: "Full",
         title: "Capture full screen (PrintScreen)",
         aria: "Capture full screen",
+        announce: "Capture mode: full screen.",
       },
       region: {
         short: "Region",
         title: "Select a region to capture (Shift+PrintScreen)",
         aria: "Select region to capture",
+        announce: "Capture mode: select region — press Capture, then drag on the screen.",
+      },
+      window: {
+        short: "Window",
+        title: "Capture a window — pick one in the system dialog",
+        aria: "Capture a window",
+        announce: "Capture mode: window — the system dialog asks which window to grab.",
+      },
+      monitor: {
+        short: "Screen",
+        title: "Choose a screen to capture — pick one in the system dialog",
+        aria: "Choose a screen to capture",
+        announce: "Capture mode: choose screen — the system dialog asks which monitor to grab.",
       },
       scrolling: {
         short: "Scroll",
         title: "Scrolling capture — select a region, then scroll it yourself",
         aria: "Start a scrolling capture",
+        announce: "Scrolling capture: press Capture, drag a region, then scroll it yourself.",
       },
     };
     const copy = labels[next];
     modeLabelEl.textContent = copy.short;
     captureBtn.title = copy.title;
     captureBtn.setAttribute("aria-label", copy.aria);
-    if (announce) {
-      setStatus(
-        next === "full"
-          ? "Capture mode: full screen."
-          : next === "region"
-            ? "Capture mode: select region — press Capture, then drag on the screen."
-            : "Scrolling capture: press Capture, drag a region, then scroll it yourself.",
-      );
-    }
+    if (announce) setStatus(copy.announce);
   }
 
   function setBusy(value: boolean): void {
@@ -1552,6 +1645,7 @@ export function mountApp(root: HTMLElement): void {
     caretBtn.disabled = value;
     recordBtn.disabled = value || recStarting;
     captureBtn.classList.toggle("is-busy", value);
+    splitEl.classList.toggle("is-busy", value);
     if (value) setMenuOpen(false);
   }
 
@@ -1990,6 +2084,50 @@ export function mountApp(root: HTMLElement): void {
     }
   }
 
+  /**
+   * Window / monitor capture: the OS portal shows its own picker, so the only
+   * things we own are the waiting status, the load and the auto-save.
+   */
+  async function runPickerCapture(kind: PickerMode): Promise<void> {
+    const command = kind === "window" ? "capture_window" : "capture_monitor";
+    const what = kind === "window" ? "window" : "screen";
+    let res: CaptureResult;
+    try {
+      res = await invoke<CaptureResult>(command);
+    } catch (e) {
+      const message = errText(e);
+      if (isCancelled(message)) {
+        setStatus("Capture cancelled");
+        return;
+      }
+      setStatus(
+        `${what === "window" ? "Window" : "Screen"} capture failed: ${message}`,
+        "error",
+      );
+      return;
+    }
+    if (!res || typeof res.dataUrl !== "string" || res.dataUrl.length === 0) {
+      // The picker closed without a selection — nothing to report as a failure.
+      setStatus("Capture cancelled");
+      return;
+    }
+    try {
+      await editor.load(res.dataUrl);
+    } catch (e) {
+      setStatus(`Could not open the capture: ${errText(e)}`, "error");
+      return;
+    }
+    setImageState(true);
+    const width = Number(res.width) || 0;
+    const height = Number(res.height) || 0;
+    const size = width > 0 && height > 0 ? ` ${width} × ${height}` : "";
+    const captured = `Captured ${what}${size}`;
+    setStatus(captured, "success");
+    await addRecent(res.dataUrl, kind === "window" ? "Window" : "Screen");
+    syncDirty();
+    await autoSave(res.dataUrl, captured);
+  }
+
   async function runCapture(requested: CaptureMode = mode): Promise<void> {
     if (busy || !guardEl.hidden) return;
     if (recording) {
@@ -2008,13 +2146,7 @@ export function mountApp(root: HTMLElement): void {
         // Let the overlay finish fading out before the screen is grabbed.
         await settle();
       }
-      setStatus(
-        requested === "full"
-          ? "Capturing screen…"
-          : requested === "scrolling"
-            ? "Preparing scrolling capture…"
-            : "Preparing region capture…",
-      );
+      setStatus(CAPTURE_READY[requested]);
       if (requested === "full") {
         const res = await invoke<CaptureResult>("capture_screenshot");
         await editor.load(res.dataUrl);
@@ -2027,6 +2159,10 @@ export function mountApp(root: HTMLElement): void {
       }
       if (requested === "scrolling") {
         await runScrollingCapture();
+        return;
+      }
+      if (isPickerMode(requested)) {
+        await runPickerCapture(requested);
         return;
       }
       await runRegionCapture();
@@ -3081,7 +3217,7 @@ export function mountApp(root: HTMLElement): void {
 
   captureBtn.addEventListener("click", () => void runCapture());
   recordBtn.addEventListener("click", () => void (recording ? stopRecording() : startRecording()));
-  caretBtn.addEventListener("click", () => setMenuOpen(menuEl.hidden));
+  caretBtn.addEventListener("click", () => setMenuOpen(!menuOpen));
 
   // Opening from the caret with ArrowDown is a standard menu affordance.
   caretBtn.addEventListener("keydown", (ev) => {
@@ -3093,12 +3229,16 @@ export function mountApp(root: HTMLElement): void {
   for (const item of Array.from(menuEl.querySelectorAll<HTMLButtonElement>(".menu-item"))) {
     item.addEventListener("click", () => {
       const raw = item.dataset.mode;
-      const next: CaptureMode = raw === "region" ? "region" : raw === "scrolling" ? "scrolling" : "full";
+      const next: CaptureMode =
+        raw === "region" || raw === "window" || raw === "monitor" || raw === "scrolling"
+          ? raw
+          : "full";
       setMode(next, true);
       setMenuOpen(false);
       caretBtn.focus({ preventScroll: true });
-      // Scrolling capture is its own flow — picking it opens the region overlay.
-      if (next === "scrolling") void runCapture("scrolling");
+      // Flow modes start right away: scrolling opens the region overlay, the
+      // picker modes hand over to the OS dialog.
+      if (next === "scrolling" || isPickerMode(next)) void runCapture(next);
     });
   }
 
@@ -3265,7 +3405,9 @@ export function mountApp(root: HTMLElement): void {
 
   // The floating widget asked for a capture of its own.
   void listen<{ mode?: string }>("widget-capture", (ev) => {
-    const requested: CaptureMode = ev.payload?.mode === "region" ? "region" : "full";
+    const raw = ev.payload?.mode;
+    const requested: CaptureMode =
+      raw === "region" || raw === "window" || raw === "monitor" ? raw : "full";
     void runCapture(requested);
   }).catch(() => {
     /* widget window absent */

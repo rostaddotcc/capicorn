@@ -692,6 +692,19 @@ kbd {
   background: var(--accent-solid-hover);
 }
 
+/* Busy: the whole control dims and stops reacting to the pointer. */
+.split-btn.is-busy,
+.split-btn.is-busy:hover {
+  background: var(--accent-solid);
+  cursor: progress;
+}
+
+.split-btn.is-busy .split-main,
+.split-btn.is-busy .split-caret {
+  cursor: progress;
+  opacity: 0.72;
+}
+
 .split-btn .btn-primary {
   background: transparent;
   box-shadow: none;
@@ -714,7 +727,15 @@ kbd {
   font-weight: 600;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: rgba(255, 255, 255, 0.62);
+  color: rgba(255, 255, 255, 0.74);
+  transition: color 140ms var(--ease);
+}
+
+/* A violet ring on a violet button is invisible — use a light one instead. */
+.split-btn .split-main:focus-visible,
+.split-btn .split-caret:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.92);
+  outline-offset: 2px;
 }
 
 .split-btn .split-caret {
@@ -749,18 +770,22 @@ kbd {
 
 .capture-menu {
   position: absolute;
-  top: calc(100% + 8px);
+  top: calc(100% + 10px);
   right: 0;
   z-index: 90;
-  min-width: 288px;
   display: grid;
+  grid-auto-flow: row;
   gap: 2px;
+  width: max-content;
+  min-width: 292px;
+  max-width: min(360px, calc(100vw - 24px));
   padding: 6px;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   box-shadow: var(--shadow-lg);
   transform-origin: top right;
+  overscroll-behavior: contain;
 }
 
 .capture-menu[hidden] {
@@ -769,6 +794,11 @@ kbd {
 
 .capture-menu.is-open {
   animation: capicorn-menu-in 150ms var(--ease);
+}
+
+.capture-menu.is-closing {
+  pointer-events: none;
+  animation: capicorn-menu-out 120ms var(--ease) forwards;
 }
 
 @keyframes capicorn-menu-in {
@@ -782,13 +812,33 @@ kbd {
   }
 }
 
+@keyframes capicorn-menu-out {
+  from {
+    opacity: 1;
+    transform: none;
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.99);
+  }
+}
+
+/* A hairline between the instant modes and the scrolling workflow. */
+.menu-sep {
+  height: 1px;
+  margin: 5px 8px;
+  background: var(--border-strong);
+  opacity: 0.9;
+}
+
 .menu-item {
   display: grid;
-  grid-template-columns: 20px 1fr 16px auto;
+  grid-template-columns: 18px minmax(0, 1fr) 16px auto;
   align-items: center;
   gap: 10px;
   width: 100%;
-  padding: 8px 9px;
+  min-height: 34px;
+  padding: 7px 9px;
   border-radius: var(--radius-sm);
   color: var(--fg-muted);
   font-size: 12.5px;
@@ -798,14 +848,26 @@ kbd {
   transition: background-color 120ms var(--ease), color 120ms var(--ease);
 }
 
-.menu-item:hover,
+.menu-item:hover {
+  background: var(--surface-soft);
+  color: var(--fg);
+}
+
 .menu-item:focus-visible {
   background: var(--surface-soft);
   color: var(--fg);
-  outline: none;
+  outline: 2px solid var(--accent-ring);
+  outline-offset: -2px;
 }
 
-.menu-item.is-active {
+.menu-item:active {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.menu-item.is-active,
+.menu-item.is-active:hover,
+.menu-item.is-active:focus-visible {
   background: var(--accent-soft);
   color: var(--accent-strong);
 }
@@ -814,16 +876,26 @@ kbd {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  width: 18px;
+  height: 18px;
   color: currentColor;
   opacity: 0.9;
 }
 
+.menu-icon svg {
+  display: block;
+}
+
 .menu-label {
   min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .menu-check {
   display: inline-flex;
+  align-items: center;
+  justify-content: center;
   color: var(--accent-strong);
   opacity: 0;
   transition: opacity 120ms var(--ease);
@@ -833,11 +905,27 @@ kbd {
   opacity: 1;
 }
 
-.menu-key {
+.menu-key,
+.menu-keys kbd {
+  justify-self: end;
   font-size: 10px;
-  padding: 1px 5px;
-  color: var(--fg-subtle);
+  line-height: 1.4;
+  padding: 1px 6px;
+  color: var(--fg-muted);
+  background: transparent;
   border-color: var(--border);
+}
+
+.menu-keys {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  justify-self: end;
+}
+
+.menu-item.is-active .menu-key {
+  color: var(--accent-strong);
+  border-color: currentColor;
 }
 
 /* ------------------------------------------------ ink row: palette/stroke */
@@ -1671,6 +1759,13 @@ kbd {
     animation: none;
   }
   .scroll-bar-fill {
+    transition: none;
+  }
+  .capture-menu.is-open,
+  .capture-menu.is-closing {
+    animation: none;
+  }
+  .menu-check {
     transition: none;
   }
 }

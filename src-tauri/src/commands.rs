@@ -3,6 +3,8 @@
 //! | command              | args (camelCase)                     | returns                                  |
 //! |----------------------|--------------------------------------|------------------------------------------|
 //! | `capture_screenshot` | —                                    | `{ dataUrl, width, height }`             |
+//! | `capture_window`     | —                                    | `{ dataUrl, width, height }`             |
+//! | `capture_monitor`    | —                                    | `{ dataUrl, width, height }`             |
 //! | `save_png`           | `dataUrl`, `suggestedName`           | saved path (`string`)                    |
 //! | `copy_png`           | `dataUrl`                            | `void`                                   |
 //! | `get_version`        | —                                    | crate version (`string`)                 |
@@ -52,6 +54,58 @@ pub async fn capture_screenshot(app: tauri::AppHandle) -> Result<CaptureResult, 
     // both the success and the error path, so the window can never be left
     // hidden behind a failed screenshot.
     let captured = crate::capture::capture_full().await;
+
+    if let Some(win) = win.as_ref() {
+        let _ = win.show();
+        let _ = win.set_focus();
+    }
+
+    let (data_url, width, height) = captured.map_err(|e| e.to_string())?;
+    Ok(CaptureResult {
+        data_url,
+        width,
+        height,
+    })
+}
+
+/// Grab one user-picked window as a PNG data URL (Wave 10).
+///
+/// Same hide/settle/restore dance as [`capture_screenshot`]: our own window must
+/// not appear in the shot — and for a window capture it would otherwise be the
+/// most recent entry in the picker's window list. The OS picker then lists every
+/// open window and the user chooses one.
+#[tauri::command]
+pub async fn capture_window(app: tauri::AppHandle) -> Result<CaptureResult, String> {
+    grabbing(app, crate::capture::capture_window).await
+}
+
+/// Grab one user-picked monitor as a PNG data URL (Wave 10).
+///
+/// The picker lists every connected output, so multi-monitor setups choose the
+/// display here rather than being stuck with the primary one.
+#[tauri::command]
+pub async fn capture_monitor(app: tauri::AppHandle) -> Result<CaptureResult, String> {
+    grabbing(app, crate::capture::capture_monitor).await
+}
+
+/// Hide the main window, run `grab`, restore the window, then map the result.
+///
+/// Restore happens before the error is returned, so a failed or cancelled grab
+/// can never leave the app hidden.
+async fn grabbing<F, Fut>(app: tauri::AppHandle, grab: F) -> Result<CaptureResult, String>
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<(String, u32, u32)>>,
+{
+    use tauri::Manager as _;
+
+    let win = app.get_webview_window("main");
+    if let Some(win) = win.as_ref() {
+        let _ = win.hide();
+        tokio::time::sleep(std::time::Duration::from_millis(HIDE_SETTLE_MS)).await;
+    }
+
+    let captured = grab().await;
 
     if let Some(win) = win.as_ref() {
         let _ = win.show();

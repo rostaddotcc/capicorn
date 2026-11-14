@@ -4,6 +4,10 @@ mod commands;
 mod export;
 mod hotkeys;
 mod ocr;
+// Single-frame ScreenCast portal grab (window/monitor capture, Wave 10). Linux
+// only: the other platforms have no ScreenCast portal.
+#[cfg(target_os = "linux")]
+mod portal_capture;
 mod recording;
 mod scrolling;
 mod tray;
@@ -27,6 +31,10 @@ pub fn run() {
         .manage(scrolling::ScrollingState::new())
         .invoke_handler(tauri::generate_handler![
             commands::capture_screenshot,
+            // Wave 10: single-frame capture of one window or one monitor
+            // (ScreenCast portal picker -> PipeWire -> one frame -> PNG)
+            commands::capture_window,
+            commands::capture_monitor,
             commands::save_png,
             commands::copy_png,
             commands::get_version,

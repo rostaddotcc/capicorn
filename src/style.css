@@ -3502,3 +3502,311 @@ kbd {
   }
 }
 
+
+/* ------------------------------------ wave 8: brush, tool size, resize UI */
+
+.props {
+  position: relative;
+}
+
+/* One size knob per tool, painted from the editor's own range. */
+.prop-size .slider-size {
+  width: 100%;
+}
+
+.prop-size.is-muted {
+  opacity: 0.6;
+}
+
+/* The text tool's font size is the rail's headline control. */
+.prop-size.is-hero {
+  margin: 4px 0 2px;
+  padding: 12px 12px 13px;
+  border: 1px solid var(--accent-muted);
+  border-radius: var(--radius);
+  background: linear-gradient(180deg, var(--accent-soft), transparent 150%);
+  box-shadow: var(--shadow-sm);
+}
+
+.prop-size.is-hero .prop-label {
+  color: var(--accent-strong);
+  font-size: 10.5px;
+}
+
+.prop-size.is-hero .prop-value {
+  border-color: var(--accent-muted);
+  background: var(--surface);
+  color: var(--accent-strong);
+  font-size: 11px;
+  padding: 2px 9px;
+}
+
+.prop-size.is-hero .slider {
+  height: 24px;
+}
+
+.prop-size.is-hero .slider::-webkit-slider-runnable-track {
+  height: 6px;
+}
+
+.prop-size.is-hero .slider::-webkit-slider-thumb {
+  width: 16px;
+  height: 16px;
+  margin-top: -5px;
+  border-width: 2.5px;
+}
+
+.prop-resize .resize-open {
+  width: 100%;
+  justify-content: center;
+  font-size: 12px;
+}
+
+.resize-pop {
+  position: absolute;
+  right: 12px;
+  left: 12px;
+  bottom: 42px;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100% - 56px);
+  overflow-y: auto;
+  padding: 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+  animation: resize-in 140ms var(--ease);
+}
+
+.resize-pop[hidden] {
+  display: none;
+}
+
+@keyframes resize-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.985);
+  }
+}
+
+.resize-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.resize-title {
+  margin: 0;
+  font-size: 12.5px;
+  font-weight: 650;
+  letter-spacing: -0.005em;
+  color: var(--fg);
+}
+
+.resize-x {
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+}
+
+.resize-current {
+  margin: 5px 0 10px;
+  font-size: 10.5px;
+  color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.resize-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: end;
+  gap: 6px;
+}
+
+.resize-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.resize-field-label {
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--fg-subtle);
+}
+
+.resize-input {
+  width: 100%;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-soft);
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  transition: border-color 120ms var(--ease), background-color 120ms var(--ease),
+    box-shadow 120ms var(--ease);
+}
+
+.resize-input:hover {
+  border-color: var(--accent-muted);
+}
+
+.resize-input:focus-visible {
+  outline: none;
+  border-color: var(--accent-solid);
+  background: var(--surface);
+  box-shadow: 0 0 0 3px var(--accent-ring);
+}
+
+.resize-times {
+  padding-bottom: 8px;
+  font-size: 11px;
+  color: var(--fg-subtle);
+}
+
+.resize-lock {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 10px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-soft);
+  font-size: 11px;
+  color: var(--fg-muted);
+  cursor: pointer;
+  transition: border-color 130ms var(--ease), color 130ms var(--ease);
+}
+
+.resize-lock:hover {
+  border-color: var(--accent-muted);
+  color: var(--fg);
+}
+
+.resize-lock input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.resize-lock-box {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  background: var(--surface);
+  transition: background-color 130ms var(--ease), border-color 130ms var(--ease);
+}
+
+.resize-lock-mark {
+  width: 7px;
+  height: 4px;
+  margin-top: -1px;
+  border-left: 1.6px solid #fff;
+  border-bottom: 1.6px solid #fff;
+  transform: rotate(-45deg) scale(0);
+  transition: transform 130ms var(--ease);
+}
+
+.resize-lock input:checked + .resize-lock-box {
+  background: var(--accent-solid);
+  border-color: var(--accent-solid);
+}
+
+.resize-lock input:checked + .resize-lock-box .resize-lock-mark {
+  transform: rotate(-45deg) scale(1);
+}
+
+.resize-lock input:focus-visible + .resize-lock-box {
+  box-shadow: 0 0 0 3px var(--accent-ring);
+}
+
+.resize-ratio {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-subtle);
+}
+
+.resize-error {
+  margin: 8px 0 0;
+  font-size: 10.5px;
+  line-height: 1.45;
+  color: var(--danger);
+}
+
+.resize-error[hidden] {
+  display: none;
+}
+
+.resize-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 11px;
+}
+
+.resize-actions .btn-primary,
+.resize-actions .btn-secondary {
+  padding: 5px 12px;
+  font-size: 11.5px;
+}
+
+@media (max-width: 900px) {
+  /* Bottom-bar rail: float the popover ABOVE the bar so it never covers the
+     controls the user is working with. */
+  .resize-pop {
+    right: 8px;
+    left: 8px;
+    bottom: calc(100% + 8px);
+    max-height: 58vh;
+  }
+
+  .prop-size.is-hero {
+    margin: 0;
+    padding: 10px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .resize-pop {
+    animation: none;
+  }
+
+  .resize-input,
+  .resize-lock,
+  .resize-lock-box,
+  .resize-lock-mark {
+    transition: none;
+  }
+}
+
+/* A slightly lighter empty track keeps the size slider legible on dark chrome. */
+.prop-size .slider::-webkit-slider-runnable-track {
+  background: linear-gradient(
+    to right,
+    var(--accent-solid) var(--fill),
+    var(--border-strong) var(--fill)
+  );
+}
+
+.prop-size .slider::-moz-range-track {
+  background: var(--border-strong);
+}

@@ -49,7 +49,14 @@ type InkEditor = Editor & InkApi;
  * callout to `ToolId`. Widen locally so the shell typechecks against either
  * revision of the editor module while the tracks land.
  */
-type ShellToolId = ToolId | "bucket" | "spotlight" | "highlighter" | "callout" | "magnify";
+type ShellToolId =
+  | ToolId
+  | "brush"
+  | "bucket"
+  | "spotlight"
+  | "highlighter"
+  | "callout"
+  | "magnify";
 
 /** Wave 5 blur tuning. Optional so the shell builds against either editor revision. */
 type BlurMode = "gaussian" | "pixelate" | "blackout";
@@ -167,6 +174,14 @@ const TOOLS: ReadonlyArray<{ id: ShellToolId; label: string; hint: string; icon:
     ),
   },
   {
+    id: "brush",
+    label: "Brush",
+    hint: "Freehand pen — size sets the nib",
+    icon: icon(
+      `<path d="M2.9 13.1l.8-3 6.9-6.9 2.2 2.2-6.9 6.9z"/><path d="M9.4 4.3 11.6 6.5"/><path d="M2.6 13.4h3.2"/>`,
+    ),
+  },
+  {
     id: "bucket",
     label: "Bucket",
     hint: "Fill an area with ink (G)",
@@ -269,6 +284,10 @@ const PROPS: Record<string, { hint: string; groups: ReadonlyArray<PropGroup>; st
     hint: "Drag over anything private — intensity sets how hard it hides.",
     groups: ["blur"],
   },
+  brush: {
+    hint: "Drag to draw freehand — size sets the nib.",
+    groups: ["color"],
+  },
   spotlight: {
     hint: "Drag to light a region; everything outside it is dimmed.",
     groups: ["color", "stroke"],
@@ -320,6 +339,18 @@ type TextApi = {
   isTextBold?(): boolean;
   setTextItalic?(italic: boolean): void;
   isTextItalic?(): boolean;
+};
+
+/**
+ * Per-tool size knob + image resize (track E lands it alongside this shell).
+ * Everything optional so the rail degrades quietly on an older editor build.
+ */
+type SizeApi = {
+  getToolSize?(): number;
+  setToolSize?(size: number): void;
+  getToolSizeRange?(): { min: number; max: number; step: number } | null;
+  resizeImage?(width: number, height: number): void;
+  getImageSize?(): { width: number; height: number };
 };
 
 /** Families bundled under src/assets/fonts (OFL). `css` is a safe font-family token. */
@@ -631,6 +662,15 @@ export function mountApp(root: HTMLElement): void {
             <div class="swatches" id="swatches" role="radiogroup" aria-label="Annotation color"></div>
           </section>
 
+          <section class="prop-group prop-size" data-group="size" id="tool-size-group" hidden>
+            <div class="prop-head">
+              <label class="prop-label" id="tool-size-label" for="tool-size">Size</label>
+              <output class="prop-value" id="tool-size-out" for="tool-size">3 px</output>
+            </div>
+            <input type="range" class="slider slider-size" id="tool-size" min="1" max="12" step="1" value="3" aria-labelledby="tool-size-label" />
+            <p class="prop-note" id="tool-size-note"></p>
+          </section>
+
           <section class="prop-group" data-group="stroke">
             <div class="prop-head">
               <h3 class="prop-label" id="stroke-label">Width</h3>
@@ -680,6 +720,44 @@ export function mountApp(root: HTMLElement): void {
             </div>
             <p class="prop-note" id="blur-hint">Drag over anything private.</p>
           </section>
+
+          <section class="prop-group prop-resize" data-group="resize" id="resize-group" hidden>
+            <div class="prop-head">
+              <h3 class="prop-label">Image size</h3>
+              <output class="prop-value" id="image-size-out">—</output>
+            </div>
+            <button type="button" class="btn-secondary resize-open" id="resize-open" aria-expanded="false" aria-controls="resize-pop">Resize…</button>
+          </section>
+        </div>
+
+        <div class="resize-pop" id="resize-pop" hidden role="dialog" aria-labelledby="resize-title">
+          <header class="resize-head">
+            <h3 class="resize-title" id="resize-title">Resize image</h3>
+            <button type="button" class="icon-btn resize-x" id="resize-close" aria-label="Cancel resize" title="Cancel (Esc)">${ICONS.close}</button>
+          </header>
+          <p class="resize-current" id="resize-current">Current: —</p>
+          <div class="resize-fields">
+            <label class="resize-field">
+              <span class="resize-field-label">Width</span>
+              <input type="number" class="resize-input" id="resize-w" min="1" max="8192" step="1" inputmode="numeric" autocomplete="off" />
+            </label>
+            <span class="resize-times" aria-hidden="true">×</span>
+            <label class="resize-field">
+              <span class="resize-field-label">Height</span>
+              <input type="number" class="resize-input" id="resize-h" min="1" max="8192" step="1" inputmode="numeric" autocomplete="off" />
+            </label>
+          </div>
+          <label class="resize-lock">
+            <input type="checkbox" id="resize-lock" checked />
+            <span class="resize-lock-box" aria-hidden="true"><span class="resize-lock-mark"></span></span>
+            <span class="resize-lock-text">Lock aspect ratio</span>
+            <span class="resize-ratio" id="resize-ratio"></span>
+          </label>
+          <p class="resize-error" id="resize-error" role="alert" hidden></p>
+          <div class="resize-actions">
+            <button type="button" class="btn-secondary" id="resize-cancel">Cancel</button>
+            <button type="button" class="btn-primary" id="resize-apply">Apply</button>
+          </div>
         </div>
 
         <footer class="props-foot">Applies to new annotations</footer>
@@ -797,6 +875,24 @@ export function mountApp(root: HTMLElement): void {
   const blurHint = $<HTMLParagraphElement>("#blur-hint");
   const radiusField = $<HTMLDivElement>("#blur-radius-field");
   const propsEl = $<HTMLElement>("#props");
+  const toolSizeGroup = $<HTMLElement>("#tool-size-group");
+  const toolSizeInput = $<HTMLInputElement>("#tool-size");
+  const toolSizeLabel = $<HTMLLabelElement>("#tool-size-label");
+  const toolSizeOut = $<HTMLOutputElement>("#tool-size-out");
+  const toolSizeNote = $<HTMLParagraphElement>("#tool-size-note");
+  const resizeGroup = $<HTMLElement>("#resize-group");
+  const imageSizeOut = $<HTMLOutputElement>("#image-size-out");
+  const resizeOpenBtn = $<HTMLButtonElement>("#resize-open");
+  const resizePop = $<HTMLDivElement>("#resize-pop");
+  const resizeCloseBtn = $<HTMLButtonElement>("#resize-close");
+  const resizeCancelBtn = $<HTMLButtonElement>("#resize-cancel");
+  const resizeApplyBtn = $<HTMLButtonElement>("#resize-apply");
+  const resizeCurrentEl = $<HTMLParagraphElement>("#resize-current");
+  const resizeRatioEl = $<HTMLSpanElement>("#resize-ratio");
+  const resizeWInput = $<HTMLInputElement>("#resize-w");
+  const resizeHInput = $<HTMLInputElement>("#resize-h");
+  const resizeLockInput = $<HTMLInputElement>("#resize-lock");
+  const resizeErrorEl = $<HTMLParagraphElement>("#resize-error");
   const propsBody = $<HTMLDivElement>("#props-body");
   const propsTitle = $<HTMLHeadingElement>("#props-title");
   const propsHint = $<HTMLParagraphElement>("#props-hint");
@@ -1389,6 +1485,7 @@ export function mountApp(root: HTMLElement): void {
     saveBtn.disabled = !loaded;
     ocrBtn.disabled = !loaded;
     pinBtn.disabled = !loaded;
+    paintResizeState();
     syncHistory();
     syncDirty();
   }
@@ -1991,6 +2088,7 @@ export function mountApp(root: HTMLElement): void {
     strokeWidth = width;
     highlightStroke(width);
     writeStore(STROKE_KEY, String(width));
+    if (activeTool !== "text" && activeTool !== "blur") paintToolSize(activeTool);
     if (announce) setStatus(`Stroke width: ${width} px`);
   }
 
@@ -2032,6 +2130,16 @@ export function mountApp(root: HTMLElement): void {
     sizeDownBtn.disabled = next <= 8;
     sizeUpBtn.disabled = next >= 200;
     writeStore(SIZE_KEY, String(next));
+    // Text's size lives in the same knob as the rail slider — keep the editor's
+    // generic tool size in step no matter which control moved.
+    if (activeTool === "text" && sizeRange) {
+      try {
+        sizeApi.setToolSize?.(next);
+      } catch {
+        /* older editor without the generic setter */
+      }
+      paintToolSize("text");
+    }
     if (announce) setStatus(`Text size: ${next} px`);
   }
 
@@ -2135,6 +2243,14 @@ export function mountApp(root: HTMLElement): void {
     }
     writeStore(BLUR_RADIUS_KEY, String(clamped));
     paintBlur();
+    if (activeTool === "blur" && sizeRange) {
+      try {
+        sizeApi.setToolSize?.(clamped);
+      } catch {
+        /* older editor without the generic setter */
+      }
+      paintToolSize("blur");
+    }
     if (announce) setStatus(`Blur intensity: ${clamped}`);
   }
 
@@ -2149,6 +2265,244 @@ export function mountApp(root: HTMLElement): void {
       blurRadius = Math.min(MAX_BLUR_RADIUS, Math.max(MIN_BLUR_RADIUS, Math.round(radius)));
     }
     paintBlur();
+  }
+
+
+  /* ------------------------------------------------- tool size + resize */
+
+  const sizeApi = editor as unknown as SizeApi;
+
+  /** Each tool names its single size knob in its own words. */
+  const SIZE_LABELS: Record<string, string> = {
+    arrow: "Stroke",
+    rect: "Border",
+    brush: "Brush size",
+    bucket: "Spread",
+    step: "Ring width",
+    spotlight: "Feather",
+    highlighter: "Thickness",
+    callout: "Outline",
+    magnify: "Zoom",
+    blur: "Blur radius",
+    text: "Font size",
+  };
+
+  const SIZE_NOTES: Record<string, string> = {
+    brush: "Nib width for freehand strokes.",
+    text: "8–200 px — new labels only.",
+    magnify: "How far the lens zooms in.",
+    blur: "Higher hides more — 2–60 px.",
+    highlighter: "Marker thickness while swiping.",
+  };
+
+  let activeTool: ShellToolId = "select";
+  let sizeRange: { min: number; max: number; step: number } | null = null;
+
+  /** Pixels everywhere except the magnify lens, which is a zoom factor. */
+  const sizeUnit = (id: ShellToolId): string => (id === "magnify" ? "×" : " px");
+
+  const paintSliderFill = (input: HTMLInputElement, min: number, max: number): void => {
+    const span = max - min || 1;
+    const pct = ((Number(input.value) - min) / span) * 100;
+    input.style.setProperty("--fill", `${Math.min(100, Math.max(0, pct))}%`);
+  };
+
+  /** Snap to the range's own step (keeps integer tools integer). */
+  const snapSize = (value: number, range: { min: number; max: number; step: number }): number => {
+    const step = range.step > 0 ? range.step : 1;
+    const snapped = Math.round(value / step) * step;
+    return Math.min(range.max, Math.max(range.min, Math.round(snapped * 100) / 100));
+  };
+
+  /**
+   * Paint the generic size slider for the active tool. Visibility is decided by
+   * the editor's own range, so a tool that has no size knob simply never shows
+   * one — no duplicated per-tool wiring in the shell.
+   */
+  function paintToolSize(id: ShellToolId): void {
+    activeTool = id;
+    const range = sizeApi.getToolSizeRange?.() ?? null;
+    sizeRange = range && range.max > range.min ? range : null;
+    toolSizeGroup.hidden = !sizeRange;
+    toolSizeGroup.classList.toggle("is-hero", id === "text");
+    if (!sizeRange) return;
+
+    const label = SIZE_LABELS[id] ?? "Size";
+    const unit = sizeUnit(id);
+    toolSizeLabel.textContent = label;
+    toolSizeInput.setAttribute(
+      "aria-label",
+      id === "magnify" ? "Magnify zoom factor" : `${label} in pixels`,
+    );
+    toolSizeInput.min = String(sizeRange.min);
+    toolSizeInput.max = String(sizeRange.max);
+    toolSizeInput.step = String(sizeRange.step > 0 ? sizeRange.step : 1);
+
+    const live = sizeApi.getToolSize?.();
+    const fallback = id === "text" ? fontSize : id === "blur" ? blurRadius : strokeWidth;
+    const raw = typeof live === "number" && Number.isFinite(live) ? live : fallback;
+    const value = snapSize(raw, sizeRange);
+    toolSizeInput.value = String(value);
+    toolSizeOut.textContent = `${value}${unit}`;
+    const note = SIZE_NOTES[id] ?? "";
+    toolSizeNote.textContent = note;
+    toolSizeNote.hidden = !note;
+    const dimmed = id === "blur" && blurMode === "blackout";
+    toolSizeInput.disabled = dimmed;
+    toolSizeGroup.classList.toggle("is-muted", dimmed);
+    paintSliderFill(toolSizeInput, sizeRange.min, sizeRange.max);
+  }
+
+  /** One slider writes through to whichever knob the active tool reads. */
+  function applyToolSize(next: number, announce = true): void {
+    if (!sizeRange || !Number.isFinite(next)) return;
+    // Pin the tool for this update: a change event fired mid-write (some editors
+    // notify on size changes) must not re-target the mirror bookkeeping.
+    const tool = activeTool;
+    const value = snapSize(next, sizeRange);
+    try {
+      sizeApi.setToolSize?.(value);
+    } catch (e) {
+      setStatus(`Size failed: ${errText(e)}`, "error");
+      return;
+    }
+    // Keep the shell's mirrors honest so presets and steppers agree.
+    if (tool === "text") applySize(value, false);
+    else if (tool === "blur") applyBlurRadius(value, false);
+    else {
+      strokeWidth = value;
+      highlightStroke(value);
+    }
+    paintToolSize(tool);
+    if (announce) {
+      setStatus(`${SIZE_LABELS[tool] ?? "Size"}: ${value}${sizeUnit(tool)}`);
+    }
+  }
+
+  /* --------------------------------------------------------- image resize */
+
+  let resizeLocked = true;
+  let resizeBase = { width: 0, height: 0 };
+
+  function imageSize(): { width: number; height: number } | null {
+    const size = sizeApi.getImageSize?.();
+    if (size && size.width > 0 && size.height > 0) return size;
+    return null;
+  }
+
+  /** Keep the rail's size readout + Resize affordance in step with the canvas. */
+  function paintResizeState(): void {
+    const size = imageSize();
+    if (size) resizeBase = size;
+    resizeGroup.hidden = !hasImage || typeof sizeApi.resizeImage !== "function";
+    imageSizeOut.textContent = size ? `${size.width} × ${size.height}` : "—";
+    if (!hasImage) closeResize(false);
+  }
+
+  const gcdOf = (a: number, b: number): number => {
+    let x = Math.abs(Math.round(a));
+    let y = Math.abs(Math.round(b));
+    while (y) [x, y] = [y, x % y];
+    return x || 1;
+  };
+
+  const ratioText = (width: number, height: number): string => {
+    if (!width || !height) return "";
+    const divisor = gcdOf(width, height);
+    return `${Math.round(width / divisor)}:${Math.round(height / divisor)}`;
+  };
+
+  const baseRatio = (): number => (resizeBase.height > 0 ? resizeBase.width / resizeBase.height : 1);
+
+  function setResizeError(message: string): void {
+    resizeErrorEl.textContent = message;
+    resizeErrorEl.hidden = !message;
+  }
+
+  function openResize(): void {
+    const size = imageSize();
+    if (!size) {
+      setStatus("Nothing to resize — capture a screen first.", "error");
+      return;
+    }
+    if (typeof sizeApi.resizeImage !== "function") {
+      setStatus("Resize is not available in this build.", "error");
+      return;
+    }
+    resizeBase = size;
+    resizeWInput.value = String(size.width);
+    resizeHInput.value = String(size.height);
+    resizeLockInput.checked = resizeLocked;
+    resizeCurrentEl.textContent = `Current: ${size.width} × ${size.height} px`;
+    resizeRatioEl.textContent = ratioText(size.width, size.height);
+    setResizeError("");
+    resizePop.hidden = false;
+    resizePop.classList.add("is-open");
+    resizeOpenBtn.setAttribute("aria-expanded", "true");
+    resizeWInput.focus({ preventScroll: true });
+    resizeWInput.select();
+  }
+
+  function closeResize(restoreFocus = true): void {
+    if (resizePop.hidden) return;
+    resizePop.hidden = true;
+    resizePop.classList.remove("is-open");
+    resizeOpenBtn.setAttribute("aria-expanded", "false");
+    if (restoreFocus) resizeOpenBtn.focus({ preventScroll: true });
+  }
+
+  function syncResizeFromWidth(): void {
+    if (!resizeLocked) return;
+    const width = Math.round(Number(resizeWInput.value));
+    if (!Number.isFinite(width) || width < 1) return;
+    resizeHInput.value = String(Math.max(1, Math.round(width / baseRatio())));
+  }
+
+  function syncResizeFromHeight(): void {
+    if (!resizeLocked) return;
+    const height = Math.round(Number(resizeHInput.value));
+    if (!Number.isFinite(height) || height < 1) return;
+    resizeWInput.value = String(Math.max(1, Math.round(height * baseRatio())));
+  }
+
+  function applyResize(): void {
+    const size = imageSize() ?? resizeBase;
+    const width = Math.round(Number(resizeWInput.value));
+    const height = Math.round(Number(resizeHInput.value));
+    if (!Number.isFinite(width) || !Number.isFinite(height) || width < 1 || height < 1) {
+      setResizeError("Width and height must each be at least 1 pixel.");
+      return;
+    }
+    if (width > 8192 || height > 8192) {
+      setResizeError("8192 px is the maximum on either side.");
+      return;
+    }
+    if (size.width === width && size.height === height) {
+      setResizeError("");
+      closeResize();
+      setStatus(`Already ${width} × ${height} px — nothing to resize.`);
+      return;
+    }
+    if (typeof sizeApi.resizeImage !== "function") {
+      setResizeError("Resize is not available in this build.");
+      return;
+    }
+    resizeApplyBtn.disabled = true;
+    try {
+      sizeApi.resizeImage(width, height);
+    } catch (e) {
+      resizeApplyBtn.disabled = false;
+      setResizeError(`Resize failed: ${errText(e)}`);
+      return;
+    }
+    resizeApplyBtn.disabled = false;
+    const after = imageSize() ?? { width, height };
+    resizeBase = after;
+    imageSizeOut.textContent = `${after.width} × ${after.height}`;
+    setResizeError("");
+    closeResize();
+    syncDirty();
+    setStatus(`Resized to ${after.width} × ${after.height} px`, "success");
   }
 
 
@@ -2599,6 +2953,45 @@ export function mountApp(root: HTMLElement): void {
   }
   blurRadiusInput.addEventListener("input", () => applyBlurRadius(Number(blurRadiusInput.value), false));
   blurRadiusInput.addEventListener("change", () => applyBlurRadius(Number(blurRadiusInput.value)));
+
+  toolSizeInput.addEventListener("input", () => applyToolSize(Number(toolSizeInput.value), false));
+  toolSizeInput.addEventListener("change", () => applyToolSize(Number(toolSizeInput.value)));
+  toolSizeInput.addEventListener("keydown", (ev) => {
+    if (ev.key !== "ArrowLeft" && ev.key !== "ArrowRight") return;
+    // Let the native range move, then push the snapped value through.
+    window.setTimeout(() => applyToolSize(Number(toolSizeInput.value), false), 0);
+  });
+
+  resizeOpenBtn.addEventListener("click", () => {
+    if (resizePop.hidden) openResize();
+    else closeResize();
+  });
+  resizeCloseBtn.addEventListener("click", () => closeResize());
+  resizeCancelBtn.addEventListener("click", () => closeResize());
+  resizeApplyBtn.addEventListener("click", () => applyResize());
+  resizeWInput.addEventListener("input", syncResizeFromWidth);
+  resizeHInput.addEventListener("input", syncResizeFromHeight);
+  resizeLockInput.addEventListener("change", () => {
+    resizeLocked = resizeLockInput.checked;
+  });
+  for (const input of [resizeWInput, resizeHInput]) {
+    input.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter") {
+        ev.preventDefault();
+        applyResize();
+      } else if (ev.key === "Escape") {
+        ev.preventDefault();
+        closeResize();
+      }
+    });
+  }
+  const onResizeOutside = (ev: PointerEvent): void => {
+    if (resizePop.hidden) return;
+    const target = ev.target as Node | null;
+    if (target && (resizePop.contains(target) || resizeOpenBtn.contains(target))) return;
+    closeResize(false);
+  };
+  document.addEventListener("pointerdown", onResizeOutside);
   blurModesEl.addEventListener("keydown", (ev) => {
     if (ev.key !== "ArrowRight" && ev.key !== "ArrowLeft") return;
     const order: BlurMode[] = ["gaussian", "pixelate", "blackout"];
@@ -2620,9 +3013,15 @@ export function mountApp(root: HTMLElement): void {
     propsHint.textContent = spec.hint;
     strokeLabel.textContent = spec.strokeLabel ?? "Width";
     for (const group of Array.from(propsBody.querySelectorAll<HTMLElement>("[data-group]"))) {
-      group.hidden = !spec.groups.includes((group.dataset.group ?? "") as PropGroup);
+      const key = group.dataset.group ?? "";
+      // Size and Resize are driven by the editor's live capabilities, not the table.
+      if (key === "size" || key === "resize") continue;
+      group.hidden = !spec.groups.includes(key as PropGroup);
     }
-    propsEl.classList.toggle("is-contextless", spec.groups.length === 0);
+    paintToolSize(id);
+    // Blur runs its radius through the generic size slider when the editor has one.
+    radiusField.hidden = !!sizeRange && id === "blur";
+    propsEl.classList.toggle("is-contextless", spec.groups.length === 0 && !sizeRange);
   }
 
   function selectTool(id: ShellToolId, announce = true): void {
@@ -2736,6 +3135,7 @@ export function mountApp(root: HTMLElement): void {
     undoBtn.disabled = !hasImage || !canUndo;
     redoBtn.disabled = !hasImage || !canRedo;
     if (detail?.tool) paintProps(detail.tool as ShellToolId);
+    paintResizeState();
     syncDirty();
   });
 
@@ -2804,6 +3204,11 @@ export function mountApp(root: HTMLElement): void {
   });
 
   const onKeyDown = (ev: KeyboardEvent): void => {
+    if (ev.key === "Escape" && !resizePop.hidden) {
+      ev.preventDefault();
+      closeResize();
+      return;
+    }
     if (ev.code === "PrintScreen" || ev.key === "PrintScreen") {
       ev.preventDefault();
       void runCapture(ev.shiftKey ? "region" : "full");
@@ -2909,6 +3314,7 @@ export function mountApp(root: HTMLElement): void {
   const onUnload = (): void => {
     window.removeEventListener("keydown", onKeyDown);
     document.removeEventListener("pointerdown", onDocPointerDown);
+    document.removeEventListener("pointerdown", onResizeOutside);
     panel?.close();
     editor.destroy();
   };

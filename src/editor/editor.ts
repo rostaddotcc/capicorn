@@ -10,6 +10,8 @@
 import * as fabric from "fabric";
 import {
   DEFAULT_BLUR_RADIUS,
+  MAX_BLUR_RADIUS,
+  MIN_BLUR_RADIUS,
   applyBlurRegion,
   clampBlurRadius,
   highlighter as applyHighlighter,
@@ -20,10 +22,12 @@ import {
 } from "./blur";
 import {
   ACCENT,
+  MAGNIFY_ZOOM,
   MAX_STROKE_WIDTH,
   MIN_STROKE_WIDTH,
   STROKE_WIDTH,
   blurRegionPreview,
+  clampMagnifyZoom,
   type Box,
   type ImageInfo,
   type Point,
@@ -53,7 +57,8 @@ export type ToolId =
   | "callout"
   | "step"
   | "bucket"
-  | "magnify";
+  | "magnify"
+  | "brush";
 
 const TOOL_IDS: readonly ToolId[] = [
   "select",
@@ -68,6 +73,7 @@ const TOOL_IDS: readonly ToolId[] = [
   "step",
   "bucket",
   "magnify",
+  "brush",
 ];
 
 /**
@@ -106,10 +112,68 @@ const DEFAULT_FONT_FAMILY = "Inter";
 const DEFAULT_FONT_SIZE = 32;
 const MIN_FONT_SIZE = 8;
 const MAX_FONT_SIZE = 200;
+/** Freehand brush width limits and default (scene px). */
+const DEFAULT_BRUSH_WIDTH = 4;
+const MIN_BRUSH_WIDTH = 1;
+const MAX_BRUSH_WIDTH = 60;
+/** Step-badge diameter limits and default (scene px). */
+const DEFAULT_STEP_SIZE = 30;
+const MIN_STEP_SIZE = 16;
+const MAX_STEP_SIZE = 64;
+/** Callout caption size limits and default (scene px). */
+const DEFAULT_CALLOUT_FONT_SIZE = 24;
+const MIN_CALLOUT_FONT_SIZE = 12;
+const MAX_CALLOUT_FONT_SIZE = 120;
+/** Spotlight / highlighter outline thickness limits and default (scene px). */
+const DEFAULT_REGION_THICKNESS = 2;
+const MIN_REGION_THICKNESS = 1;
+const MAX_REGION_THICKNESS = 60;
+
+/** Range a tool's size slider spans; `step` is the increment the UI steps by. */
+export interface ToolSizeRange {
+  min: number;
+  max: number;
+  step: number;
+}
+
+/**
+ * The one size each tool exposes. Every tool maps its size onto the setting that
+ * actually changes what you draw, so a single slider drives all of them:
+ * brush→stroke width, arrow/rect→stroke width, text→font size,
+ * blur→radius, step→badge diameter, callout→caption size,
+ * spotlight/highlighter→outline thickness, magnify→zoom.
+ * Tools with no meaningful size (select, crop, bucket) report null.
+ */
+const TOOL_SIZE_RANGES: Record<ToolId, ToolSizeRange | null> = {
+  select: null,
+  crop: null,
+  arrow: { min: MIN_STROKE_WIDTH, max: MAX_STROKE_WIDTH, step: 1 },
+  text: { min: MIN_FONT_SIZE, max: MAX_FONT_SIZE, step: 1 },
+  rect: { min: MIN_STROKE_WIDTH, max: MAX_STROKE_WIDTH, step: 1 },
+  blur: { min: MIN_BLUR_RADIUS, max: MAX_BLUR_RADIUS, step: 1 },
+  spotlight: { min: MIN_REGION_THICKNESS, max: MAX_REGION_THICKNESS, step: 1 },
+  highlighter: { min: MIN_REGION_THICKNESS, max: MAX_REGION_THICKNESS, step: 1 },
+  callout: { min: MIN_CALLOUT_FONT_SIZE, max: MAX_CALLOUT_FONT_SIZE, step: 1 },
+  step: { min: MIN_STEP_SIZE, max: MAX_STEP_SIZE, step: 1 },
+  bucket: null,
+  magnify: { min: 1.2, max: 6, step: 0.1 },
+  brush: { min: MIN_BRUSH_WIDTH, max: MAX_BRUSH_WIDTH, step: 1 },
+};
+
+/** Snap a value into a range on its own step grid. */
+const clampToRange = (value: number, range: ToolSizeRange): number => {
+  if (typeof value !== "number" || !Number.isFinite(value)) return range.min;
+  const step = range.step > 0 ? range.step : 1;
+  const snapped = Math.round((value - range.min) / step) * step + range.min;
+  const clamped = Math.min(Math.max(snapped, range.min), range.max);
+  return Number(clamped.toFixed(step < 1 ? 1 : 0));
+};
 
 interface HistoryEntry {
   json: Record<string, unknown>;
   crop: Box | null;
+  /** Natural pixel size of the screenshot at the time of the entry. */
+  natural: { width: number; height: number };
 }
 
 const isToolId = (value: string): value is ToolId =>
@@ -133,6 +197,12 @@ export class Editor {
   private image: fabric.FabricImage | null = null;
   private sourceDataUrl = "";
   private natural = { width: 1, height: 1 };
+  /**
+   * The capture as decoded pixels. resizeImage() re-samples THIS, so repeated
+   * resizes copy from the original rather than compounding re-encodes, and
+   * undo can rebuild any earlier size.
+   */
+  private base: CanvasImageSource | null = null;
 
   private tool: ToolId = "select";
   private cropBox: Box | null = null;
@@ -150,6 +220,16 @@ export class Editor {
   private fontSize = DEFAULT_FONT_SIZE;
   private textBold = false;
   private textItalic = false;
+  /** Freehand stroke width for NEW brush strokes. */
+  private brushWidth = DEFAULT_BRUSH_WIDTH;
+  /** Diameter of NEW numbered step badges. */
+  private stepSize = DEFAULT_STEP_SIZE;
+  /** Caption font size inside NEW callouts (independent of caption size). */
+  private calloutFontSize = DEFAULT_CALLOUT_FONT_SIZE;
+  /** Outline thickness for NEW spotlight / highlighter regions. */
+  private regionThickness = DEFAULT_REGION_THICKNESS;
+  /** Magnification for NEW lenses. */
+  private magnifyZoom = MAGNIFY_ZOOM;
 
   private history: HistoryEntry[] = [];
   private cursor = -1;
@@ -189,6 +269,11 @@ export class Editor {
       strokeWidth: () => this.inkWidth,
       blurMode: () => this.blurMode,
       blurRadius: () => this.blurRadius,
+      brushWidth: () => this.brushWidth,
+      stepSize: () => this.stepSize,
+      calloutFontSize: () => this.calloutFontSize,
+      regionThickness: () => this.regionThickness,
+      magnifyZoom: () => this.magnifyZoom,
     };
 
     this.canvas.on("mouse:down", this.onMouseDown);
@@ -231,23 +316,11 @@ export class Editor {
     const height = image.height ?? this.natural.height;
     this.natural = { width: Math.max(1, width), height: Math.max(1, height) };
 
-    image.set({
-      left: 0,
-      top: 0,
-      originX: "left",
-      originY: "top",
-      selectable: false,
-      evented: false,
-      hasControls: false,
-      hasBorders: false,
-      hoverCursor: "default",
-      lockMovementX: true,
-      lockMovementY: true,
-      lockRotation: true,
-      // The screenshot is placed through its own transform and is never part of
-      // the serialized history (a capture can be many megabytes).
-      excludeFromExport: true,
-    });
+    // Keep the decoded capture: resizeImage() always re-samples from here.
+    const element = image.getElement();
+    this.base = (element ?? null) as CanvasImageSource | null;
+
+    this.configureImage(image);
 
     this.image = image;
     this.canvas.add(image);
@@ -533,6 +606,238 @@ export class Editor {
 
   isTextItalic(): boolean {
     return this.textItalic;
+  }
+
+  /* ------------------------------------------------------- unified tool size */
+
+  /**
+   * Size range for the ACTIVE tool, or null when the tool has no size
+   * (select, crop, bucket). `step` is the increment the UI should use.
+   */
+  getToolSizeRange(): ToolSizeRange | null {
+    const range = TOOL_SIZE_RANGES[this.tool];
+    return range ? { ...range } : null;
+  }
+
+  /** Active tool's size — 0 for tools without one (check getToolSizeRange). */
+  getToolSize(): number {
+    switch (this.tool) {
+      case "brush":
+        return this.brushWidth;
+      case "arrow":
+      case "rect":
+        return this.inkWidth;
+      case "text":
+        return this.fontSize;
+      case "blur":
+        return this.blurRadius;
+      case "step":
+        return this.stepSize;
+      case "callout":
+        return this.calloutFontSize;
+      case "spotlight":
+      case "highlighter":
+        return this.regionThickness;
+      case "magnify":
+        return this.magnifyZoom;
+      default:
+        return 0;
+    }
+  }
+
+  /**
+   * Set the active tool's size, snapped to the tool's range. Routed through the
+   * specific setters where one exists, so getToolSize() and getStrokeWidth() /
+   * getFontSize() / getBlurRadius() can never disagree.
+   */
+  setToolSize(size: number): void {
+    if (typeof size !== "number" || !Number.isFinite(size)) return;
+    const range = TOOL_SIZE_RANGES[this.tool];
+    if (!range) return;
+    const value = clampToRange(size, range);
+
+    switch (this.tool) {
+      case "brush":
+        this.brushWidth = Math.round(value);
+        break;
+      case "step":
+        this.stepSize = Math.round(value);
+        break;
+      case "callout":
+        this.calloutFontSize = Math.round(value);
+        break;
+      case "arrow":
+      case "rect":
+        this.setStrokeWidth(value);
+        return;
+      case "text":
+        this.setFontSize(value);
+        return;
+      case "blur":
+        this.setBlurRadius(value);
+        return;
+      case "spotlight":
+      case "highlighter": {
+        const changed = this.regionThickness !== value;
+        this.regionThickness = value;
+        if (this.retuneRegionSelection()) return;
+        if (changed) this.notify();
+        return;
+      }
+      case "magnify": {
+        const zoom = clampMagnifyZoom(value);
+        const changed = this.magnifyZoom !== zoom;
+        this.magnifyZoom = zoom;
+        if (this.retuneLensSelection()) return;
+        if (changed) this.notify();
+        return;
+      }
+      default:
+        return;
+    }
+    this.notify();
+  }
+
+  /** Apply the active thickness to selected spotlight/highlighter regions. */
+  private retuneRegionSelection(): boolean {
+    if (this.restoring) return false;
+    const targets = this.canvas
+      .getActiveObjects()
+      .filter((object) => isSpotlightRegion(object) || isHighlighterRegion(object));
+    if (!targets.length) return false;
+    for (const region of targets) {
+      if (!isSpotlightRegion(region) && !isHighlighterRegion(region)) continue;
+      region.thickness = this.regionThickness;
+      region.set({
+        // Spotlight paints its edge itself; the highlighter's edge is its stroke.
+        strokeWidth: isHighlighterRegion(region) ? this.regionThickness : 0,
+        strokeUniform: true,
+      });
+      region.dirty = true;
+    }
+    this.commit();
+    this.canvas.requestRenderAll();
+    return true;
+  }
+
+  /** Apply the active zoom to selected lenses. */
+  private retuneLensSelection(): boolean {
+    if (this.restoring) return false;
+    const targets = this.canvas.getActiveObjects().filter(isMagnifyRegion);
+    if (!targets.length) return false;
+    for (const lens of targets) lens.zoom = this.magnifyZoom;
+    this.commit();
+    this.canvas.requestRenderAll();
+    return true;
+  }
+
+  /* ----------------------------------------------------------- image resize */
+
+  /** Natural (pixel) size of the loaded screenshot; 0x0 before load(). */
+  getImageSize(): { width: number; height: number } {
+    if (!this.image) return { width: 0, height: 0 };
+    return {
+      width: Math.max(1, Math.round(this.natural.width)),
+      height: Math.max(1, Math.round(this.natural.height)),
+    };
+  }
+
+  /**
+   * Re-sample the screenshot to `width` x `height` pixels (each clamped to >= 1).
+   *
+   * The new pixels are drawn from the ORIGINAL capture, so repeated resizes do
+   * not compound re-encodes. Annotations and the crop follow the image's new
+   * on-screen box (layout() rebases them about the image origin), the natural
+   * size is updated, and the change is committed, so undo restores both the
+   * pixels and the annotation geometry.
+   */
+  resizeImage(width: number, height: number): void {
+    if (this.destroyed || this.restoring) return;
+    if (!this.image || !this.base) return;
+    if (typeof width !== "number" || typeof height !== "number") return;
+    if (!Number.isFinite(width) || !Number.isFinite(height)) return;
+
+    const nextWidth = Math.max(1, Math.round(width));
+    const nextHeight = Math.max(1, Math.round(height));
+    if (
+      nextWidth === Math.round(this.natural.width) &&
+      nextHeight === Math.round(this.natural.height)
+    ) {
+      return;
+    }
+
+    const rebuilt = this.buildImage(nextWidth, nextHeight);
+    if (!rebuilt) return;
+
+    // Park the new layer where the old one sits; layout() then rescales the ink
+    // from the old display box to the new one.
+    const previous = this.imageBox();
+    rebuilt.image.set({
+      left: previous.left,
+      top: previous.top,
+      scaleX: previous.width / nextWidth,
+      scaleY: previous.height / nextHeight,
+    });
+    rebuilt.image.setCoords();
+
+    const stale = this.image;
+    this.canvas.remove(stale);
+    this.canvas.insertAt(0, rebuilt.image);
+    this.image = rebuilt.image;
+    this.natural = { width: nextWidth, height: nextHeight };
+    this.sourceDataUrl = rebuilt.dataUrl;
+
+    this.layout(true);
+    this.applyInteractivity();
+    this.commit();
+    this.canvas.requestRenderAll();
+  }
+
+  /** Screenshot flags: never selectable, never serialized into history. */
+  private configureImage(image: fabric.FabricImage): fabric.FabricImage {
+    image.set({
+      left: 0,
+      top: 0,
+      originX: "left",
+      originY: "top",
+      selectable: false,
+      evented: false,
+      hasControls: false,
+      hasBorders: false,
+      hoverCursor: "default",
+      lockMovementX: true,
+      lockMovementY: true,
+      lockRotation: true,
+      // The screenshot is placed through its own transform and is never part of
+      // the serialized history (a capture can be many megabytes).
+      excludeFromExport: true,
+    });
+    return image;
+  }
+
+  /** Re-sample the base capture at `width` x `height` as a fresh image layer. */
+  private buildImage(
+    width: number,
+    height: number,
+  ): { image: fabric.FabricImage; dataUrl: string } | null {
+    const base = this.base;
+    if (!base) return null;
+
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(width));
+    canvas.height = Math.max(1, Math.round(height));
+    const context = canvas.getContext("2d");
+    if (!context) return null;
+    context.imageSmoothingEnabled = true;
+    context.imageSmoothingQuality = "high";
+    try {
+      context.drawImage(base, 0, 0, canvas.width, canvas.height);
+    } catch {
+      return null;
+    }
+
+    const image = this.configureImage(new fabric.FabricImage(canvas));
+    return { image, dataUrl: canvas.toDataURL("image/png") };
   }
 
   /* --------------------------------------------------------------- tool glue */
@@ -907,6 +1212,7 @@ export class Editor {
       {
         json: this.canvas.toObject() as Record<string, unknown>,
         crop: this.cropBox ? { ...this.cropBox } : null,
+        natural: { ...this.natural },
       },
     ];
     this.cursor = 0;
@@ -919,6 +1225,7 @@ export class Editor {
     this.history.push({
       json: this.canvas.toObject() as Record<string, unknown>,
       crop: this.cropBox ? { ...this.cropBox } : null,
+      natural: { ...this.natural },
     });
     while (this.history.length > MAX_HISTORY) this.history.shift();
     this.cursor = this.history.length - 1;
@@ -930,9 +1237,10 @@ export class Editor {
     if (!entry) return;
     const json = JSON.parse(JSON.stringify(entry.json)) as Record<string, unknown>;
     const crop = entry.crop ? { ...entry.crop } : null;
+    const natural = { ...entry.natural };
     this.restoring = true;
     this.pending = this.pending
-      .then(() => this.applyEntry(json, crop))
+      .then(() => this.applyEntry(json, crop, natural))
       .catch((error: unknown) => {
         this.restoring = false;
         console.error("Capicorn: could not restore canvas state", error);
@@ -940,17 +1248,48 @@ export class Editor {
     this.notify();
   }
 
-  private async applyEntry(json: Record<string, unknown>, crop: Box | null): Promise<void> {
+  private async applyEntry(
+    json: Record<string, unknown>,
+    crop: Box | null,
+    natural: { width: number; height: number },
+  ): Promise<void> {
     if (this.destroyed) return;
     const canvas = this.canvas;
     canvas.discardActiveObject();
+
+    // The screenshot is not part of the serialized state, so a restore that
+    // changes the pixel density has to rebuild it at the recorded size first.
+    const width = Math.max(1, Math.round(natural.width));
+    const height = Math.max(1, Math.round(natural.height));
+    if (
+      width !== Math.round(this.natural.width) ||
+      height !== Math.round(this.natural.height)
+    ) {
+      const rebuilt = this.buildImage(width, height);
+      if (rebuilt) {
+        this.image = rebuilt.image;
+        this.natural = { width, height };
+        this.sourceDataUrl = rebuilt.dataUrl;
+      }
+    }
 
     await canvas.loadFromJSON(json);
     this.chrome.clear();
 
     // loadFromJSON clears everything, including the screenshot object.
-    if (this.image && !canvas.getObjects().includes(this.image)) {
-      canvas.insertAt(0, this.image);
+    const image = this.image;
+    if (image) {
+      if (!canvas.getObjects().includes(image)) canvas.insertAt(0, image);
+      // Re-fit at the restored natural size: annotations keep the coordinates
+      // they were authored in (same size + same container ⇒ same display box).
+      const box = this.imageBoxFor(canvas.getWidth(), canvas.getHeight());
+      image.set({
+        left: box.left,
+        top: box.top,
+        scaleX: box.width / this.natural.width,
+        scaleY: box.height / this.natural.height,
+      });
+      image.setCoords();
     }
 
     this.cropBox = crop ? this.clampToImage(crop) : null;

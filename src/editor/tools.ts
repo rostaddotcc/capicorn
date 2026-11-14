@@ -83,9 +83,16 @@ export const isBlurRegion = (
  */
 export class SpotlightRegion extends fabric.Rect {
   static type = "capicorn_spotlight";
+  /** Outline thickness (user selected) survives undo/redo. */
+  static customProperties = ["thickness"];
+  thickness = 2;
 
-  constructor(options: RectOptions = {}) {
-    super(options);
+  constructor(options: RectOptions & { thickness?: number } = {}) {
+    const { thickness, ...rect } = options;
+    super(rect as RectOptions);
+    if (typeof thickness === "number" && Number.isFinite(thickness)) {
+      this.thickness = Math.max(1, thickness);
+    }
     // A cached object would clip the dimming to its own bounding box.
     this.objectCaching = false;
   }
@@ -106,7 +113,7 @@ export class SpotlightRegion extends fabric.Rect {
 
     context.save();
     context.strokeStyle = "rgba(255, 255, 255, 0.9)";
-    context.lineWidth = 1;
+    context.lineWidth = Math.max(1, Math.min(60, this.thickness || 1));
     context.setLineDash([6, 4]);
     context.strokeRect(0.5, 0.5, width - 1, height - 1);
     context.restore();
@@ -121,17 +128,28 @@ export const isSpotlightRegion = (
 /** Highlighter: translucent ink rectangle, multiplied into the pixels. */
 export class HighlighterRegion extends fabric.Rect {
   static type = "capicorn_highlight";
-  static customProperties = ["ink", "alpha"];
+  static customProperties = ["ink", "alpha", "thickness"];
   /** Colour baked in at creation, so later ink changes do not recolour it. */
   ink = "#ffe066";
   alpha = HIGHLIGHTER_ALPHA;
+  /**
+   * Outline thickness of the live preview, in scene px. Effect regions are
+   * swapped for pixels on export, so this edge is editing chrome only (same
+   * convention as the blur region's dashed outline).
+   */
+  thickness = 2;
 
-  constructor(options: RectOptions & { ink?: string; alpha?: number } = {}) {
-    const { ink, alpha, ...rect } = options;
+  constructor(
+    options: RectOptions & { ink?: string; alpha?: number; thickness?: number } = {},
+  ) {
+    const { ink, alpha, thickness, ...rect } = options;
     super(rect as RectOptions);
     if (typeof ink === "string" && ink.trim()) this.ink = ink.trim();
     if (typeof alpha === "number" && Number.isFinite(alpha)) {
       this.alpha = Math.min(Math.max(alpha, 0.05), 1);
+    }
+    if (typeof thickness === "number" && Number.isFinite(thickness)) {
+      this.thickness = Math.max(1, thickness);
     }
     this.set({
       fill: this.ink,
@@ -190,6 +208,16 @@ export interface ToolHost {
   blurMode(): BlurMode;
   /** Gaussian radius / pixelate block size for NEW blur regions, in scene px. */
   blurRadius(): number;
+  /** Freehand stroke width for NEW brush strokes, in scene px. */
+  brushWidth(): number;
+  /** Diameter of a new numbered step badge, in scene px. */
+  stepSize(): number;
+  /** Caption font size inside a new callout, in scene px. */
+  calloutFontSize(): number;
+  /** Outline thickness for new spotlight/highlighter regions, in scene px. */
+  regionThickness(): number;
+  /** Magnification for a new lens. */
+  magnifyZoom(): number;
 }
 
 export interface Tool {
@@ -471,6 +499,7 @@ class SpotlightTool extends RegionTool<SpotlightRegion> {
   readonly id: ToolId = "spotlight";
 
   protected createRegion(point: Point): SpotlightRegion {
+    const thickness = this.host.regionThickness();
     return new SpotlightRegion({
       left: point.x,
       top: point.y,
@@ -478,6 +507,7 @@ class SpotlightTool extends RegionTool<SpotlightRegion> {
       height: 1,
       originX: "left",
       originY: "top",
+      thickness,
       // The dimming is painted by the region itself (see SpotlightRegion._render).
       fill: "transparent",
       stroke: "transparent",
@@ -493,6 +523,8 @@ class HighlighterTool extends RegionTool<HighlighterRegion> {
   readonly id: ToolId = "highlighter";
 
   protected createRegion(point: Point): HighlighterRegion {
+    const ink = this.host.color();
+    const thickness = this.host.regionThickness();
     return new HighlighterRegion({
       left: point.x,
       top: point.y,
@@ -500,9 +532,12 @@ class HighlighterTool extends RegionTool<HighlighterRegion> {
       height: 1,
       originX: "left",
       originY: "top",
-      ink: this.host.color(),
-      stroke: "transparent",
-      strokeWidth: 0,
+      ink,
+      thickness,
+      // Preview-only edge: the region itself never exports (only its tint does).
+      stroke: ink,
+      strokeWidth: thickness,
+      strokeUniform: true,
       selectable: false,
       evented: false,
       objectCaching: false,
@@ -719,7 +754,8 @@ class StepTool implements Tool {
 
   onPointerDown(point: Point): void {
     const number = this.host.nextStepNumber();
-    const radius = 15;
+    const diameter = Math.max(16, Math.min(64, this.host.stepSize()));
+    const radius = diameter / 2;
     const badge = new fabric.Circle({
       radius,
       left: 0,
@@ -728,16 +764,16 @@ class StepTool implements Tool {
       originY: "center",
       fill: this.host.color(),
       stroke: "#ffffff",
-      strokeWidth: 2,
+      strokeWidth: Math.max(2, Math.round(diameter * 0.07)),
       strokeUniform: true,
     });
     const label = new fabric.Text(String(number), {
       left: 0,
-      top: 1,
+      top: 0,
       originX: "center",
       originY: "center",
       fontFamily: FONT_STACK,
-      fontSize: 17,
+      fontSize: Math.max(10, Math.round(diameter * 0.56)),
       fontWeight: "700",
       fill: "#ffffff",
     });
@@ -854,9 +890,11 @@ class CalloutTool extends DragTool {
   ): { group: fabric.Group; text: fabric.IText } {
     const ink = this.host.color();
     const style = this.host.textStyle();
+    // The callout has its own size control (12..120), independent of captions;
+    // still capped so a long word cannot overrun the balloon.
     const fontSize = Math.max(
-      10,
-      Math.round(Math.min(style.fontSize, height / 3, width / 8)),
+      12,
+      Math.min(120, Math.round(this.host.calloutFontSize()), Math.round(width / 4)),
     );
 
     // Tail first so the body's fill hides the seam where they overlap.
@@ -1449,7 +1487,7 @@ class MagnifyTool extends RegionTool<MagnifyRegion> {
       height: 1,
       originX: "left",
       originY: "top",
-      zoom: MAGNIFY_ZOOM,
+      zoom: this.host.magnifyZoom(),
       selectable: false,
       evented: false,
       objectCaching: false,
@@ -1457,8 +1495,142 @@ class MagnifyTool extends RegionTool<MagnifyRegion> {
   }
 }
 
+/* ------------------------------------------------------------------- brush */
+
+/** Minimum pointer travel (scene px) before another sample point is kept. */
+const BRUSH_SAMPLE = 1.5;
+/** Cap on samples per stroke — keeps the path string (and export) sane. */
+const BRUSH_MAX_POINTS = 1200;
+
+/**
+ * Freehand path with quadratic smoothing: each sample becomes a control point
+ * and the curve runs through the midpoints between samples, so the result is
+ * smooth without the overshoot a spline would add.
+ */
+export const smoothPathData = (points: Point[]): string => {
+  if (!points.length) return "";
+  const round = (value: number): number => Math.round(value * 100) / 100;
+  if (points.length === 1) {
+    const only = points[0];
+    // A tap still marks: a zero-length round-capped segment is a dot.
+    return `M ${round(only.x)} ${round(only.y)} L ${round(only.x + 0.01)} ${round(only.y)}`;
+  }
+  const first = points[0];
+  let data = `M ${round(first.x)} ${round(first.y)}`;
+  for (let index = 1; index < points.length - 1; index += 1) {
+    const control = points[index];
+    const next = points[index + 1];
+    const midX = (control.x + next.x) / 2;
+    const midY = (control.y + next.y) / 2;
+    data += ` Q ${round(control.x)} ${round(control.y)} ${round(midX)} ${round(midY)}`;
+  }
+  const last = points[points.length - 1];
+  data += ` L ${round(last.x)} ${round(last.y)}`;
+  return data;
+};
+
+/**
+ * Freehand pen: samples the pointer, previews the smoothed stroke live and
+ * commits ONE fabric.Path on release (selectable, movable, undoable, exported
+ * by flatten() like any other annotation).
+ */
+class BrushTool implements Tool {
+  readonly id: ToolId = "brush";
+  readonly cursor = "crosshair";
+
+  private points: Point[] = [];
+  /** The live preview / final stroke (same object, rebuilt as points arrive). */
+  private stroke: fabric.Path | null = null;
+  private drawing = false;
+
+  constructor(private readonly host: ToolHost) {}
+
+  activate(): void {}
+  deactivate(): void {
+    this.cancel();
+  }
+
+  cancel(): void {
+    this.drawing = false;
+    this.points = [];
+    const stroke = this.stroke;
+    this.stroke = null;
+    if (stroke) this.host.removeObject(stroke);
+  }
+
+  onPointerDown(point: Point): void {
+    this.cancel();
+    this.drawing = true;
+    this.points = [clampPoint(point, this.host.bounds())];
+    this.paint();
+  }
+
+  onPointerMove(point: Point): void {
+    if (!this.drawing) return;
+    const next = clampPoint(point, this.host.bounds());
+    const last = this.points[this.points.length - 1];
+    if (!last) return;
+    if (Math.hypot(next.x - last.x, next.y - last.y) < BRUSH_SAMPLE) return;
+    if (this.points.length >= BRUSH_MAX_POINTS) return;
+    this.points.push(next);
+    this.paint();
+  }
+
+  onPointerUp(point: Point): void {
+    if (!this.drawing) return;
+    const end = clampPoint(point, this.host.bounds());
+    const last = this.points[this.points.length - 1];
+    if (last && Math.hypot(end.x - last.x, end.y - last.y) >= BRUSH_SAMPLE) {
+      this.points.push(end);
+    }
+    this.drawing = false;
+    this.paint();
+
+    const stroke = this.stroke;
+    this.stroke = null;
+    this.points = [];
+    if (!stroke) return;
+    this.host.commit();
+    this.host.canvas.requestRenderAll();
+  }
+
+  onEscape(): boolean {
+    if (!this.drawing) return false;
+    this.cancel();
+    this.host.canvas.requestRenderAll();
+    return true;
+  }
+
+  /** Rebuild the preview path from the current samples. */
+  private paint(): void {
+    const data = smoothPathData(this.points);
+    const previous = this.stroke;
+    this.stroke = null;
+    if (previous) this.host.removeObject(previous);
+    if (!data) return;
+
+    const stroke = new fabric.Path(data, {
+      fill: "transparent",
+      stroke: this.host.color(),
+      strokeWidth: this.host.brushWidth(),
+      strokeLineCap: "round",
+      strokeLineJoin: "round",
+      strokeUniform: true,
+      paintFirst: "stroke",
+      selectable: false,
+      evented: false,
+      objectCaching: false,
+    });
+    this.stroke = stroke;
+    this.host.addObject(stroke);
+    this.host.canvas.requestRenderAll();
+  }
+}
+
 export const createTool = (id: ToolId, host: ToolHost): Tool => {
   switch (id) {
+    case "brush":
+      return new BrushTool(host);
     case "magnify":
       return new MagnifyTool(host);
     case "arrow":

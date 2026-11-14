@@ -38,7 +38,7 @@ type InkEditor = Editor & InkApi;
  * callout to `ToolId`. Widen locally so the shell typechecks against either
  * revision of the editor module while the tracks land.
  */
-type ShellToolId = ToolId | "bucket" | "spotlight" | "highlighter" | "callout";
+type ShellToolId = ToolId | "bucket" | "spotlight" | "highlighter" | "callout" | "magnify";
 
 /** Wave 5 blur tuning. Optional so the shell builds against either editor revision. */
 type BlurMode = "gaussian" | "pixelate" | "blackout";
@@ -47,6 +47,26 @@ type BlurApi = {
   getBlurMode?(): BlurMode;
   setBlurRadius?(radius: number): void;
   getBlurRadius?(): number;
+};
+
+/**
+ * Wave 7 style contract: one flat snapshot of everything the editor draws with,
+ * so the shell can save it as a named preset. Methods stay optional, so the
+ * shell also builds against an editor revision that has not shipped them yet.
+ */
+type EditorStyle = {
+  color: string;
+  strokeWidth: number;
+  fontFamily: string;
+  fontSize: number;
+  bold: boolean;
+  italic: boolean;
+  blurMode: BlurMode;
+  blurRadius: number;
+};
+type StyleApi = {
+  getStyle?(): Partial<EditorStyle>;
+  applyStyle?(patch: Partial<EditorStyle>): void;
 };
 
 type ChangeDetail = { tool?: ToolId; canUndo?: boolean; canRedo?: boolean };
@@ -78,6 +98,16 @@ const ICONS = {
   ),
   settings: icon(
     `<path d="M2.6 5.2h10.8M2.6 10.8h10.8"/><circle cx="6" cy="5.2" r="1.8"/><circle cx="10.2" cy="10.8" r="1.8"/>`,
+  ),
+  close: icon(`<path d="M4.6 4.6 11.4 11.4M11.4 4.6 4.6 11.4"/>`, 14, 1.7),
+  ocr: icon(
+    `<path d="M2.6 5.4V3.6a1 1 0 0 1 1-1h1.8M10.6 2.6h1.8a1 1 0 0 1 1 1v1.8M13.4 10.6v1.8a1 1 0 0 1-1 1h-1.8M5.4 13.4H3.6a1 1 0 0 1-1-1v-1.8"/><path d="M5.6 5.8h4.8M5.6 8h3.2M5.6 10.2h4"/>`,
+  ),
+  pin: icon(
+    `<path d="M6.2 2.6h3.6l-.6 3.3 2.4 2.3v1.3H8.8V13l-.8.9-.8-.9V9.5H4.4V8.2l2.4-2.3z"/>`,
+  ),
+  film: icon(
+    `<rect x="2.4" y="4" width="11.2" height="8" rx="1.4"/><path d="M5.2 4v8M10.8 4v8"/><path d="M5.2 7.2h5.6M5.2 9.6h5.6"/>`,
   ),
 };
 
@@ -158,6 +188,14 @@ const TOOLS: ReadonlyArray<{ id: ShellToolId; label: string; hint: string; icon:
     hint: "Numbered callout steps (S)",
     icon: icon(`<circle cx="8" cy="8" r="5.5"/><path d="M7.1 6.3 8.2 5.5v5M6.6 10.5h3.2"/>`),
   },
+  {
+    id: "magnify",
+    label: "Magnify",
+    hint: "Zoom lens over a small detail",
+    icon: icon(
+      `<circle cx="7.1" cy="7.1" r="3.7"/><path d="M9.9 9.9 13.4 13.4"/><path d="M5.5 7.1h3.2M7.1 5.5v3.2"/>`,
+    ),
+  },
 ];
 
 const COLORS: ReadonlyArray<{ name: string; hex: string }> = [
@@ -229,6 +267,11 @@ const PROPS: Record<string, { hint: string; groups: ReadonlyArray<PropGroup>; st
     hint: "Click to place a speech bubble, then type the note.",
     groups: ["color", "font", "stroke"],
     strokeLabel: "Outline",
+  },
+  magnify: {
+    hint: "Drag over a detail to magnify it — width sets the lens border.",
+    groups: ["color", "stroke"],
+    strokeLabel: "Lens border",
   },
 };
 
@@ -337,6 +380,99 @@ const readBlurRadius = (): number => {
   return Math.min(MAX_BLUR_RADIUS, Math.max(MIN_BLUR_RADIUS, Math.round(stored)));
 };
 
+/* ------------------------------------------------- new: presets / recents */
+
+const PRESETS_KEY = "capicorn:presets";
+const FILM_KEY = "capicorn:filmstrip-open";
+const OCR_LANG_KEY = "capicorn:ocr-lang";
+const RECENT_LIMIT = 12;
+
+type OcrLang = "eng" | "swe";
+const OCR_LANGS: ReadonlyArray<{ id: OcrLang; label: string }> = [
+  { id: "eng", label: "English" },
+  { id: "swe", label: "Swedish" },
+];
+
+/** A named, partial style snapshot (partial so a preset only touches what it sets). */
+type EditorPreset = { name: string; style: Partial<EditorStyle> };
+
+/** One capture in the filmstrip: full image for reloading, tiny thumb for the strip. */
+type RecentShot = {
+  id: string;
+  dataUrl: string;
+  thumb: string;
+  ts: number;
+  format: ExportFormat;
+  label: string;
+};
+
+const escapeHtml = (value: string): string =>
+  value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+
+const SEED_PRESETS: ReadonlyArray<EditorPreset> = [
+  { name: "Red arrow", style: { color: "#ff3b30", strokeWidth: 3 } },
+  { name: "Highlight", style: { color: "#ffcc00", strokeWidth: 5 } },
+  { name: "Blur strong", style: { blurMode: "gaussian", blurRadius: 40 } },
+];
+
+/** Keep only the fields the editor understands, clamped to the rail's ranges. */
+const sanitizeStyle = (value: unknown): Partial<EditorStyle> => {
+  const out: Partial<EditorStyle> = {};
+  if (!value || typeof value !== "object") return out;
+  const src = value as Record<string, unknown>;
+  if (typeof src.color === "string" && /^#[0-9a-f]{6}$/i.test(src.color)) {
+    out.color = src.color.toLowerCase();
+  }
+  if (typeof src.strokeWidth === "number" && Number.isFinite(src.strokeWidth)) {
+    out.strokeWidth = Math.min(12, Math.max(1, Math.round(src.strokeWidth)));
+  }
+  if (typeof src.fontFamily === "string" && src.fontFamily.trim()) {
+    out.fontFamily = src.fontFamily.trim().slice(0, 48);
+  }
+  if (typeof src.fontSize === "number" && Number.isFinite(src.fontSize)) {
+    out.fontSize = Math.min(200, Math.max(8, Math.round(src.fontSize)));
+  }
+  if (typeof src.bold === "boolean") out.bold = src.bold;
+  if (typeof src.italic === "boolean") out.italic = src.italic;
+  if (src.blurMode === "gaussian" || src.blurMode === "pixelate" || src.blurMode === "blackout") {
+    out.blurMode = src.blurMode;
+  }
+  if (typeof src.blurRadius === "number" && Number.isFinite(src.blurRadius)) {
+    out.blurRadius = Math.min(MAX_BLUR_RADIUS, Math.max(MIN_BLUR_RADIUS, Math.round(src.blurRadius)));
+  }
+  return out;
+};
+
+const readPresets = (): EditorPreset[] => {
+  const raw = readStore(PRESETS_KEY);
+  if (raw === null) {
+    writeStore(PRESETS_KEY, JSON.stringify(SEED_PRESETS));
+    return SEED_PRESETS.map((p) => ({ name: p.name, style: { ...p.style } }));
+  }
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    const list: EditorPreset[] = [];
+    for (const entry of parsed) {
+      if (!entry || typeof entry !== "object") continue;
+      const src = entry as { name?: unknown; style?: unknown };
+      const name = typeof src.name === "string" ? src.name.trim().slice(0, 32) : "";
+      if (!name) continue;
+      list.push({ name, style: sanitizeStyle(src.style) });
+    }
+    return list;
+  } catch {
+    return [];
+  }
+};
+
+const savePresets = (list: ReadonlyArray<EditorPreset>): void =>
+  writeStore(PRESETS_KEY, JSON.stringify(list));
+
 export function mountApp(root: HTMLElement): void {
   const currentTheme = readTheme();
   applyTheme(currentTheme);
@@ -391,6 +527,11 @@ export function mountApp(root: HTMLElement): void {
       </div>
       <span class="toolbar-sep" aria-hidden="true"></span>
       <div class="tool-group toolbar-actions">
+        <button type="button" class="chip chip-icon chip-badge" id="film-toggle" disabled title="Recent captures appear after your first capture" aria-label="Recent captures" aria-pressed="false">${ICONS.film}<span class="chip-count" id="film-count">0</span></button>
+        <span class="toolbar-sep" aria-hidden="true"></span>
+        <button type="button" class="chip" id="ocr" disabled title="Extract text from this capture">${ICONS.ocr}<span>OCR</span></button>
+        <button type="button" class="chip" id="pin" disabled title="Pin this capture on top of other windows">${ICONS.pin}<span>Pin</span></button>
+        <span class="toolbar-sep" aria-hidden="true"></span>
         <button type="button" class="chip" id="copy" disabled title="Copy to clipboard (Ctrl+C)">${ICONS.copy}<span>Copy</span></button>
         <button type="button" class="chip" id="save" disabled title="Save an edited copy (Ctrl+S)">${ICONS.save}<span>Save</span></button>
       </div>
@@ -405,6 +546,17 @@ export function mountApp(root: HTMLElement): void {
         <p class="empty-text">Press <kbd>PrintScreen</kbd> for the full screen, <span class="key-pair"><kbd>Shift</kbd><kbd>PrintScreen</kbd></span> for a region — or pick a mode from <strong>Capture</strong>.</p>
         <p class="empty-note">Every capture is saved to your save folder automatically.</p>
       </div>
+
+      <footer class="filmstrip" id="filmstrip" hidden aria-label="Recent captures">
+        <div class="filmstrip-head">
+          <span class="filmstrip-title">Recent</span>
+          <span class="filmstrip-total" id="film-total">0</span>
+          <button type="button" class="filmstrip-link" id="film-clear" title="Forget this session's captures">Clear</button>
+          <button type="button" class="filmstrip-link filmstrip-hide" id="film-close" aria-label="Hide recent captures" title="Hide">${ICONS.close}</button>
+        </div>
+        <div class="filmstrip-track" id="film-track" role="listbox" aria-label="Recent captures"></div>
+        <p class="filmstrip-empty" id="film-empty">Captures from this session land here — click one to load it back into the editor.</p>
+      </footer>
       </section>
 
       <aside class="props" id="props" aria-label="Tool properties">
@@ -416,6 +568,18 @@ export function mountApp(root: HTMLElement): void {
 
         <div class="props-body" id="props-body">
           <p class="props-idle" id="props-idle">No capture yet — these settings apply to your next annotation.</p>
+
+          <section class="prop-group presets" aria-label="Style presets">
+            <div class="prop-head">
+              <h3 class="prop-label">Style presets</h3>
+              <button type="button" class="preset-add" id="preset-save-toggle" aria-expanded="false" title="Save the current style as a preset">+ Save style</button>
+            </div>
+            <div class="preset-chips" id="preset-chips"></div>
+            <form class="preset-form" id="preset-form" hidden>
+              <input type="text" class="preset-input" id="preset-name" maxlength="32" placeholder="Name this preset" aria-label="Preset name" autocomplete="off" />
+              <button type="submit" class="btn-secondary preset-confirm" id="preset-confirm">Save</button>
+            </form>
+          </section>
 
           <section class="prop-group" data-group="color">
             <div class="prop-head">
@@ -520,6 +684,40 @@ export function mountApp(root: HTMLElement): void {
           </div>
         </footer>
       </div>
+    </div>
+
+    <div class="modal-backdrop" id="ocr-modal" hidden>
+      <div class="modal modal-ocr" role="dialog" aria-modal="true" aria-labelledby="ocr-title" tabindex="-1">
+        <header class="modal-head">
+          <div class="modal-heading">
+            <h2 class="modal-title" id="ocr-title">Extract text</h2>
+            <p class="modal-desc">Recognises text on the current capture, annotations included.</p>
+          </div>
+          <button type="button" class="icon-btn modal-x" id="ocr-close" aria-label="Close" title="Close (Esc)">${ICONS.close}</button>
+        </header>
+        <div class="modal-body ocr-body">
+          <div class="ocr-controls">
+            <label class="ocr-lang">
+              <span class="ocr-lang-label">Language</span>
+              <select class="ocr-select" id="ocr-lang" aria-label="OCR language">
+                <option value="eng">English</option>
+                <option value="swe">Swedish</option>
+              </select>
+            </label>
+            <button type="button" class="btn-secondary ocr-run" id="ocr-run">Extract text</button>
+            <span class="ocr-busy" id="ocr-busy" hidden>Reading…</span>
+          </div>
+          <textarea class="ocr-text" id="ocr-text" readonly spellcheck="false" aria-label="Extracted text" placeholder="Recognised text will appear here."></textarea>
+          <p class="ocr-status" id="ocr-status" role="status" aria-live="polite"></p>
+        </div>
+        <footer class="modal-foot ocr-foot">
+          <span class="ocr-meta" id="ocr-meta">Language: English</span>
+          <div class="ocr-actions">
+            <button type="button" class="btn-secondary" id="ocr-cancel">Close</button>
+            <button type="button" class="btn-primary" id="ocr-copy" disabled>Copy text</button>
+          </div>
+        </footer>
+      </div>
     </div>`;
 
   const $ = <T extends HTMLElement>(sel: string): T => root.querySelector(sel) as T;
@@ -574,6 +772,30 @@ export function mountApp(root: HTMLElement): void {
   const guardSaveBtn = $<HTMLButtonElement>("#guard-save");
   const guardDiscardBtn = $<HTMLButtonElement>("#guard-discard");
   const guardCancelBtn = $<HTMLButtonElement>("#guard-cancel");
+  const filmToggleBtn = $<HTMLButtonElement>("#film-toggle");
+  const filmStripEl = $<HTMLElement>("#filmstrip");
+  const filmTrackEl = $<HTMLDivElement>("#film-track");
+  const filmCountEl = $<HTMLSpanElement>("#film-count");
+  const filmTotalEl = $<HTMLSpanElement>("#film-total");
+  const filmEmptyEl = $<HTMLParagraphElement>("#film-empty");
+  const filmClearBtn = $<HTMLButtonElement>("#film-clear");
+  const filmCloseBtn = $<HTMLButtonElement>("#film-close");
+  const ocrBtn = $<HTMLButtonElement>("#ocr");
+  const pinBtn = $<HTMLButtonElement>("#pin");
+  const ocrModalEl = $<HTMLDivElement>("#ocr-modal");
+  const ocrLangSelect = $<HTMLSelectElement>("#ocr-lang");
+  const ocrRunBtn = $<HTMLButtonElement>("#ocr-run");
+  const ocrBusyEl = $<HTMLSpanElement>("#ocr-busy");
+  const ocrTextEl = $<HTMLTextAreaElement>("#ocr-text");
+  const ocrStatusEl = $<HTMLParagraphElement>("#ocr-status");
+  const ocrMetaEl = $<HTMLSpanElement>("#ocr-meta");
+  const ocrCopyBtn = $<HTMLButtonElement>("#ocr-copy");
+  const ocrCloseBtn = $<HTMLButtonElement>("#ocr-close");
+  const ocrCancelBtn = $<HTMLButtonElement>("#ocr-cancel");
+  const presetChipsEl = $<HTMLDivElement>("#preset-chips");
+  const presetFormEl = $<HTMLFormElement>("#preset-form");
+  const presetNameEl = $<HTMLInputElement>("#preset-name");
+  const presetSaveToggle = $<HTMLButtonElement>("#preset-save-toggle");
 
   const editor = new Editor(editorEl) as InkEditor;
   const toolButtons = new Map<ShellToolId, HTMLButtonElement>();
@@ -591,6 +813,16 @@ export function mountApp(root: HTMLElement): void {
   let guardBusy = false;
   let hotkeyStatus: HotkeyStatus | null = null;
   let widgetVisible = false;
+  /** Mirror of the editor's live style, so presets still work on older builds. */
+  let inkColor = readColor();
+  let strokeWidth = readStroke();
+  let presets: EditorPreset[] = readPresets();
+  let recent: RecentShot[] = [];
+  let loadedRecentId: string | null = null;
+  let filmOpen = readStore(FILM_KEY) !== "closed";
+  let ocrLang: OcrLang = readStore(OCR_LANG_KEY) === "swe" ? "swe" : "eng";
+  let ocrBusy = false;
+  let lastOcrText = "";
 
   function setStatus(message: string, kind: StatusKind = "info"): void {
     statusEl.textContent = message;
@@ -1103,6 +1335,8 @@ export function mountApp(root: HTMLElement): void {
     propsIdle.hidden = loaded;
     copyBtn.disabled = !loaded;
     saveBtn.disabled = !loaded;
+    ocrBtn.disabled = !loaded;
+    pinBtn.disabled = !loaded;
     syncHistory();
     syncDirty();
   }
@@ -1199,6 +1433,7 @@ export function mountApp(root: HTMLElement): void {
       await editor.load(cropped);
       setImageState(true);
       setStatus(`Captured region ${box.width} × ${box.height}`, "success");
+      await addRecent(cropped, "Region");
       await autoSave(cropped);
     } finally {
       if (full) {
@@ -1231,6 +1466,7 @@ export function mountApp(root: HTMLElement): void {
         await editor.load(res.dataUrl);
         setImageState(true);
         setStatus(`Captured ${res.width} × ${res.height}`, "success");
+        await addRecent(res.dataUrl, "Full screen");
         syncDirty();
         await autoSave(res.dataUrl);
         return;
@@ -1266,6 +1502,7 @@ export function mountApp(root: HTMLElement): void {
       setStatus(`Color failed: ${errText(e)}`, "error");
       return;
     }
+    inkColor = hex.toLowerCase();
     highlightColor(hex);
     writeStore(INK_KEY, hex);
     if (announce) {
@@ -1290,6 +1527,7 @@ export function mountApp(root: HTMLElement): void {
       setStatus(`Stroke failed: ${errText(e)}`, "error");
       return;
     }
+    strokeWidth = width;
     highlightStroke(width);
     writeStore(STROKE_KEY, String(width));
     if (announce) setStatus(`Stroke width: ${width} px`);
@@ -1450,6 +1688,397 @@ export function mountApp(root: HTMLElement): void {
       blurRadius = Math.min(MAX_BLUR_RADIUS, Math.max(MIN_BLUR_RADIUS, Math.round(radius)));
     }
     paintBlur();
+  }
+
+
+  /* ---------------------------------------------------- styles + presets */
+
+  const styleApi = editor as unknown as StyleApi;
+
+  /** Everything the editor currently draws with (local mirrors fill any gap). */
+  function currentStyle(): EditorStyle {
+    const live: Partial<EditorStyle> = styleApi.getStyle?.() ?? {};
+    return {
+      color: typeof live.color === "string" ? live.color : inkColor,
+      strokeWidth: typeof live.strokeWidth === "number" ? live.strokeWidth : strokeWidth,
+      fontFamily: typeof live.fontFamily === "string" ? live.fontFamily : fontFamily,
+      fontSize: typeof live.fontSize === "number" ? live.fontSize : fontSize,
+      bold: typeof live.bold === "boolean" ? live.bold : textBold,
+      italic: typeof live.italic === "boolean" ? live.italic : textItalic,
+      blurMode: live.blurMode ?? blurMode,
+      blurRadius: typeof live.blurRadius === "number" ? live.blurRadius : blurRadius,
+    };
+  }
+
+  /** Paint the rail to match a style slice without touching the editor. */
+  function paintStyleState(patch: Partial<EditorStyle>): void {
+    if (typeof patch.color === "string" && /^#[0-9a-f]{6}$/i.test(patch.color)) {
+      inkColor = patch.color.toLowerCase();
+      highlightColor(inkColor);
+      writeStore(INK_KEY, inkColor);
+    }
+    if (typeof patch.strokeWidth === "number") {
+      const width = Math.min(12, Math.max(1, Math.round(patch.strokeWidth)));
+      strokeWidth = width;
+      highlightStroke(width);
+      writeStore(STROKE_KEY, String(width));
+    }
+    if (typeof patch.fontFamily === "string") {
+      const family = patch.fontFamily.toLowerCase();
+      const hit = FONTS.find((f) => family.includes(f.family.toLowerCase()));
+      if (hit) {
+        fontFamily = hit.family;
+        fontSelect.value = hit.family;
+        fontSelect.style.fontFamily = hit.stack;
+        writeStore(FONT_KEY, hit.family);
+      }
+    }
+    if (typeof patch.fontSize === "number") {
+      const size = Math.min(200, Math.max(8, Math.round(patch.fontSize)));
+      fontSize = size;
+      sizeInput.value = String(size);
+      sizeDownBtn.disabled = size <= 8;
+      sizeUpBtn.disabled = size >= 200;
+      writeStore(SIZE_KEY, String(size));
+    }
+    if (typeof patch.bold === "boolean") {
+      textBold = patch.bold;
+      paintTextToggles();
+      writeStore(BOLD_KEY, String(patch.bold));
+    }
+    if (typeof patch.italic === "boolean") {
+      textItalic = patch.italic;
+      paintTextToggles();
+      writeStore(ITALIC_KEY, String(patch.italic));
+    }
+    if (patch.blurMode) {
+      blurMode = patch.blurMode;
+      writeStore(BLUR_MODE_KEY, patch.blurMode);
+      paintBlur();
+    }
+    if (typeof patch.blurRadius === "number") {
+      blurRadius = Math.min(MAX_BLUR_RADIUS, Math.max(MIN_BLUR_RADIUS, Math.round(patch.blurRadius)));
+      writeStore(BLUR_RADIUS_KEY, String(blurRadius));
+      paintBlur();
+    }
+  }
+
+  /** Apply a style slice through the editor's bulk API, or one setter at a time. */
+  function applyStylePatch(patch: Partial<EditorStyle>): void {
+    if (typeof styleApi.applyStyle === "function") {
+      try {
+        styleApi.applyStyle(patch);
+      } catch (e) {
+        setStatus(`Style failed: ${errText(e)}`, "error");
+        return;
+      }
+    } else {
+      if (typeof patch.color === "string") applyColor(patch.color, false);
+      if (typeof patch.strokeWidth === "number") applyStroke(patch.strokeWidth, false);
+      if (typeof patch.fontFamily === "string") applyFont(patch.fontFamily, false);
+      if (typeof patch.fontSize === "number") applySize(patch.fontSize, false);
+      if (typeof patch.bold === "boolean") applyBold(patch.bold, false);
+      if (typeof patch.italic === "boolean") applyItalic(patch.italic, false);
+      if (patch.blurMode) applyBlurMode(patch.blurMode, false);
+      if (typeof patch.blurRadius === "number") applyBlurRadius(patch.blurRadius, false);
+    }
+    paintStyleState(patch);
+  }
+
+  function setPresetFormOpen(open: boolean): void {
+    presetFormEl.hidden = !open;
+    presetSaveToggle.setAttribute("aria-expanded", String(open));
+    if (open) {
+      presetNameEl.value = "";
+      presetNameEl.focus({ preventScroll: true });
+    }
+  }
+
+  function renderPresets(): void {
+    presetChipsEl.innerHTML = presets.length
+      ? presets
+          .map(
+            (p, i) => `<span class="preset" data-index="${i}">
+              <button type="button" class="preset-apply" title="Apply “${escapeHtml(p.name)}”">
+                <span class="preset-dot" style="--preset-dot:${p.style.color ?? "var(--accent)"}" aria-hidden="true"></span>
+                <span class="preset-name">${escapeHtml(p.name)}</span>
+              </button>
+              <button type="button" class="preset-del" aria-label="Delete preset ${escapeHtml(p.name)}" title="Delete preset">×</button>
+            </span>`,
+          )
+          .join("")
+      : `<p class="preset-empty">No presets yet — tune the rail, then save it.</p>`;
+  }
+
+  function applyPreset(index: number): void {
+    const preset = presets[index];
+    if (!preset) return;
+    applyStylePatch(preset.style);
+    setStatus(`Preset “${preset.name}” applied`, "success");
+  }
+
+  function savePresetFromForm(): void {
+    const typed = presetNameEl.value.trim().slice(0, 32);
+    const name = typed || `Preset ${presets.length + 1}`;
+    const style = currentStyle();
+    const index = presets.findIndex((p) => p.name.toLowerCase() === name.toLowerCase());
+    if (index >= 0) presets = presets.map((p, i) => (i === index ? { name, style } : p));
+    else presets = [...presets, { name, style }];
+    savePresets(presets);
+    renderPresets();
+    setPresetFormOpen(false);
+    setStatus(index >= 0 ? `Preset “${name}” updated` : `Preset “${name}” saved`, "success");
+  }
+
+  function deletePreset(index: number): void {
+    const removed = presets[index];
+    if (!removed) return;
+    presets = presets.filter((_, i) => i !== index);
+    savePresets(presets);
+    renderPresets();
+    setStatus(`Preset “${removed.name}” deleted`);
+  }
+
+  /* ---------------------------------------------------------- filmstrip */
+
+  const clockLabel = (ts: number): string =>
+    new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
+  /** Downscale to a small JPEG so a dozen recents cost almost nothing. */
+  function makeThumb(dataUrl: string): Promise<string> {
+    return new Promise<string>((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const scale = Math.min(1, 220 / Math.max(1, img.naturalWidth));
+          const canvas = document.createElement("canvas");
+          canvas.width = Math.max(1, Math.round(img.naturalWidth * scale));
+          canvas.height = Math.max(1, Math.round(img.naturalHeight * scale));
+          const ctx = canvas.getContext("2d");
+          if (!ctx) {
+            resolve(dataUrl);
+            return;
+          }
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          resolve(canvas.toDataURL("image/jpeg", 0.72));
+        } catch {
+          resolve(dataUrl);
+        }
+      };
+      img.onerror = () => resolve(dataUrl);
+      img.src = dataUrl;
+    });
+  }
+
+  /** Prepend a capture to the strip; never throws, never blocks the capture flow. */
+  async function addRecent(dataUrl: string, label: string): Promise<void> {
+    try {
+      const thumb = await makeThumb(dataUrl);
+      const entry: RecentShot = {
+        id: `shot-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        dataUrl,
+        thumb,
+        ts: Date.now(),
+        format: settings.format,
+        label,
+      };
+      recent = [entry, ...recent].slice(0, RECENT_LIMIT);
+      loadedRecentId = entry.id;
+      renderFilm();
+      filmTrackEl.scrollLeft = 0;
+    } catch {
+      /* thumbnailing is a nicety — a failure must never cost the capture */
+    }
+  }
+
+  function renderFilm(): void {
+    const hasAny = recent.length > 0;
+    const shown = hasAny && filmOpen;
+    filmStripEl.hidden = !shown;
+    filmCountEl.textContent = String(recent.length);
+    filmTotalEl.textContent = String(recent.length);
+    filmToggleBtn.disabled = !hasAny;
+    filmToggleBtn.classList.toggle("is-active", shown);
+    filmToggleBtn.setAttribute("aria-pressed", String(shown));
+    filmToggleBtn.title = hasAny
+      ? shown
+        ? "Hide recent captures"
+        : "Show recent captures"
+      : "Recent captures appear after your first capture";
+    filmClearBtn.disabled = !hasAny;
+    filmEmptyEl.hidden = hasAny;
+    filmTrackEl.innerHTML = recent
+      .map(
+        (item) => `<button type="button" class="film-item${
+          item.id === loadedRecentId ? " is-active" : ""
+        }" data-id="${item.id}" role="option" aria-selected="${item.id === loadedRecentId}" title="${escapeHtml(
+          item.label,
+        )} · ${clockLabel(item.ts)} · ${formatLabel(item.format)}">
+          <span class="film-thumb"><img src="${item.thumb}" alt="" loading="lazy" /></span>
+          <span class="film-caption"><span class="film-badge">${formatLabel(item.format)}</span><span class="film-time">${clockLabel(
+            item.ts,
+          )}</span></span>
+        </button>`,
+      )
+      .join("");
+  }
+
+  function setFilmOpen(open: boolean): void {
+    filmOpen = open;
+    writeStore(FILM_KEY, open ? "open" : "closed");
+    renderFilm();
+  }
+
+  async function loadRecent(id: string): Promise<void> {
+    const item = recent.find((r) => r.id === id);
+    if (!item) return;
+    if (hasImage && isDirty() && !window.confirm("Load this capture? Unsaved annotations will be lost.")) {
+      return;
+    }
+    try {
+      await editor.load(item.dataUrl);
+      loadedRecentId = item.id;
+      setImageState(true);
+      renderFilm();
+      setStatus(`Reloaded ${item.label.toLowerCase()} from ${clockLabel(item.ts)}`, "success");
+    } catch (e) {
+      setStatus(`Could not reload that capture: ${errText(e)}`, "error");
+    }
+  }
+
+  /* ----------------------------------------------------------------- ocr */
+
+  function setOcrBusy(value: boolean): void {
+    ocrBusy = value;
+    ocrBusyEl.hidden = !value;
+    ocrRunBtn.disabled = value;
+  }
+
+  function ocrSay(message: string, kind: StatusKind = "info"): void {
+    ocrStatusEl.textContent = message;
+    ocrStatusEl.dataset.kind = kind;
+  }
+
+  function ocrKeyDown(ev: KeyboardEvent): void {
+    if (ocrModalEl.hidden) return;
+    if (ev.key === "Escape") {
+      ev.preventDefault();
+      ev.stopPropagation();
+      closeOcr();
+      return;
+    }
+    if (ev.key !== "Tab") return;
+    const items = Array.from(
+      ocrModalEl.querySelectorAll<HTMLElement>(
+        "button:not([disabled]), select:not([disabled]), textarea:not([disabled])",
+      ),
+    );
+    if (!items.length) return;
+    const index = items.indexOf(document.activeElement as HTMLElement);
+    ev.preventDefault();
+    const step = ev.shiftKey ? -1 : 1;
+    items[(index + step + items.length) % items.length]?.focus({ preventScroll: true });
+  }
+
+  function openOcr(): void {
+    if (!hasImage) {
+      setStatus("Nothing to read yet — capture a screen first.", "error");
+      return;
+    }
+    ocrLangSelect.value = ocrLang;
+    ocrMetaEl.textContent = `Language: ${OCR_LANGS.find((l) => l.id === ocrLang)?.label ?? "English"}`;
+    ocrModalEl.hidden = false;
+    void ocrModalEl.offsetWidth;
+    ocrModalEl.classList.add("is-open");
+    document.addEventListener("keydown", ocrKeyDown, true);
+    ocrRunBtn.focus({ preventScroll: true });
+    void runOcr();
+  }
+
+  function closeOcr(): void {
+    if (ocrModalEl.hidden) return;
+    ocrModalEl.classList.remove("is-open");
+    ocrModalEl.hidden = true;
+    document.removeEventListener("keydown", ocrKeyDown, true);
+    ocrBtn.focus({ preventScroll: true });
+  }
+
+  async function runOcr(): Promise<void> {
+    if (ocrBusy) return;
+    if (!hasImage) {
+      ocrSay("Capture something first.", "error");
+      return;
+    }
+    setOcrBusy(true);
+    ocrCopyBtn.disabled = true;
+    ocrTextEl.value = "";
+    lastOcrText = "";
+    ocrSay(ocrLang === "swe" ? "Reading Swedish text…" : "Reading text…");
+    try {
+      const text = await invoke<string>("ocr_image", { dataUrl: editor.flatten(), lang: ocrLang });
+      lastOcrText = typeof text === "string" ? text.trim() : "";
+      ocrTextEl.value = lastOcrText;
+      ocrCopyBtn.disabled = !lastOcrText;
+      if (lastOcrText) {
+        ocrSay(`Found ${lastOcrText.length} characters — Copy puts them on the clipboard.`, "success");
+        setStatus("Text extracted", "success");
+      } else {
+        ocrSay("No text found in this capture — try another language.", "info");
+      }
+    } catch (e) {
+      const message = errText(e);
+      ocrSay(`Could not extract text: ${message}`, "error");
+      setStatus(`OCR failed: ${message}`, "error");
+    } finally {
+      setOcrBusy(false);
+      ocrMetaEl.textContent = `Language: ${OCR_LANGS.find((l) => l.id === ocrLang)?.label ?? "English"}`;
+    }
+  }
+
+  async function copyOcrText(): Promise<void> {
+    const text = ocrTextEl.value || lastOcrText;
+    if (!text) return;
+    let ok = false;
+    try {
+      await navigator.clipboard.writeText(text);
+      ok = true;
+    } catch {
+      ok = false;
+    }
+    if (!ok) {
+      try {
+        ocrTextEl.focus({ preventScroll: true });
+        ocrTextEl.select();
+        ok = document.execCommand("copy");
+      } catch {
+        ok = false;
+      }
+    }
+    if (ok) {
+      setStatus("Extracted text copied to the clipboard", "success");
+      ocrSay(`Copied ${text.length} characters.`, "success");
+    } else {
+      setStatus("Could not copy — select the text and press Ctrl+C.", "error");
+      ocrSay("Copy was blocked — select the text and press Ctrl+C.", "error");
+    }
+  }
+
+  /* ----------------------------------------------------------------- pin */
+
+  async function pinImage(): Promise<void> {
+    if (!hasImage) {
+      setStatus("Nothing to pin — capture a screen first.", "error");
+      return;
+    }
+    pinBtn.disabled = true;
+    try {
+      await invoke("pin_image", { dataUrl: editor.flatten() });
+      setStatus("Pinned to screen — the floating copy stays on top.", "success");
+    } catch (e) {
+      setStatus(`Pin failed: ${errText(e)}`, "error");
+    } finally {
+      pinBtn.disabled = !hasImage;
+    }
   }
 
   /* ---------------------------------------------------------------- wiring */
@@ -1655,6 +2284,59 @@ export function mountApp(root: HTMLElement): void {
   });
   copyBtn.addEventListener("click", () => void copyPng());
   saveBtn.addEventListener("click", () => void saveEdited());
+  ocrBtn.addEventListener("click", () => openOcr());
+  pinBtn.addEventListener("click", () => void pinImage());
+
+  filmToggleBtn.addEventListener("click", () => setFilmOpen(!filmOpen));
+  filmCloseBtn.addEventListener("click", () => {
+    setFilmOpen(false);
+    filmToggleBtn.focus({ preventScroll: true });
+  });
+  filmClearBtn.addEventListener("click", () => {
+    recent = [];
+    loadedRecentId = null;
+    renderFilm();
+    setStatus("Recent captures cleared");
+  });
+  filmTrackEl.addEventListener("click", (ev) => {
+    const btn = (ev.target as HTMLElement | null)?.closest<HTMLButtonElement>(".film-item");
+    const id = btn?.dataset.id;
+    if (id) void loadRecent(id);
+  });
+
+  presetChipsEl.addEventListener("click", (ev) => {
+    const target = ev.target as HTMLElement | null;
+    const chip = target?.closest<HTMLElement>(".preset");
+    if (!chip) return;
+    const index = Number(chip.dataset.index);
+    if (!Number.isInteger(index)) return;
+    if (target?.closest(".preset-del")) deletePreset(index);
+    else if (target?.closest(".preset-apply")) applyPreset(index);
+  });
+  presetSaveToggle.addEventListener("click", () => setPresetFormOpen(presetFormEl.hidden));
+  presetFormEl.addEventListener("submit", (ev) => {
+    ev.preventDefault();
+    savePresetFromForm();
+  });
+  presetNameEl.addEventListener("keydown", (ev) => {
+    if (ev.key !== "Escape") return;
+    ev.preventDefault();
+    setPresetFormOpen(false);
+    presetSaveToggle.focus({ preventScroll: true });
+  });
+
+  ocrRunBtn.addEventListener("click", () => void runOcr());
+  ocrCopyBtn.addEventListener("click", () => void copyOcrText());
+  ocrCloseBtn.addEventListener("click", () => closeOcr());
+  ocrCancelBtn.addEventListener("click", () => closeOcr());
+  ocrLangSelect.addEventListener("change", () => {
+    ocrLang = ocrLangSelect.value === "swe" ? "swe" : "eng";
+    writeStore(OCR_LANG_KEY, ocrLang);
+    void runOcr();
+  });
+  ocrModalEl.addEventListener("pointerdown", (ev) => {
+    if (ev.target === ocrModalEl) closeOcr();
+  });
 
   const onKeyDown = (ev: KeyboardEvent): void => {
     if (ev.code === "PrintScreen" || ev.key === "PrintScreen") {
@@ -1767,6 +2449,10 @@ export function mountApp(root: HTMLElement): void {
   applyBlurMode(blurMode, false);
   applyBlurRadius(blurRadius, false);
   syncBlurFromEditor();
+
+  renderPresets();
+  renderFilm();
+  ocrLangSelect.value = ocrLang;
 
   setStatus("Ready — press PrintScreen for the full screen, Shift+PrintScreen for a region.");
 

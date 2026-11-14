@@ -3,6 +3,7 @@ mod clipboard;
 mod commands;
 mod export;
 mod hotkeys;
+mod ocr;
 mod tray;
 mod windows;
 
@@ -39,7 +40,13 @@ pub fn run() {
             // Wayland GlobalShortcuts portal (degrades to backend="none")
             hotkeys::register_hotkeys,
             hotkeys::get_hotkey_status,
-            hotkeys::unregister_hotkeys
+            hotkeys::unregister_hotkeys,
+            // Wave 7: grab text (tesseract) + pin a screenshot on top
+            ocr::ocr_image,
+            ocr::ocr_available,
+            ocr::ocr_languages,
+            windows::pin_image,
+            windows::close_pins
         ])
         .setup(|app| {
             // Order matters: the close guard must exist before the window can be

@@ -31,9 +31,11 @@ import {
   type Tool,
   type ToolHost,
   createTool,
+  drawMagnify,
   fitBox,
   isBlurRegion,
   isHighlighterRegion,
+  isMagnifyRegion,
   isSpotlightRegion,
 } from "./tools";
 
@@ -50,7 +52,8 @@ export type ToolId =
   | "highlighter"
   | "callout"
   | "step"
-  | "bucket";
+  | "bucket"
+  | "magnify";
 
 const TOOL_IDS: readonly ToolId[] = [
   "select",
@@ -64,7 +67,32 @@ const TOOL_IDS: readonly ToolId[] = [
   "callout",
   "step",
   "bucket",
+  "magnify",
 ];
+
+/**
+ * The editor's "ink" settings — exactly what a named style preset stores.
+ *
+ * The editor only reads and writes the LIVE values; the app shell owns preset
+ * persistence (named styles, favourites), so nothing here touches storage.
+ * Plain JSON, so a preset round-trips through localStorage unharmed.
+ */
+export interface EditorStyle {
+  /** Ink colour for new annotations (and highlighter fill). */
+  color: string;
+  /** Stroke width for new shapes/arrows, 1..12. */
+  strokeWidth: number;
+  /** Caption font family. */
+  fontFamily: string;
+  /** Caption font size, 8..200. */
+  fontSize: number;
+  bold: boolean;
+  italic: boolean;
+  /** Redaction mode for NEW blur regions. */
+  blurMode: BlurMode;
+  /** Gaussian radius / pixelate block size, 2..60 scene px. */
+  blurRadius: number;
+}
 
 const MAX_HISTORY = 80;
 /** Breathing room around the screenshot inside the canvas. */
@@ -89,7 +117,10 @@ const isToolId = (value: string): value is ToolId =>
 
 /** Objects that are swapped for pixels on export instead of being drawn. */
 const isEffectRegion = (object: fabric.FabricObject): boolean =>
-  isBlurRegion(object) || isSpotlightRegion(object) || isHighlighterRegion(object);
+  isBlurRegion(object) ||
+  isSpotlightRegion(object) ||
+  isHighlighterRegion(object) ||
+  isMagnifyRegion(object);
 
 export class Editor {
   private readonly container: HTMLElement;
@@ -413,6 +444,50 @@ export class Editor {
   /** True once the canvas holds any state beyond the freshly loaded capture. */
   isDirty(): boolean {
     return this.cursor > 0;
+  }
+
+  /** Snapshot of the current ink settings (the shell saves this as a preset). */
+  getStyle(): EditorStyle {
+    return {
+      color: this.inkColor,
+      strokeWidth: this.inkWidth,
+      fontFamily: this.fontFamily,
+      fontSize: this.fontSize,
+      bold: this.textBold,
+      italic: this.textItalic,
+      blurMode: this.blurMode,
+      blurRadius: this.blurRadius,
+    };
+  }
+
+  /**
+   * Restore a preset. Only the fields present in `style` are applied, each
+   * through its normal validating setter (so out-of-range or junk values from
+   * stored presets are clamped/ignored), and one change event is emitted when
+   * anything actually moved. Existing annotations are never recoloured.
+   */
+  applyStyle(style: Partial<EditorStyle> | null | undefined): void {
+    if (!style || typeof style !== "object") return;
+
+    const isInk = (value: unknown): value is string =>
+      typeof value === "string" && value.trim().length > 0;
+    const isNumber = (value: unknown): value is number =>
+      typeof value === "number" && Number.isFinite(value);
+
+    const before = JSON.stringify(this.getStyle());
+
+    if (isInk(style.color)) this.setColor(style.color);
+    if (isNumber(style.strokeWidth)) this.setStrokeWidth(style.strokeWidth);
+    if (isInk(style.fontFamily)) this.setFontFamily(style.fontFamily);
+    if (isNumber(style.fontSize)) this.setFontSize(style.fontSize);
+    if (typeof style.bold === "boolean") this.setTextBold(style.bold);
+    if (typeof style.italic === "boolean") this.setTextItalic(style.italic);
+    if (style.blurMode) this.setBlurMode(style.blurMode);
+    if (isNumber(style.blurRadius)) this.setBlurRadius(style.blurRadius);
+
+    // The setters above already notify; this covers the no-op-but-changed case
+    // (e.g. a preset that only matched already-active values) exactly once.
+    if (JSON.stringify(this.getStyle()) !== before) this.notify();
   }
 
   /** Font family for new captions. Existing captions keep their own. */
@@ -944,6 +1019,7 @@ export class Editor {
     };
 
     const spotlights: DeviceRect[] = [];
+    const lenses: Array<{ rect: DeviceRect; zoom: number }> = [];
     for (const object of effects) {
       const rect = device(object);
       if (isBlurRegion(object)) {
@@ -951,12 +1027,19 @@ export class Editor {
         applyBlurRegion(layer, rect, object.mode, Math.max(1, object.radius * multiplier));
       } else if (isHighlighterRegion(object)) {
         applyHighlighter(layer, rect, object.ink, object.alpha);
+      } else if (isMagnifyRegion(object)) {
+        lenses.push({ rect, zoom: object.zoom });
       } else if (isSpotlightRegion(object)) {
         spotlights.push(rect);
       }
     }
 
     if (spotlights.length) applySpotlight(layer, spotlights);
+
+    // Lenses last: each one copies finished pixels under its box and blows them
+    // up, so it must not pick up the still-live region objects or get dimmed by
+    // a neighbouring spotlight border.
+    for (const lens of lenses) drawMagnify(layer, lens.rect, lens.zoom);
   }
 
   /* ------------------------------------------------------------------ events */

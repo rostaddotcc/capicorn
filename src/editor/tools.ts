@@ -273,7 +273,7 @@ class SelectTool implements Tool {
 /** Shared drag-a-rectangle behaviour. */
 abstract class DragTool implements Tool {
   abstract readonly id: ToolId;
-  readonly cursor = "crosshair";
+  readonly cursor: string = "crosshair";
   protected start: Point | null = null;
 
   constructor(protected readonly host: ToolHost) {}
@@ -1250,8 +1250,217 @@ class BucketTool implements Tool {
   }
 }
 
+/* ---------------------------------------------------------------- magnify */
+
+/** Default magnification for a lens. */
+export const MAGNIFY_ZOOM = 2;
+const MIN_MAGNIFY_ZOOM = 1.2;
+const MAX_MAGNIFY_ZOOM = 6;
+
+export const clampMagnifyZoom = (value: number): number => {
+  if (typeof value !== "number" || !Number.isFinite(value)) return MAGNIFY_ZOOM;
+  const clamped = Math.min(Math.max(value, MIN_MAGNIFY_ZOOM), MAX_MAGNIFY_ZOOM);
+  return Math.round(clamped * 10) / 10;
+};
+
+/** A rectangle in flattened-layer pixels (same shape as blur.ts DeviceRect). */
+interface LensRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/** Rounded-rectangle path (no ctx.roundRect: WebKitGTK support is patchy). */
+const lensPath = (
+  context: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  radius: number,
+): void => {
+  const r = Math.max(0, Math.min(radius, Math.min(width, height) / 2));
+  context.moveTo(x + r, y);
+  context.lineTo(x + width - r, y);
+  context.arcTo(x + width, y, x + width, y + r, r);
+  context.lineTo(x + width, y + height - r);
+  context.arcTo(x + width, y + height, x + width - r, y + height, r);
+  context.lineTo(x + r, y + height);
+  context.arcTo(x, y + height, x, y + height - r, r);
+  context.lineTo(x, y + r);
+  context.arcTo(x, y, x + r, y, r);
+  context.closePath();
+};
+
+/** Lens frame + zoom badge, shared by the live preview and the flattened lens. */
+const drawLensChrome = (
+  context: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  zoom: number,
+): void => {
+  const radius = Math.min(width, height) * 0.12;
+  const shortest = Math.min(width, height);
+  const border = Math.max(2, Math.min(6, Math.round(shortest * 0.02)));
+
+  context.save();
+  // White halo first, so the lens reads on any background.
+  context.beginPath();
+  lensPath(context, x, y, width, height, radius);
+  context.lineWidth = border + 2;
+  context.strokeStyle = "rgba(255, 255, 255, 0.92)";
+  context.stroke();
+  context.beginPath();
+  lensPath(context, x, y, width, height, radius);
+  context.lineWidth = border;
+  context.strokeStyle = ACCENT;
+  context.stroke();
+
+  const label = `${zoom % 1 === 0 ? zoom.toFixed(0) : zoom.toFixed(1)}×`;
+  const fontSize = Math.max(
+    9,
+    Math.min(Math.round(shortest * 0.16), Math.round(width * 0.3), 40),
+  );
+  context.font = `600 ${fontSize}px ${FONT_STACK}`;
+  context.textBaseline = "middle";
+  const padding = Math.max(3, Math.round(fontSize * 0.34));
+  const textWidth = context.measureText(label).width;
+  const badgeWidth = textWidth + padding * 2;
+  const badgeHeight = fontSize + padding * 1.6;
+  const badgeX = x + border + 3;
+  const badgeY = y + border + 3;
+  context.beginPath();
+  lensPath(context, badgeX, badgeY, badgeWidth, badgeHeight, badgeHeight / 2);
+  context.fillStyle = "rgba(12, 16, 24, 0.82)";
+  context.fill();
+  context.fillStyle = "#ffffff";
+  context.fillText(label, badgeX + padding, badgeY + badgeHeight / 2 + 0.5);
+  context.restore();
+};
+
+/**
+ * Paint the magnifier at export resolution: copy the pixels under `rect`, blow
+ * them up `zoom`x about the lens centre, clip to a rounded box and frame it.
+ * Editor calls this on the flattened IMAGE layer, so the lens shows real
+ * screenshot pixels (never the annotations drawn over it).
+ */
+export const drawMagnify = (
+  layer: HTMLCanvasElement,
+  rect: LensRect,
+  zoom: number,
+): void => {
+  const width = Math.floor(rect.width);
+  const height = Math.floor(rect.height);
+  if (width < 8 || height < 8) return;
+  const x = Math.round(rect.x);
+  const y = Math.round(rect.y);
+  const context = layer.getContext("2d");
+  if (!context) return;
+
+  const patch = document.createElement("canvas");
+  patch.width = width;
+  patch.height = height;
+  const patchContext = patch.getContext("2d");
+  if (!patchContext) return;
+  patchContext.drawImage(layer, x, y, width, height, 0, 0, width, height);
+
+  const scale = clampMagnifyZoom(zoom);
+  const radius = Math.min(width, height) * 0.12;
+
+  context.save();
+  context.beginPath();
+  lensPath(context, x, y, width, height, radius);
+  context.clip();
+  context.fillStyle = "#ffffff";
+  context.fillRect(x, y, width, height);
+  context.imageSmoothingEnabled = true;
+  context.imageSmoothingQuality = "high";
+  context.drawImage(
+    patch,
+    x - (width * (scale - 1)) / 2,
+    y - (height * (scale - 1)) / 2,
+    width * scale,
+    height * scale,
+  );
+  context.restore();
+
+  drawLensChrome(context, x, y, width, height, scale);
+};
+
+/**
+ * Magnifier lens. `zoom` rides in the serialized JSON so undo/redo keeps it.
+ *
+ * The live object paints tinted glass + frame only: the enlarged patch needs the
+ * flattened screenshot pixels, and Editor draws those at export time
+ * (`drawMagnify`). The box itself is the lens aperture, so it can be moved and
+ * scaled like any other region and always magnifies what sits under it.
+ */
+export class MagnifyRegion extends fabric.Rect {
+  static type = "capicorn_magnify";
+  static customProperties = ["zoom"];
+  zoom = MAGNIFY_ZOOM;
+
+  constructor(options: RectOptions & { zoom?: number } = {}) {
+    const { zoom, ...rect } = options;
+    super(rect as RectOptions);
+    if (typeof zoom === "number" && Number.isFinite(zoom)) {
+      this.zoom = clampMagnifyZoom(zoom);
+    }
+    // All painting happens in _render / at export; the Rect itself draws nothing.
+    this.set({ fill: "transparent", stroke: "transparent", strokeWidth: 0 });
+    this.objectCaching = false;
+  }
+
+  _render(context: CanvasRenderingContext2D): void {
+    const width = this.width ?? 0;
+    const height = this.height ?? 0;
+    if (width <= 0 || height <= 0) return;
+    const radius = Math.min(width, height) * 0.12;
+
+    context.save();
+    context.beginPath();
+    lensPath(context, 0, 0, width, height, radius);
+    context.clip();
+    context.fillStyle = "rgba(12, 16, 24, 0.28)";
+    context.fillRect(0, 0, width, height);
+    context.restore();
+
+    drawLensChrome(context, 0, 0, width, height, this.zoom);
+  }
+}
+fabric.classRegistry.setClass(MagnifyRegion, "capicorn_magnify");
+
+export const isMagnifyRegion = (
+  object: fabric.FabricObject,
+): object is MagnifyRegion => object instanceof MagnifyRegion;
+
+class MagnifyTool extends RegionTool<MagnifyRegion> {
+  readonly id: ToolId = "magnify";
+  readonly cursor = "zoom-in";
+
+  protected createRegion(point: Point): MagnifyRegion {
+    return new MagnifyRegion({
+      left: point.x,
+      top: point.y,
+      width: 1,
+      height: 1,
+      originX: "left",
+      originY: "top",
+      zoom: MAGNIFY_ZOOM,
+      selectable: false,
+      evented: false,
+      objectCaching: false,
+    });
+  }
+}
+
 export const createTool = (id: ToolId, host: ToolHost): Tool => {
   switch (id) {
+    case "magnify":
+      return new MagnifyTool(host);
     case "arrow":
       return new ArrowTool(host);
     case "rect":

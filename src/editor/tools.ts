@@ -46,11 +46,36 @@ export const isBlurRegion = (
   object: fabric.FabricObject,
 ): object is BlurRegion => object instanceof BlurRegion;
 
+/** The source screenshot as the canvas currently holds it. */
+export interface ImageInfo {
+  /** Original capture data URL (flood-fill samples its pixels). */
+  dataUrl: string;
+  /** Native pixel size of the capture. */
+  natural: { width: number; height: number };
+  /** Scene-space placement of the image object. */
+  left: number;
+  top: number;
+  scaleX: number;
+  scaleY: number;
+}
+
+/** Typography for new captions (user selected). */
+export interface TextStyle {
+  fontFamily: string;
+  fontSize: number;
+  fontWeight: "normal" | "bold";
+  fontStyle: "normal" | "italic";
+}
+
 /** The slice of Editor a tool is allowed to touch. */
 export interface ToolHost {
   readonly canvas: fabric.Canvas;
   /** Canvas scene bounds, used to clamp pointer positions. */
   bounds(): Box;
+  /** The loaded screenshot, or null before `load()` resolves. */
+  imageInfo(): ImageInfo | null;
+  /** Active caption typography (user selected). */
+  textStyle(): TextStyle;
   addObject(object: fabric.FabricObject): void;
   removeObject(object: fabric.FabricObject): void;
   /** Record the current canvas state in the undo stack. */
@@ -450,14 +475,16 @@ class TextTool implements Tool {
   onPointerDown(point: Point): void {
     const canvas = this.host.canvas;
     const ink = this.host.color();
+    const style = this.host.textStyle();
     const text = new fabric.IText("Text", {
       left: point.x,
       top: point.y,
       originX: "left",
       originY: "top",
-      fontFamily: FONT_STACK,
-      fontSize: 28,
-      fontWeight: "600",
+      fontFamily: style.fontFamily || FONT_STACK,
+      fontSize: style.fontSize,
+      fontWeight: style.fontWeight,
+      fontStyle: style.fontStyle,
       fill: ink,
       textBackgroundColor: "",
       padding: 4,
@@ -471,6 +498,7 @@ class TextTool implements Tool {
     this.host.addObject(text);
     canvas.setActiveObject(text);
     text.enterEditing();
+    // Select the placeholder so the first keystroke replaces it.
     text.selectAll();
     text.on("editing:exited", () => this.settle(text));
   }
@@ -608,6 +636,272 @@ class CropTool extends DragTool {
   }
 }
 
+/* ----------------------------------------------------------------- bucket */
+
+/** Per-channel tolerance when matching the seed colour. */
+const FILL_TOLERANCE = 32;
+/** Hard ceiling on flood-fill steps relative to the image area. */
+const FILL_WORK_FACTOR = 4;
+
+/** Decode a data URL into an HTMLImageElement. */
+const loadImageElement = (url: string): Promise<HTMLImageElement> =>
+  new Promise((resolve, reject) => {
+    const element = new Image();
+    element.onload = () => resolve(element);
+    element.onerror = () => reject(new Error("Capicorn: could not decode image"));
+    element.src = url;
+  });
+
+/** Resolve any CSS colour to its RGB channels via a 1x1 canvas. */
+const colorChannels = (color: string): [number, number, number] => {
+  const probe = document.createElement("canvas");
+  probe.width = 1;
+  probe.height = 1;
+  const context = probe.getContext("2d");
+  if (!context) return [255, 59, 48];
+  context.fillStyle = "#000000";
+  context.fillStyle = color;
+  context.fillRect(0, 0, 1, 1);
+  const [r, g, b] = context.getImageData(0, 0, 1, 1).data;
+  return [r, g, b];
+};
+
+/**
+ * Paint-bucket: flood-fills the region under the pointer inside the screenshot
+ * and drops the result on the canvas as a normal (exportable, rescalable)
+ * overlay image, so it stacks, undoes and flattens like every other annotation.
+ *
+ * Non-destructive: the source capture is never mutated — the fill is sampled
+ * from a decoded copy and only the overlay object is added.
+ */
+class BucketTool implements Tool {
+  readonly id: ToolId = "bucket";
+  readonly cursor = "crosshair";
+
+  /** Decoded source pixels, kept only while the tool is active. */
+  private source: { url: string; data: ImageData } | null = null;
+  /** Bumped on every fill/cancel so late async fills can bail out. */
+  private generation = 0;
+  private busy = false;
+
+  constructor(private readonly host: ToolHost) {}
+
+  activate(): void {
+    // Warm the pixel cache so the first click feels instant.
+    void this.pixels(this.host.imageInfo());
+  }
+
+  deactivate(): void {
+    this.cancel();
+  }
+
+  cancel(): void {
+    this.generation += 1;
+    this.busy = false;
+    this.source = null;
+  }
+
+  onPointerDown(): void {}
+  onPointerMove(): void {}
+
+  onEscape(): boolean {
+    return false;
+  }
+
+  onPointerUp(point: Point): void {
+    const info = this.host.imageInfo();
+    if (!info || this.busy) return;
+    const scaleX = info.scaleX || 1;
+    const scaleY = info.scaleY || 1;
+    const px = (point.x - info.left) / scaleX;
+    const py = (point.y - info.top) / scaleY;
+    // Ignore clicks in the letterbox around the screenshot.
+    if (px < 0 || py < 0) return;
+    if (px >= info.natural.width || py >= info.natural.height) return;
+
+    const seed = { x: Math.floor(px), y: Math.floor(py) };
+    const token = ++this.generation;
+    this.busy = true;
+    void this.fill(info, seed, token);
+  }
+
+  private async fill(
+    info: ImageInfo,
+    seed: { x: number; y: number },
+    token: number,
+  ): Promise<void> {
+    try {
+      const pixels = await this.pixels(info);
+      if (!pixels || token !== this.generation) return;
+
+      const width = pixels.width;
+      const height = pixels.height;
+      const overlay = this.paint(pixels, seed, width, height);
+      if (!overlay || token !== this.generation) return;
+
+      const object = new fabric.FabricImage(overlay, {
+        left: info.left,
+        top: info.top,
+        originX: "left",
+        originY: "top",
+        scaleX: info.scaleX || 1,
+        scaleY: info.scaleY || 1,
+        selectable: false,
+        evented: false,
+        objectCaching: false,
+        // The overlay covers the whole capture; only its painted pixels may
+        // intercept clicks in select mode, or it would hide the annotations below.
+        perPixelTargetFind: true,
+      });
+      object.setCoords();
+      this.host.addObject(object);
+      this.host.commit();
+      this.host.canvas.requestRenderAll();
+    } finally {
+      if (token === this.generation) this.busy = false;
+    }
+  }
+
+  /** Decode (and cache) the capture at its natural size. */
+  private async pixels(info: ImageInfo | null): Promise<ImageData | null> {
+    if (!info) return null;
+    if (this.source && this.source.url === info.dataUrl) return this.source.data;
+    const url = info.dataUrl;
+    try {
+      const element = await loadImageElement(url);
+      const width = Math.max(1, Math.floor(info.natural.width));
+      const height = Math.max(1, Math.floor(info.natural.height));
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const context = canvas.getContext("2d", { willReadFrequently: true });
+      if (!context) return null;
+      context.drawImage(element, 0, 0, width, height);
+      const data = context.getImageData(0, 0, width, height);
+      this.source = { url, data };
+      return data;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Scanline flood fill from `seed`, returned as a natural-size canvas whose
+   * filled pixels carry the active ink colour at full alpha and are transparent
+   * everywhere else.
+   */
+  private paint(
+    pixels: ImageData,
+    seed: { x: number; y: number },
+    width: number,
+    height: number,
+  ): HTMLCanvasElement | null {
+    const source = pixels.data;
+    const [r, g, b] = colorChannels(this.host.color());
+    const mask = document.createElement("canvas");
+    mask.width = width;
+    mask.height = height;
+    const maskContext = mask.getContext("2d");
+    if (!maskContext) return null;
+    const image = maskContext.createImageData(width, height);
+    const out = image.data;
+
+    const visited = new Uint8Array(width * height);
+    const seedIndex = seed.y * width + seed.x;
+    const seedOffset = seedIndex * 4;
+    const sr = source[seedOffset];
+    const sg = source[seedOffset + 1];
+    const sb = source[seedOffset + 2];
+    const sa = source[seedOffset + 3];
+    const tolerance = FILL_TOLERANCE;
+
+    const matches = (index: number): boolean => {
+      const offset = index * 4;
+      return (
+        Math.abs(source[offset] - sr) <= tolerance &&
+        Math.abs(source[offset + 1] - sg) <= tolerance &&
+        Math.abs(source[offset + 2] - sb) <= tolerance &&
+        Math.abs(source[offset + 3] - sa) <= tolerance
+      );
+    };
+
+    const limit = width * height * FILL_WORK_FACTOR;
+    const stack: number[] = [seed.x, seed.y];
+    let work = 0;
+    let filled = 0;
+    let exhausted = false;
+
+    while (stack.length) {
+      const y = stack.pop() as number;
+      let x = stack.pop() as number;
+      let index = y * width + x;
+      if (visited[index] || !matches(index)) continue;
+
+      while (x > 0 && !visited[index - 1] && matches(index - 1)) {
+        x -= 1;
+        index -= 1;
+      }
+
+      let spanAbove = false;
+      let spanBelow = false;
+      while (x < width && !visited[index] && matches(index)) {
+        visited[index] = 1;
+        const offset = index * 4;
+        out[offset] = r;
+        out[offset + 1] = g;
+        out[offset + 2] = b;
+        out[offset + 3] = 255;
+        filled += 1;
+        work += 1;
+
+        if (y > 0) {
+          const above = index - width;
+          const open = !visited[above] && matches(above);
+          if (open && !spanAbove) {
+            stack.push(x, y - 1);
+            spanAbove = true;
+          } else if (!open) {
+            spanAbove = false;
+          }
+        }
+        if (y < height - 1) {
+          const below = index + width;
+          const open = !visited[below] && matches(below);
+          if (open && !spanBelow) {
+            stack.push(x, y + 1);
+            spanBelow = true;
+          } else if (!open) {
+            spanBelow = false;
+          }
+        }
+
+        x += 1;
+        index += 1;
+        if (work >= limit) {
+          exhausted = true;
+          break;
+        }
+      }
+      if (exhausted) break;
+    }
+
+    if (!filled) return null;
+
+    maskContext.putImageData(image, 0, 0);
+    const overlay = document.createElement("canvas");
+    overlay.width = width;
+    overlay.height = height;
+    const context = overlay.getContext("2d");
+    if (!context) return null;
+    context.fillStyle = this.host.color();
+    context.fillRect(0, 0, width, height);
+    context.globalCompositeOperation = "destination-in";
+    context.drawImage(mask, 0, 0);
+    context.globalCompositeOperation = "source-over";
+    return overlay;
+  }
+}
+
 export const createTool = (id: ToolId, host: ToolHost): Tool => {
   switch (id) {
     case "arrow":
@@ -622,6 +916,8 @@ export const createTool = (id: ToolId, host: ToolHost): Tool => {
       return new CropTool(host);
     case "step":
       return new StepTool(host);
+    case "bucket":
+      return new BucketTool(host);
     case "select":
     default:
       return new SelectTool(host);

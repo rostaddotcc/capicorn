@@ -7,6 +7,9 @@
 //! | `copy_png`           | `dataUrl`                            | `void`                                   |
 //! | `get_version`        | —                                    | crate version (`string`)                 |
 //! | `set_fullscreen`     | `full`                               | `void`                                   |
+//! | `default_save_dir`   | —                                    | `<pictures>/Capicorn` (`string`)         |
+//! | `pick_save_dir`      | —                                    | chosen folder (`string`)                 |
+//! | `save_png_to_dir`    | `dataUrl`, `dir`, `filename`         | saved path (`string`)                    |
 //!
 //! `dataUrl` is always a full `data:image/png;base64,…` URL. Errors become
 //! rejected promises carrying the message string.
@@ -93,6 +96,77 @@ pub async fn save_png(
 
     std::fs::write(&path, &png).map_err(|e| format!("cannot write {}: {e}", path.display()))?;
     Ok(path.to_string_lossy().into_owned())
+}
+
+/// The folder a screenshot lands in when the user picks "default save location":
+/// `<Pictures>/Capicorn`. Purely a suggestion — nothing is created here, because
+/// `save_png_to_dir` does the `create_dir_all` once a save actually happens.
+#[tauri::command]
+pub fn default_save_dir(app: tauri::AppHandle) -> Result<String, String> {
+    use tauri::Manager as _;
+
+    let resolver = app.path();
+    let pictures = resolver
+        .picture_dir()
+        .or_else(|_| resolver.home_dir().map(|home| home.join("Pictures")))
+        .map_err(|e| format!("cannot resolve a pictures directory: {e}"))?;
+
+    Ok(pictures.join("Capicorn").to_string_lossy().into_owned())
+}
+
+/// Ask the user for a folder (no file selection) and hand the path back.
+#[tauri::command]
+pub async fn pick_save_dir(app: tauri::AppHandle) -> Result<String, String> {
+    let chosen = app
+        .dialog()
+        .file()
+        .blocking_pick_folder()
+        .ok_or_else(|| "cancelled".to_string())?;
+
+    let path = chosen
+        .into_path()
+        .map_err(|e| format!("unsupported folder selection: {e}"))?;
+
+    Ok(path.to_string_lossy().into_owned())
+}
+
+/// Write a screenshot into `dir` under `filename`, creating `dir` if needed.
+///
+/// The filename is untrusted frontend input, so anything that could escape the
+/// target directory (separators, `..`, empty) falls back to `capicorn.png`.
+#[tauri::command]
+pub async fn save_png_to_dir(data_url: String, dir: String, filename: String) -> Result<String, String> {
+    let png = crate::capture::decode_png_data_url(&data_url).map_err(|e| e.to_string())?;
+    image::load_from_memory(&png).map_err(|e| format!("invalid PNG payload: {e}"))?;
+
+    if dir.trim().is_empty() {
+        return Err("no save directory given".to_string());
+    }
+    let dir = std::path::PathBuf::from(&dir);
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+
+    let name = safe_filename(&filename);
+    let path = dir.join(&name);
+    std::fs::write(&path, &png).map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+
+    Ok(path.to_string_lossy().into_owned())
+}
+
+/// Reduce arbitrary user input to a single plain file name inside the target dir.
+fn safe_filename(filename: &str) -> String {
+    let trimmed = filename.trim();
+    let hostile = trimmed.is_empty()
+        || trimmed == "."
+        || trimmed == ".."
+        || trimmed.contains('/')
+        || trimmed.contains('\\')
+        || trimmed.contains('\0');
+    if hostile {
+        "capicorn.png".to_string()
+    } else {
+        trimmed.to_string()
+    }
 }
 
 #[tauri::command]

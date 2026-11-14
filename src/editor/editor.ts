@@ -15,7 +15,9 @@ import {
   MIN_STROKE_WIDTH,
   STROKE_WIDTH,
   type Box,
+  type ImageInfo,
   type Point,
+  type TextStyle,
   type Tool,
   type ToolHost,
   createTool,
@@ -23,7 +25,15 @@ import {
   isBlurRegion,
 } from "./tools";
 
-export type ToolId = "select" | "crop" | "arrow" | "text" | "rect" | "blur" | "step";
+export type ToolId =
+  | "select"
+  | "crop"
+  | "arrow"
+  | "text"
+  | "rect"
+  | "blur"
+  | "step"
+  | "bucket";
 
 const TOOL_IDS: readonly ToolId[] = [
   "select",
@@ -33,6 +43,7 @@ const TOOL_IDS: readonly ToolId[] = [
   "rect",
   "blur",
   "step",
+  "bucket",
 ];
 
 const MAX_HISTORY = 80;
@@ -42,6 +53,11 @@ const PADDING = 16;
 const MIN_SIZE = 8;
 /** Never export more than this on the long side. */
 const MAX_EXPORT_EDGE = 8192;
+/** Caption defaults and size limits. */
+const DEFAULT_FONT_FAMILY = "Inter";
+const DEFAULT_FONT_SIZE = 32;
+const MIN_FONT_SIZE = 8;
+const MAX_FONT_SIZE = 200;
 
 interface HistoryEntry {
   json: Record<string, unknown>;
@@ -70,6 +86,11 @@ export class Editor {
   private inkColor = ACCENT;
   /** Stroke width applied to NEW annotations. */
   private inkWidth = STROKE_WIDTH;
+  /** Caption typography applied to NEW text objects. */
+  private fontFamily = DEFAULT_FONT_FAMILY;
+  private fontSize = DEFAULT_FONT_SIZE;
+  private textBold = false;
+  private textItalic = false;
 
   private history: HistoryEntry[] = [];
   private cursor = -1;
@@ -98,6 +119,8 @@ export class Editor {
     this.host = {
       canvas: this.canvas,
       bounds: () => this.drawBounds(),
+      imageInfo: () => this.imageInfo(),
+      textStyle: () => this.textStyle(),
       addObject: (object) => this.addObject(object),
       removeObject: (object) => this.removeObject(object),
       commit: () => this.commit(),
@@ -309,6 +332,56 @@ export class Editor {
     return this.inkWidth;
   }
 
+  /** True once the canvas holds any state beyond the freshly loaded capture. */
+  isDirty(): boolean {
+    return this.cursor > 0;
+  }
+
+  /** Font family for new captions. Existing captions keep their own. */
+  setFontFamily(fontFamily: string): void {
+    if (typeof fontFamily !== "string") return;
+    const next = fontFamily.trim();
+    if (!next) return;
+    this.fontFamily = next;
+    this.notify();
+  }
+
+  getFontFamily(): string {
+    return this.fontFamily;
+  }
+
+  /** Caption font size for new text, clamped to 8..200 and rounded. */
+  setFontSize(size: number): void {
+    if (typeof size !== "number" || !Number.isFinite(size)) return;
+    const clamped = Math.min(Math.max(size, MIN_FONT_SIZE), MAX_FONT_SIZE);
+    this.fontSize = Math.round(clamped);
+    this.notify();
+  }
+
+  getFontSize(): number {
+    return this.fontSize;
+  }
+
+  setTextBold(bold: boolean): void {
+    if (this.textBold === !!bold) return;
+    this.textBold = !!bold;
+    this.notify();
+  }
+
+  isTextBold(): boolean {
+    return this.textBold;
+  }
+
+  setTextItalic(italic: boolean): void {
+    if (this.textItalic === !!italic) return;
+    this.textItalic = !!italic;
+    this.notify();
+  }
+
+  isTextItalic(): boolean {
+    return this.textItalic;
+  }
+
   /* --------------------------------------------------------------- tool glue */
 
   private currentTool(): Tool {
@@ -436,6 +509,30 @@ export class Editor {
   private drawBounds(): Box {
     if (!this.image) return this.bounds();
     return this.imageBox();
+  }
+
+  /** The screenshot's source data + scene transform (bucket sampling). */
+  private imageInfo(): ImageInfo | null {
+    const image = this.image;
+    if (!image || !this.sourceDataUrl) return null;
+    return {
+      dataUrl: this.sourceDataUrl,
+      natural: { width: this.natural.width, height: this.natural.height },
+      left: image.left,
+      top: image.top,
+      scaleX: image.scaleX,
+      scaleY: image.scaleY,
+    };
+  }
+
+  /** Typography the text tool should use for a new caption. */
+  private textStyle(): TextStyle {
+    return {
+      fontFamily: this.fontFamily,
+      fontSize: this.fontSize,
+      fontWeight: this.textBold ? "bold" : "normal",
+      fontStyle: this.textItalic ? "italic" : "normal",
+    };
   }
 
   private nextStepNumber(): number {

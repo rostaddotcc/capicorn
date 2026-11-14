@@ -11,7 +11,10 @@ pub fn run() {
             commands::save_png,
             commands::copy_png,
             commands::get_version,
-            commands::set_fullscreen
+            commands::set_fullscreen,
+            commands::default_save_dir,
+            commands::pick_save_dir,
+            commands::save_png_to_dir
         ])
         .run(tauri::generate_context!())
         .expect("error while running Capicorn");

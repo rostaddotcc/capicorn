@@ -71,3 +71,6 @@ MIT — see [LICENSE](LICENSE).
 Inspired by [ArtCraft](https://github.com/) (clean-room Adobe clones),
 [Cap](https://cap.so) (open-source Loom), and
 [Flameshot](https://flameshot.org). Not affiliated with TechSmith/Snakit.
+
+Bundled fonts (SIL OFL 1.1 — see `src/assets/fonts/OFL.txt`): Inter, Source Serif 4,
+JetBrains Mono, and Caveat.

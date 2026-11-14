@@ -2,6 +2,7 @@ mod capture;
 mod clipboard;
 mod commands;
 mod export;
+mod hotkeys;
 mod tray;
 mod windows;
 
@@ -12,6 +13,9 @@ pub fn run() {
         // Close-guard state: force-quit flag, editor-dirty flag, minimize-to-tray
         // preference. All three are driven by the commands in `windows.rs`.
         .manage(windows::AppFlags::new())
+        // Global-hotkey state: the live backend, the granted combos and the
+        // handles that keep the portal session alive (see `hotkeys.rs`).
+        .manage(hotkeys::HotkeyState::new())
         .invoke_handler(tauri::generate_handler![
             commands::capture_screenshot,
             commands::save_png,
@@ -26,7 +30,16 @@ pub fn run() {
             windows::set_dirty,
             windows::is_dirty,
             windows::set_minimize_to_tray,
-            windows::get_minimize_to_tray
+            windows::get_minimize_to_tray,
+            // Floating quick-capture widget
+            windows::open_widget,
+            windows::close_widget,
+            windows::toggle_widget,
+            windows::widget_capture,
+            // Wayland GlobalShortcuts portal (degrades to backend="none")
+            hotkeys::register_hotkeys,
+            hotkeys::get_hotkey_status,
+            hotkeys::unregister_hotkeys
         ])
         .setup(|app| {
             // Order matters: the close guard must exist before the window can be

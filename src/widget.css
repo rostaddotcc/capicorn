@@ -1,0 +1,236 @@
+/* Capicorn — floating quick-access widget (frameless ~260x64 window).
+   A single translucent pill: drag grip, Full, Region, close. No scrollbars,
+   no page chrome — this should read as a native floating control. */
+
+:root {
+  --accent: #8b7cf6;
+  --accent-soft: rgba(139, 124, 246, 0.16);
+  --accent-press: rgba(139, 124, 246, 0.28);
+  --radius: 16px;
+
+  --surface: linear-gradient(180deg, rgba(32, 29, 44, 0.94), rgba(20, 19, 30, 0.96));
+  --stroke: rgba(255, 255, 255, 0.1);
+  --stroke-strong: rgba(255, 255, 255, 0.16);
+  --shade: 0 10px 24px rgba(6, 4, 18, 0.5), 0 2px 6px rgba(6, 4, 18, 0.4);
+  --text: #ece9f7;
+  --muted: #a49fb9;
+  --hover: rgba(255, 255, 255, 0.07);
+  --press: rgba(255, 255, 255, 0.12);
+}
+
+:root[data-theme="light"] {
+  --surface: linear-gradient(180deg, rgba(255, 254, 255, 0.97), rgba(246, 244, 253, 0.97));
+  --stroke: rgba(28, 22, 56, 0.11);
+  --stroke-strong: rgba(28, 22, 56, 0.18);
+  --shade: 0 10px 22px rgba(30, 22, 62, 0.18), 0 2px 5px rgba(30, 22, 62, 0.12);
+  --text: #251f36;
+  --muted: #6d6683;
+  --hover: rgba(28, 22, 56, 0.06);
+  --press: rgba(28, 22, 56, 0.11);
+  --accent-soft: rgba(139, 124, 246, 0.14);
+  --accent-press: rgba(139, 124, 246, 0.24);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+  -webkit-user-select: none;
+  user-select: none;
+  cursor: default;
+}
+
+.widget-body {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, "Helvetica Neue", Arial,
+    sans-serif;
+}
+
+#widget {
+  -webkit-font-smoothing: antialiased;
+}
+
+/* --------------------------------------------------------------- the pill */
+
+.w-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  height: 56px;
+  padding: 0 7px;
+  border: 1px solid var(--stroke);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shade), inset 0 1px 0 var(--stroke-strong);
+  color: var(--text);
+  backdrop-filter: blur(18px) saturate(140%);
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
+  overflow: hidden;
+}
+
+/* ------------------------------------------------------------ drag grip */
+
+.w-grip {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 3px;
+  width: 14px;
+  height: 40px;
+  margin-right: 2px;
+  border-radius: 6px;
+  cursor: grab;
+  opacity: 0.55;
+  transition: opacity 140ms ease, background-color 140ms ease;
+}
+
+.w-grip:active {
+  cursor: grabbing;
+}
+
+.w-grip:hover {
+  opacity: 0.9;
+  background: var(--hover);
+}
+
+.w-grip__grid {
+  display: grid;
+  grid-template-columns: repeat(2, 2px);
+  gap: 3px;
+  justify-content: center;
+  align-content: center;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.w-grip__dot {
+  display: block;
+  width: 2px;
+  height: 2px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+/* ---------------------------------------------------------------- buttons */
+
+.w-btn {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-width: 0;
+  height: 42px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 11px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  line-height: 1;
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease, transform 90ms ease,
+    box-shadow 120ms ease;
+}
+
+.w-btn:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.w-btn:active {
+  background: var(--press);
+  transform: scale(0.96);
+}
+
+.w-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px var(--accent-soft);
+}
+
+.w-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+}
+
+.w-icon svg {
+  width: 18px;
+  height: 18px;
+  display: block;
+}
+
+.w-label {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Close is an icon-only affordance at the end of the bar. */
+.w-btn--ghost {
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  margin-left: 1px;
+  padding: 0;
+  border-radius: 9px;
+  color: var(--muted);
+}
+
+.w-btn--ghost:hover {
+  background: var(--press);
+  color: var(--text);
+}
+
+.w-sep {
+  flex: 0 0 auto;
+  width: 1px;
+  height: 22px;
+  margin: 0 3px;
+  border-radius: 1px;
+  background: var(--stroke);
+}
+
+/* The accent tick that sits under a hovered capture button. */
+.w-btn:not(.w-btn--ghost):hover::after {
+  content: "";
+  position: absolute;
+  bottom: 3px;
+  left: 50%;
+  width: 14px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--accent);
+  transform: translateX(-50%);
+  opacity: 0.7;
+}
+
+.w-btn:not(.w-btn--ghost) {
+  position: relative;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .w-btn,
+  .w-grip {
+    transition: none;
+  }
+}

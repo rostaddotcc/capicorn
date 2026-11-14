@@ -40,13 +40,35 @@ export const QUALITY_KEY = "capicorn:quality";
 export const TIMER_KEY = "capicorn:timer";
 export const FILENAME_KEY = "capicorn:filename";
 export const TRAY_KEY = "capicorn:minimize-tray";
+export const HOTKEYS_ENABLED_KEY = "capicorn:hotkeys-enabled";
+export const HOTKEY_FULL_KEY = "capicorn:hotkey-full";
+export const HOTKEY_REGION_KEY = "capicorn:hotkey-region";
+export const WIDGET_KEY = "capicorn:widget";
 
 export const DEFAULT_FORMAT: ExportFormat = "png";
 export const DEFAULT_QUALITY = 90;
 export const DEFAULT_TIMER = 0;
 export const DEFAULT_PATTERN = "Capicorn-{date}-{time}";
+export const DEFAULT_HOTKEY_FULL = "Print";
+export const DEFAULT_HOTKEY_REGION = "SHIFT+Print";
 /** Delays offered in Settings → Capture. */
 export const TIMER_CHOICES: ReadonlyArray<number> = [0, 3, 5, 10];
+
+/** Action ids shared with the Rust hotkey backend. */
+export type HotkeyId = "capture-full" | "capture-region";
+
+/** Which global-shortcut backend is actually live on this desktop. */
+export type HotkeyBackend = "portal" | "none";
+
+export interface GrantedHotkey {
+  id: string;
+  trigger: string;
+}
+
+export interface HotkeyStatus {
+  backend: HotkeyBackend;
+  granted: GrantedHotkey[];
+}
 
 export interface ExportSettings {
   format: ExportFormat;
@@ -56,6 +78,14 @@ export interface ExportSettings {
   /** Filename pattern with {date}/{time}/{datetime} tokens. */
   filename: string;
   minimizeToTray: boolean;
+  /** Master switch for global hotkeys (auto-registered on startup). */
+  hotkeysEnabled: boolean;
+  /** Trigger string for full-screen capture, e.g. 'Print'. */
+  hotkeyFull: string;
+  /** Trigger string for region capture, e.g. 'SHIFT+Print'. */
+  hotkeyRegion: string;
+  /** Whether the floating capture widget was left open. */
+  widget: boolean;
 }
 
 const store = (key: string): string | null => {
@@ -76,6 +106,28 @@ const clampInt = (raw: string | null, fallback: number, min: number, max: number
 export const isExportFormat = (value: string): value is ExportFormat =>
   value === "png" || value === "jpeg" || value === "webp";
 
+/**
+ * Tidy a user-typed trigger: collapse whitespace, uppercase the modifiers and
+ * join on '+'. Returns the fallback when nothing usable is left, so a cleared
+ * field never becomes a shortcut that binds "everything".
+ */
+export function normalizeTrigger(raw: string, fallback: string): string {
+  const cleaned = raw
+    .replace(/\s*\+\s*/g, "+")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toUpperCase();
+  if (cleaned === "" || cleaned === "+") return fallback;
+  const parts = cleaned.split("+").filter((part) => part !== "");
+  return parts.length ? parts.join("+") : fallback;
+}
+
+/** Trigger split into key caps for the settings preview ('CTRL+SHIFT+P'). */
+export function triggerCaps(trigger: string): string[] {
+  const parts = trigger.split("+").filter(Boolean);
+  return parts.length ? parts : [trigger];
+}
+
 /** Stored export preferences, each field falling back to its default. */
 export function readExportSettings(): ExportSettings {
   const rawFormat = store(FORMAT_KEY) ?? "";
@@ -89,6 +141,10 @@ export function readExportSettings(): ExportSettings {
     filename:
       rawPattern !== null && rawPattern.trim() !== "" ? rawPattern : DEFAULT_PATTERN,
     minimizeToTray: store(TRAY_KEY) === "true",
+    hotkeysEnabled: store(HOTKEYS_ENABLED_KEY) === "true",
+    hotkeyFull: normalizeTrigger(store(HOTKEY_FULL_KEY) ?? "", DEFAULT_HOTKEY_FULL),
+    hotkeyRegion: normalizeTrigger(store(HOTKEY_REGION_KEY) ?? "", DEFAULT_HOTKEY_REGION),
+    widget: store(WIDGET_KEY) === "true",
   };
 }
 
@@ -100,6 +156,10 @@ export function saveExportSettings(settings: ExportSettings): void {
     localStorage.setItem(TIMER_KEY, String(settings.timer));
     localStorage.setItem(FILENAME_KEY, settings.filename);
     localStorage.setItem(TRAY_KEY, String(settings.minimizeToTray));
+    localStorage.setItem(HOTKEYS_ENABLED_KEY, String(settings.hotkeysEnabled));
+    localStorage.setItem(HOTKEY_FULL_KEY, settings.hotkeyFull);
+    localStorage.setItem(HOTKEY_REGION_KEY, settings.hotkeyRegion);
+    localStorage.setItem(WIDGET_KEY, String(settings.widget));
   } catch {
     /* storage unavailable — the preferences just aren't remembered */
   }
@@ -163,6 +223,10 @@ export interface SettingsOptions {
    * drags, filename typing) that must not spam the status bar.
    */
   updateSettings(patch: Partial<ExportSettings>, opts?: { silent?: boolean }): void;
+  /** Bind (or re-bind) the configured global shortcuts; null when it failed. */
+  registerHotkeys(): Promise<HotkeyStatus | null>;
+  /** Last status the shell knows about, painted whenever the panel opens. */
+  getHotkeyStatus(): HotkeyStatus | null;
 }
 
 const icon = (body: string, size = 16): string =>
@@ -176,14 +240,27 @@ const ICONS = {
   moon: icon(`<path d="M13.1 9.7A5.5 5.5 0 0 1 6.3 2.9a5.6 5.6 0 1 0 6.8 6.8z"/>`, 14),
   close: icon(`<path d="M4.2 4.2l7.6 7.6M11.8 4.2l-7.6 7.6"/>`, 14),
   caret: icon(`<path d="M4.6 6.4 8 9.8l3.4-3.4"/>`, 12),
+  check: icon(`<path d="M3 8.6 6.4 12l6.6-7.6" stroke-width="2.1"/>`, 12),
   folder: icon(
     `<path d="M2.3 5.4A1.5 1.5 0 0 1 3.8 3.9h2.1l1.3 1.6h5a1.5 1.5 0 0 1 1.5 1.5v4a1.5 1.5 0 0 1-1.5 1.5H3.8a1.5 1.5 0 0 1-1.5-1.5z"/>`,
+    14,
+  ),
+  keyboard: icon(
+    `<rect x="1.6" y="4.4" width="12.8" height="7.2" rx="1.4"/><path d="M4.2 6.6h.01M6.6 6.6h.01M9 6.6h.01M11.4 6.6h.01M4.2 9.4h7.6"/>`,
+    14,
+  ),
+  widget: icon(
+    `<rect x="2.4" y="2.4" width="5.4" height="5.4" rx="1.3"/><rect x="8.2" y="2.4" width="5.4" height="5.4" rx="1.3"/><rect x="2.4" y="8.2" width="5.4" height="5.4" rx="1.3"/><path d="M12.6 9.2v3.6M10.8 11h3.6"/>`,
     14,
   ),
 };
 
 const FOCUSABLE =
   'button:not(:disabled), [href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])';
+
+/** Escape user-typed text before it lands in innerHTML. */
+const esc = (value: string): string =>
+  value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
 export class SettingsPanel {
   private readonly opts: SettingsOptions;
@@ -201,8 +278,17 @@ export class SettingsPanel {
   private nameInput!: HTMLInputElement;
   private namePreview!: HTMLElement;
   private traySwitch!: HTMLButtonElement;
+  private widgetSwitch!: HTMLButtonElement;
+  private hotkeySwitch!: HTMLButtonElement;
+  private hotkeyFullInput!: HTMLInputElement;
+  private hotkeyRegionInput!: HTMLInputElement;
+  private hotkeyFullPreview!: HTMLElement;
+  private hotkeyRegionPreview!: HTMLElement;
+  private hotkeyRegisterBtn!: HTMLButtonElement;
+  private hotkeyStatusEl!: HTMLElement;
   private lastFocus: HTMLElement | null = null;
   private picking = false;
+  private registering = false;
 
   constructor(opts: SettingsOptions) {
     this.opts = opts;
@@ -272,9 +358,88 @@ export class SettingsPanel {
     this.traySwitch.classList.toggle("is-on", settings.minimizeToTray);
     this.traySwitch.setAttribute("aria-checked", String(settings.minimizeToTray));
     this.traySwitch.title = settings.minimizeToTray ? "Minimize to tray is on" : "Minimize to tray is off";
+
+    this.widgetSwitch.classList.toggle("is-on", settings.widget);
+    this.widgetSwitch.setAttribute("aria-checked", String(settings.widget));
+    this.widgetSwitch.title = settings.widget ? "Floating widget is showing" : "Floating widget is hidden";
+
+    this.hotkeySwitch.classList.toggle("is-on", settings.hotkeysEnabled);
+    this.hotkeySwitch.setAttribute("aria-checked", String(settings.hotkeysEnabled));
+    this.hotkeySwitch.title = settings.hotkeysEnabled ? "Global hotkeys are on" : "Global hotkeys are off";
+    this.hotkeyRegisterBtn.disabled = this.registering || !settings.hotkeysEnabled;
+
+    // Never fight the caret while a trigger is being typed.
+    if (document.activeElement !== this.hotkeyFullInput) {
+      this.hotkeyFullInput.value = settings.hotkeyFull;
+    }
+    if (document.activeElement !== this.hotkeyRegionInput) {
+      this.hotkeyRegionInput.value = settings.hotkeyRegion;
+    }
+    this.paintCaps(this.hotkeyFullPreview, settings.hotkeyFull);
+    this.paintCaps(this.hotkeyRegionPreview, settings.hotkeyRegion);
+    this.paintHotkeyStatus(this.opts.getHotkeyStatus());
   }
 
   /* ------------------------------------------------------------- internals */
+
+  /** Render a trigger as keycaps ('CTRL+SHIFT+P' → Ctrl Shift P). */
+  private paintCaps(el: HTMLElement, trigger: string): void {
+    el.innerHTML = triggerCaps(trigger)
+      .map((cap) => `<kbd>${esc(cap)}</kbd>`)
+      .join("")
+      .trim();
+    el.dataset.trigger = trigger;
+  }
+
+  /** Backend badge + which of the two shortcuts the desktop actually granted. */
+  private paintHotkeyStatus(status: HotkeyStatus | null): void {
+    const settings = this.opts.getSettings();
+    const el = this.hotkeyStatusEl;
+
+    if (!settings.hotkeysEnabled) {
+      el.dataset.state = "off";
+      el.innerHTML = `<p class="hotkey-note">Global hotkeys are off — Capicorn listens only while its window has focus.</p>`;
+      return;
+    }
+    if (!status) {
+      el.dataset.state = "pending";
+      el.innerHTML = `<p class="hotkey-note">Not registered yet — press <strong>Register hotkeys</strong> to bind them.</p>`;
+      return;
+    }
+
+    const portal = status.backend === "portal";
+    el.dataset.state = portal ? "ok" : "warn";
+
+    const actions: ReadonlyArray<{ id: HotkeyId; label: string; want: string }> = [
+      { id: "capture-full", label: "Capture full screen", want: settings.hotkeyFull },
+      { id: "capture-region", label: "Capture region", want: settings.hotkeyRegion },
+    ];
+
+    const rows = actions
+      .map(({ id, label, want }) => {
+        const hit = status.granted.find((g) => g.id === id);
+        return `<li class="${hit ? "is-granted" : "is-missing"}">
+          <span class="hotkey-state" aria-hidden="true">${hit ? ICONS.check : ICONS.close}</span>
+          <span class="hotkey-name">${esc(label)}</span>
+          <kbd class="hotkey-key">${esc(hit ? hit.trigger : want)}</kbd>
+          <span class="sr-only">${hit ? "granted" : "not granted"}</span>
+        </li>`;
+      })
+      .join("");
+
+    const backendLine = portal
+      ? `<span class="hotkey-badge is-ok">Wayland portal</span><span class="hotkey-backend-text">org.freedesktop.portal.GlobalShortcuts — shortcuts stay active while any app is focused.</span>`
+      : `<span class="hotkey-badge is-warn">No backend</span><span class="hotkey-backend-text">No global-shortcut service answered this desktop.</span>`;
+
+    const advice = portal
+      ? ""
+      : `<p class="hotkey-note">Global hotkeys need the <strong>Wayland GlobalShortcuts portal</strong>, which KDE Plasma provides (GNOME 46 and older do not). Capicorn cannot bind keys without it — keep using PrintScreen inside the window, or add a shortcut in your desktop settings that runs <code>capicorn --capture</code>.</p>`;
+
+    el.innerHTML = `
+      <div class="hotkey-backend">${backendLine}</div>
+      <ul class="hotkey-list">${rows}</ul>
+      ${advice}`;
+  }
 
   private paintQuality(format: ExportFormat, quality: number): void {
     const lossy = format !== "png";
@@ -316,6 +481,13 @@ export class SettingsPanel {
               </div>
               <button type="button" class="switch" id="settings-tray" role="switch" aria-checked="false" aria-labelledby="tray-label"><span class="switch-knob" aria-hidden="true"></span></button>
             </div>
+            <div class="setting-row">
+              <div class="setting-row-text">
+                <span class="setting-label" id="widget-label">Show floating widget</span>
+                <span class="setting-sub">A small always-ready strip for one-click full or region captures.</span>
+              </div>
+              <button type="button" class="switch" id="settings-widget" role="switch" aria-checked="false" aria-labelledby="widget-label"><span class="switch-knob" aria-hidden="true"></span></button>
+            </div>
           </section>
 
           <section class="setting" data-section="capture">
@@ -327,6 +499,38 @@ export class SettingsPanel {
                   `<button type="button" role="radio" data-timer="${seconds}" aria-checked="${seconds === 0}">${seconds === 0 ? "Off" : `${seconds} s`}</button>`,
               ).join("")}
             </div>
+          </section>
+
+          <section class="setting" data-section="hotkeys">
+            <h3 class="setting-title">Global hotkeys</h3>
+            <div class="setting-row">
+              <div class="setting-row-text">
+                <span class="setting-label" id="hotkeys-label">Enable global hotkeys</span>
+                <span class="setting-sub">Capture while another app has focus. Needs the Wayland GlobalShortcuts portal — KDE Plasma provides it; GNOME 46 and older do not.</span>
+              </div>
+              <button type="button" class="switch" id="settings-hotkeys" role="switch" aria-checked="false" aria-labelledby="hotkeys-label"><span class="switch-knob" aria-hidden="true"></span></button>
+            </div>
+            <div class="hotkey-rows">
+              <label class="hotkey-row" for="hotkey-full">
+                <span class="hotkey-row-text">
+                  <span class="setting-label">Capture full screen</span>
+                  <span class="hotkey-caps" id="hotkey-full-caps" aria-hidden="true"></span>
+                </span>
+                <input type="text" class="field-input hotkey-input" id="hotkey-full" spellcheck="false" autocomplete="off" placeholder="${DEFAULT_HOTKEY_FULL}" aria-label="Full screen shortcut trigger" />
+              </label>
+              <label class="hotkey-row" for="hotkey-region">
+                <span class="hotkey-row-text">
+                  <span class="setting-label">Capture region</span>
+                  <span class="hotkey-caps" id="hotkey-region-caps" aria-hidden="true"></span>
+                </span>
+                <input type="text" class="field-input hotkey-input" id="hotkey-region" spellcheck="false" autocomplete="off" placeholder="${DEFAULT_HOTKEY_REGION}" aria-label="Region capture shortcut trigger" />
+              </label>
+            </div>
+            <div class="hotkey-actions">
+              <button type="button" class="btn-secondary" id="settings-register-hotkeys">Register hotkeys</button>
+              <span class="hotkey-format-hint">Format: <code>Print</code>, <code>SHIFT+Print</code>, <code>CTRL+SHIFT+P</code></span>
+            </div>
+            <div class="hotkey-status" id="settings-hotkey-status" data-state="off" role="status" aria-live="polite"></div>
           </section>
 
           <section class="setting" data-section="save">
@@ -394,6 +598,14 @@ export class SettingsPanel {
     this.nameInput = root.querySelector<HTMLInputElement>("#settings-filename")!;
     this.namePreview = root.querySelector<HTMLElement>("#settings-preview .preview-name")!;
     this.traySwitch = root.querySelector<HTMLButtonElement>("#settings-tray")!;
+    this.widgetSwitch = root.querySelector<HTMLButtonElement>("#settings-widget")!;
+    this.hotkeySwitch = root.querySelector<HTMLButtonElement>("#settings-hotkeys")!;
+    this.hotkeyFullInput = root.querySelector<HTMLInputElement>("#hotkey-full")!;
+    this.hotkeyRegionInput = root.querySelector<HTMLInputElement>("#hotkey-region")!;
+    this.hotkeyFullPreview = root.querySelector<HTMLElement>("#hotkey-full-caps")!;
+    this.hotkeyRegionPreview = root.querySelector<HTMLElement>("#hotkey-region-caps")!;
+    this.hotkeyRegisterBtn = root.querySelector<HTMLButtonElement>("#settings-register-hotkeys")!;
+    this.hotkeyStatusEl = root.querySelector<HTMLElement>("#settings-hotkey-status")!;
 
     for (const closer of Array.from(root.querySelectorAll<HTMLElement>("[data-close]"))) {
       closer.addEventListener("click", () => this.close());
@@ -414,6 +626,49 @@ export class SettingsPanel {
       this.opts.updateSettings({ minimizeToTray: next });
       this.refresh();
     });
+
+    this.widgetSwitch.addEventListener("click", () => {
+      const next = !this.opts.getSettings().widget;
+      this.opts.updateSettings({ widget: next });
+      this.refresh();
+    });
+
+    this.hotkeySwitch.addEventListener("click", () => {
+      const next = !this.opts.getSettings().hotkeysEnabled;
+      this.opts.updateSettings({ hotkeysEnabled: next });
+      this.refresh();
+    });
+
+    this.hotkeyRegisterBtn.addEventListener("click", () => void this.register());
+
+    const commitTrigger = (input: HTMLInputElement, which: "full" | "region"): void => {
+      const fallback = which === "full" ? DEFAULT_HOTKEY_FULL : DEFAULT_HOTKEY_REGION;
+      const value = normalizeTrigger(input.value, fallback);
+      input.value = value;
+      this.opts.updateSettings(
+        which === "full" ? { hotkeyFull: value } : { hotkeyRegion: value },
+        { silent: true },
+      );
+      this.refresh();
+    };
+
+    this.hotkeyFullInput.addEventListener("change", () => commitTrigger(this.hotkeyFullInput, "full"));
+    this.hotkeyRegionInput.addEventListener("change", () =>
+      commitTrigger(this.hotkeyRegionInput, "region"),
+    );
+    for (const input of [this.hotkeyFullInput, this.hotkeyRegionInput]) {
+      input.addEventListener("keydown", (ev) => {
+        if (ev.key !== "Enter") return;
+        ev.preventDefault();
+        input.dispatchEvent(new Event("change"));
+        input.blur();
+      });
+      // Live keycap preview while typing, without committing the value.
+      input.addEventListener("input", () => {
+        const preview = input === this.hotkeyFullInput ? this.hotkeyFullPreview : this.hotkeyRegionPreview;
+        this.paintCaps(preview, normalizeTrigger(input.value, input.placeholder));
+      });
+    }
 
     for (const pill of this.timerPills) {
       pill.addEventListener("click", () => {
@@ -480,6 +735,22 @@ export class SettingsPanel {
     ev.stopPropagation();
     this.close();
   };
+
+  private async register(): Promise<void> {
+    if (this.registering) return;
+    this.registering = true;
+    const label = this.hotkeyRegisterBtn.textContent;
+    this.hotkeyRegisterBtn.disabled = true;
+    this.hotkeyRegisterBtn.textContent = "Registering…";
+    this.hotkeyStatusEl.dataset.state = "pending";
+    try {
+      await this.opts.registerHotkeys();
+    } finally {
+      this.registering = false;
+      this.hotkeyRegisterBtn.textContent = label ?? "Register hotkeys";
+      this.refresh();
+    }
+  }
 
   private async pickFolder(): Promise<void> {
     if (this.picking) return;

@@ -15,6 +15,8 @@ import {
   saveExportSettings,
   type ExportFormat,
   type ExportSettings,
+  type HotkeyBackend,
+  type HotkeyStatus,
   type Theme,
 } from "./settings";
 
@@ -175,6 +177,61 @@ const STROKES: ReadonlyArray<{ id: string; width: number; label: string }> = [
   { id: "L", width: 5, label: "Thick stroke" },
 ];
 
+type PropGroup = "color" | "stroke" | "font" | "blur";
+
+/**
+ * Contextual properties rail: the one place a tool's settings live. Each tool
+ * only ever shows the groups it actually reads, so the panel never offers a
+ * control the current tool ignores (Snagit's contextual-panel pattern).
+ */
+const PROPS: Record<string, { hint: string; groups: ReadonlyArray<PropGroup>; strokeLabel?: string }> = {
+  select: {
+    hint: "Click an annotation to select it, then drag to move. Delete removes it.",
+    groups: [],
+  },
+  crop: {
+    hint: "Drag the handles to frame the shot, then press Enter to crop.",
+    groups: [],
+  },
+  arrow: {
+    hint: "Drag to draw an arrow. Width sets how heavy it looks.",
+    groups: ["color", "stroke"],
+  },
+  rect: { hint: "Drag to draw a box around something.", groups: ["color", "stroke"] },
+  step: {
+    hint: "Click to drop the next numbered step — numbers stay in order.",
+    groups: ["color", "stroke"],
+    strokeLabel: "Ring width",
+  },
+  text: {
+    hint: "Click where the text should start, then type.",
+    groups: ["color", "font"],
+  },
+  bucket: {
+    hint: "Click a closed area to flood-fill it with the current color.",
+    groups: ["color"],
+  },
+  blur: {
+    hint: "Drag over anything private — intensity sets how hard it hides.",
+    groups: ["blur"],
+  },
+  spotlight: {
+    hint: "Drag to light a region; everything outside it is dimmed.",
+    groups: ["color", "stroke"],
+    strokeLabel: "Feather",
+  },
+  highlighter: {
+    hint: "Swipe across text to mark it — width is the marker thickness.",
+    groups: ["color", "stroke"],
+    strokeLabel: "Thickness",
+  },
+  callout: {
+    hint: "Click to place a speech bubble, then type the note.",
+    groups: ["color", "font", "stroke"],
+    strokeLabel: "Outline",
+  },
+};
+
 const DEFAULT_COLOR = "#ff3b30";
 const DEFAULT_STROKE = 3;
 const DEFAULT_FONT = "Inter";
@@ -292,7 +349,7 @@ export function mountApp(root: HTMLElement): void {
         <span class="version" id="version" hidden></span>
       </div>
       <div class="topbar-right">
-        <span class="topbar-hint"><kbd>PrintScreen</kbd> full · <span class="key-pair"><kbd>Shift</kbd><kbd>PrintScreen</kbd></span> region</span>
+        <span class="topbar-hint" id="hotkey-hint"><kbd>PrintScreen</kbd> full · <span class="key-pair"><kbd>Shift</kbd><kbd>PrintScreen</kbd></span> region</span>
         <div class="topbar-tools">
           <button type="button" class="icon-btn" id="theme-toggle" title="Switch to dark theme" aria-label="Switch to dark theme" aria-pressed="false">${currentTheme === "dark" ? ICONS.sun : ICONS.moon}</button>
           <button type="button" class="icon-btn" id="settings-btn" title="Settings (Ctrl+,)" aria-label="Settings">${ICONS.settings}</button>
@@ -339,65 +396,8 @@ export function mountApp(root: HTMLElement): void {
       </div>
     </nav>
 
-    <nav class="toolbar toolbar-ink" aria-label="Ink style">
-      <div class="ink-group">
-        <div class="swatches" id="swatches" role="radiogroup" aria-label="Annotation color"></div>
-        <label class="color-custom" title="Custom color">
-          <input type="color" id="color-custom" value="${DEFAULT_COLOR}" aria-label="Custom annotation color" />
-          <span class="color-custom-ring" aria-hidden="true"></span>
-        </label>
-      </div>
-      <span class="toolbar-sep" aria-hidden="true"></span>
-      <div class="ink-group">
-        <span class="ink-label">Width</span>
-        <div class="strokes" id="strokes" role="radiogroup" aria-label="Stroke width"></div>
-      </div>
-      <span class="ink-hint">Applies to new annotations</span>
-    </nav>
-
-    <nav class="textbar" id="textbar" aria-label="Text formatting" hidden>
-      <span class="textbar-label">Text</span>
-      <label class="font-picker" title="Font family">
-        <span class="sr-only">Font family</span>
-        <select id="font-family" class="font-select" aria-label="Font family">
-          <option value="Inter" style="font-family:'Inter',system-ui,sans-serif">Inter</option>
-          <option value="Source Serif 4" style="font-family:'Source Serif 4',Georgia,serif">Source Serif 4</option>
-          <option value="JetBrains Mono" style="font-family:'JetBrains Mono',ui-monospace,monospace">JetBrains Mono</option>
-          <option value="Caveat" style="font-family:'Caveat',cursive">Caveat</option>
-        </select>
-        <span class="font-picker-arrow" aria-hidden="true">${ICONS.caret}</span>
-      </label>
-      <span class="toolbar-sep" aria-hidden="true"></span>
-      <div class="size-stepper" role="group" aria-label="Font size">
-        <button type="button" class="step-btn" id="size-down" aria-label="Smaller text" title="Smaller">−</button>
-        <input type="number" id="font-size" class="size-input" min="8" max="200" step="1" value="${DEFAULT_SIZE}" aria-label="Font size in pixels" />
-        <button type="button" class="step-btn" id="size-up" aria-label="Larger text" title="Larger">+</button>
-      </div>
-      <span class="toolbar-sep" aria-hidden="true"></span>
-      <div class="text-toggle-group" role="group" aria-label="Text style">
-        <button type="button" class="text-toggle" id="text-bold" aria-pressed="false" title="Bold" aria-label="Bold"><span class="text-toggle-glyph" style="font-weight:700">B</span></button>
-        <button type="button" class="text-toggle" id="text-italic" aria-pressed="false" title="Italic" aria-label="Italic"><span class="text-toggle-glyph" style="font-style:italic;font-family:'Source Serif 4',Georgia,serif">I</span></button>
-      </div>
-      <span class="textbar-hint" id="textbar-hint">Click anywhere to add text</span>
-    </nav>
-
-    <nav class="blurbar" id="blurbar" aria-label="Blur options" hidden>
-      <span class="textbar-label">Blur</span>
-      <div class="segmented segmented-sm" id="blur-modes" role="radiogroup" aria-label="Blur mode">
-        <button type="button" role="radio" data-blur-mode="gaussian" aria-checked="false">Gaussian</button>
-        <button type="button" role="radio" data-blur-mode="pixelate" aria-checked="false">Pixelate</button>
-        <button type="button" role="radio" data-blur-mode="blackout" aria-checked="false">Blackout</button>
-      </div>
-      <span class="toolbar-sep" aria-hidden="true"></span>
-      <div class="radius-field" id="blur-radius-field">
-        <label class="radius-label" for="blur-radius">Intensity</label>
-        <input type="range" class="slider slider-sm" id="blur-radius" min="2" max="60" step="1" value="${DEFAULT_BLUR_RADIUS}" aria-label="Blur intensity" />
-        <output class="radius-value" id="blur-radius-out" for="blur-radius">${DEFAULT_BLUR_RADIUS}</output>
-      </div>
-      <span class="blurbar-hint" id="blur-hint">Drag over anything private.</span>
-    </nav>
-
-    <main class="stage">
+    <main class="workspace">
+      <section class="stage" aria-label="Capture canvas">
       <div class="editor-shell" id="editor"></div>
       <div class="empty-state" id="empty">
         <span class="empty-mark" aria-hidden="true">✦</span>
@@ -405,6 +405,85 @@ export function mountApp(root: HTMLElement): void {
         <p class="empty-text">Press <kbd>PrintScreen</kbd> for the full screen, <span class="key-pair"><kbd>Shift</kbd><kbd>PrintScreen</kbd></span> for a region — or pick a mode from <strong>Capture</strong>.</p>
         <p class="empty-note">Every capture is saved to your save folder automatically.</p>
       </div>
+      </section>
+
+      <aside class="props" id="props" aria-label="Tool properties">
+        <header class="props-head">
+          <span class="props-eyebrow">Tool properties</span>
+          <h2 class="props-title" id="props-title">Select</h2>
+          <p class="props-hint" id="props-hint">Click an annotation to select it, then drag to move.</p>
+        </header>
+
+        <div class="props-body" id="props-body">
+          <p class="props-idle" id="props-idle">No capture yet — these settings apply to your next annotation.</p>
+
+          <section class="prop-group" data-group="color">
+            <div class="prop-head">
+              <h3 class="prop-label">Color</h3>
+              <div class="prop-head-end">
+                <output class="prop-value" id="color-value">${DEFAULT_COLOR}</output>
+                <label class="color-custom prop-custom" title="Custom color">
+                  <input type="color" id="color-custom" value="${DEFAULT_COLOR}" aria-label="Custom annotation color" />
+                  <span class="color-custom-ring" aria-hidden="true"></span>
+                </label>
+              </div>
+            </div>
+            <div class="swatches" id="swatches" role="radiogroup" aria-label="Annotation color"></div>
+          </section>
+
+          <section class="prop-group" data-group="stroke">
+            <div class="prop-head">
+              <h3 class="prop-label" id="stroke-label">Width</h3>
+              <output class="prop-value" id="stroke-value">${DEFAULT_STROKE} px</output>
+            </div>
+            <div class="strokes" id="strokes" role="radiogroup" aria-label="Stroke width"></div>
+          </section>
+
+          <section class="prop-group" data-group="font">
+            <h3 class="prop-label">Font</h3>
+            <label class="font-picker">
+              <span class="sr-only">Font family</span>
+              <select id="font-family" class="font-select" aria-label="Font family">
+                <option value="Inter" style="font-family:'Inter',system-ui,sans-serif">Inter</option>
+                <option value="Source Serif 4" style="font-family:'Source Serif 4',Georgia,serif">Source Serif 4</option>
+                <option value="JetBrains Mono" style="font-family:'JetBrains Mono',ui-monospace,monospace">JetBrains Mono</option>
+                <option value="Caveat" style="font-family:'Caveat',cursive">Caveat</option>
+              </select>
+              <span class="font-picker-arrow" aria-hidden="true">${ICONS.caret}</span>
+            </label>
+            <div class="prop-row">
+              <div class="size-stepper" role="group" aria-label="Font size">
+                <button type="button" class="step-btn" id="size-down" aria-label="Smaller text" title="Smaller">−</button>
+                <input type="number" id="font-size" class="size-input" min="8" max="200" step="1" value="${DEFAULT_SIZE}" aria-label="Font size in pixels" />
+                <button type="button" class="step-btn" id="size-up" aria-label="Larger text" title="Larger">+</button>
+              </div>
+              <div class="text-toggle-group" role="group" aria-label="Text style">
+                <button type="button" class="text-toggle" id="text-bold" aria-pressed="false" title="Bold" aria-label="Bold"><span class="text-toggle-glyph" style="font-weight:700">B</span></button>
+                <button type="button" class="text-toggle" id="text-italic" aria-pressed="false" title="Italic" aria-label="Italic"><span class="text-toggle-glyph" style="font-style:italic;font-family:'Source Serif 4',Georgia,serif">I</span></button>
+              </div>
+            </div>
+          </section>
+
+          <section class="prop-group" data-group="blur">
+            <h3 class="prop-label">Mode</h3>
+            <div class="segmented segmented-sm segmented-full" id="blur-modes" role="radiogroup" aria-label="Blur mode">
+              <button type="button" role="radio" data-blur-mode="gaussian" aria-checked="false">Gaussian</button>
+              <button type="button" role="radio" data-blur-mode="pixelate" aria-checked="false">Pixelate</button>
+              <button type="button" role="radio" data-blur-mode="blackout" aria-checked="false">Blackout</button>
+            </div>
+            <div class="radius-field" id="blur-radius-field">
+              <div class="prop-head">
+                <label class="prop-label" for="blur-radius">Intensity</label>
+                <output class="radius-value" id="blur-radius-out" for="blur-radius">${DEFAULT_BLUR_RADIUS}</output>
+              </div>
+              <input type="range" class="slider slider-sm" id="blur-radius" min="2" max="60" step="1" value="${DEFAULT_BLUR_RADIUS}" aria-label="Blur intensity" />
+            </div>
+            <p class="prop-note" id="blur-hint">Drag over anything private.</p>
+          </section>
+        </div>
+
+        <footer class="props-foot">Applies to new annotations</footer>
+      </aside>
     </main>
 
     <footer class="statusbar">
@@ -466,19 +545,26 @@ export function mountApp(root: HTMLElement): void {
   const swatchesEl = $<HTMLDivElement>("#swatches");
   const strokesEl = $<HTMLDivElement>("#strokes");
   const customColorEl = $<HTMLInputElement>("#color-custom");
-  const textBar = $<HTMLElement>("#textbar");
   const fontSelect = $<HTMLSelectElement>("#font-family");
   const sizeInput = $<HTMLInputElement>("#font-size");
   const sizeDownBtn = $<HTMLButtonElement>("#size-down");
   const sizeUpBtn = $<HTMLButtonElement>("#size-up");
   const boldBtn = $<HTMLButtonElement>("#text-bold");
   const italicBtn = $<HTMLButtonElement>("#text-italic");
-  const blurBar = $<HTMLElement>("#blurbar");
   const blurModesEl = $<HTMLDivElement>("#blur-modes");
   const blurRadiusInput = $<HTMLInputElement>("#blur-radius");
   const blurRadiusOut = $<HTMLOutputElement>("#blur-radius-out");
-  const blurHint = $<HTMLSpanElement>("#blur-hint");
+  const blurHint = $<HTMLParagraphElement>("#blur-hint");
   const radiusField = $<HTMLDivElement>("#blur-radius-field");
+  const propsEl = $<HTMLElement>("#props");
+  const propsBody = $<HTMLDivElement>("#props-body");
+  const propsTitle = $<HTMLHeadingElement>("#props-title");
+  const propsHint = $<HTMLParagraphElement>("#props-hint");
+  const propsIdle = $<HTMLParagraphElement>("#props-idle");
+  const strokeLabel = $<HTMLHeadingElement>("#stroke-label");
+  const strokeValue = $<HTMLOutputElement>("#stroke-value");
+  const colorValue = $<HTMLOutputElement>("#color-value");
+  const hotkeyHintEl = $<HTMLSpanElement>("#hotkey-hint");
   const countdownEl = $<HTMLDivElement>("#countdown");
   const countdownNum = $<HTMLSpanElement>("#countdown-num");
   const countdownHint = $<HTMLParagraphElement>("#countdown-hint");
@@ -503,6 +589,8 @@ export function mountApp(root: HTMLElement): void {
   /** Live countdown, so a second capture (or Esc) can cancel the first. */
   let countdownCancel: (() => void) | null = null;
   let guardBusy = false;
+  let hotkeyStatus: HotkeyStatus | null = null;
+  let widgetVisible = false;
 
   function setStatus(message: string, kind: StatusKind = "info"): void {
     statusEl.textContent = message;
@@ -529,8 +617,146 @@ export function mountApp(root: HTMLElement): void {
 
   /* -------------------------------------------------------------- settings */
 
+  async function setWidget(on: boolean, announce = true): Promise<void> {
+    const previous = settings.widget;
+    settings = { ...settings, widget: on };
+    saveExportSettings(settings);
+    panel?.refresh();
+    try {
+      let shown = widgetVisible;
+      if (on !== shown) {
+        const raw = await invoke<boolean>("toggle_widget");
+        shown = typeof raw === "boolean" ? raw : on;
+        if (on !== shown) {
+          const again = await invoke<boolean>("toggle_widget");
+          shown = typeof again === "boolean" ? again : on;
+        }
+      }
+      widgetVisible = shown;
+      if (announce) {
+        setStatus(shown ? "Floating widget shown" : "Floating widget hidden", shown ? "success" : "info");
+      }
+    } catch (e) {
+      settings = { ...settings, widget: previous };
+      saveExportSettings(settings);
+      if (announce) setStatus(`Floating widget unavailable: ${errText(e)}`, "error");
+    }
+    panel?.refresh();
+  }
+
+  /* --------------------------------------------------------------- hotkeys */
+
+  /** Shortcuts exactly as the Rust side expects them. */
+  function hotkeyShortcuts(): Array<{ id: string; trigger: string }> {
+    return [
+      { id: "capture-full", trigger: settings.hotkeyFull },
+      { id: "capture-region", trigger: settings.hotkeyRegion },
+    ];
+  }
+
+  /** Defensive read of the backend's status payload. */
+  function normalizeStatus(raw: unknown): HotkeyStatus {
+    const src = (raw ?? {}) as { backend?: unknown; granted?: unknown };
+    const backend: HotkeyBackend = src.backend === "portal" ? "portal" : "none";
+    const granted = Array.isArray(src.granted)
+      ? src.granted
+          .map((entry) => entry as { id?: unknown; trigger?: unknown })
+          .filter((entry) => !!entry && typeof entry.id === "string")
+          .map((entry) => ({ id: String(entry.id), trigger: String(entry.trigger ?? "") }))
+      : [];
+    return { backend, granted };
+  }
+
+  /** Bind (or unbind) the configured shortcuts; returns the live status. */
+  async function applyHotkeys(announce = true): Promise<HotkeyStatus | null> {
+    if (!settings.hotkeysEnabled) {
+      try {
+        await invoke("unregister_hotkeys");
+      } catch {
+        /* backend predates hotkeys — nothing to unbind */
+      }
+      hotkeyStatus = null;
+      paintHotkeyHint();
+      panel?.refresh();
+      return null;
+    }
+    try {
+      const raw = await invoke<unknown>("register_hotkeys", { shortcuts: hotkeyShortcuts() });
+      hotkeyStatus = normalizeStatus(raw);
+      if (announce) {
+        const granted = hotkeyStatus.granted.length;
+        if (hotkeyStatus.backend === "none") {
+          setStatus(
+            "Global hotkeys need the Wayland GlobalShortcuts portal (KDE) — see Settings → Global hotkeys.",
+            "error",
+          );
+        } else if (granted === 0) {
+          setStatus("The desktop granted none of your shortcuts — try a different trigger.", "error");
+        } else {
+          setStatus(`Hotkeys bound ${granted}/2 via the Wayland portal`, granted === 2 ? "success" : "info");
+        }
+      }
+    } catch (e) {
+      hotkeyStatus = null;
+      if (announce) setStatus(`Global hotkeys unavailable: ${errText(e)}`, "error");
+    }
+    paintHotkeyHint();
+    panel?.refresh();
+    return hotkeyStatus;
+  }
+
+  const keyCaps = (trigger: string): string =>
+    trigger
+      .split("+")
+      .filter(Boolean)
+      .map((cap) => `<kbd>${cap.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</kbd>`)
+      .join("");
+
+  /** Top-bar hint: only claims a global shortcut when the desktop granted it. */
+  function paintHotkeyHint(): void {
+    const live = settings.hotkeysEnabled && hotkeyStatus?.backend === "portal" ? hotkeyStatus : null;
+    if (live && live.granted.length) {
+      const full = live.granted.find((g) => g.id === "capture-full");
+      const region = live.granted.find((g) => g.id === "capture-region");
+      hotkeyHintEl.innerHTML = [
+        full ? `${keyCaps(full.trigger)} full` : "",
+        region ? `${keyCaps(region.trigger)} region` : "",
+      ]
+        .filter(Boolean)
+        .join(" · ");
+      return;
+    }
+    hotkeyHintEl.innerHTML = `<kbd>PrintScreen</kbd> full · <span class="key-pair"><kbd>Shift</kbd><kbd>PrintScreen</kbd></span> region`;
+  }
+
+  /* -------------------------------------------------------------- settings */
+
   /** Persist + apply an export/general preference change from the panel. */
   function updateSettings(patch: Partial<ExportSettings>, opts: { silent?: boolean } = {}): void {
+    if (patch.widget !== undefined) {
+      void setWidget(patch.widget, !opts.silent);
+      return;
+    }
+
+    if (
+      patch.hotkeysEnabled !== undefined ||
+      patch.hotkeyFull !== undefined ||
+      patch.hotkeyRegion !== undefined
+    ) {
+      settings = { ...settings, ...patch };
+      saveExportSettings(settings);
+      if (!opts.silent) {
+        if (patch.hotkeysEnabled !== undefined) {
+          setStatus(settings.hotkeysEnabled ? "Global hotkeys on — binding shortcuts…" : "Global hotkeys off");
+        } else if (settings.hotkeysEnabled) {
+          setStatus("Shortcut updated — rebinding…");
+        }
+      }
+      void applyHotkeys(!opts.silent);
+      panel?.refresh();
+      return;
+    }
+
     if (patch.minimizeToTray !== undefined) {
       const enabled = patch.minimizeToTray;
       const previous = settings.minimizeToTray;
@@ -874,6 +1100,7 @@ export function mountApp(root: HTMLElement): void {
     hasImage = loaded;
     stageEl.classList.toggle("has-image", loaded);
     emptyEl.setAttribute("aria-hidden", String(loaded));
+    propsIdle.hidden = loaded;
     copyBtn.disabled = !loaded;
     saveBtn.disabled = !loaded;
     syncHistory();
@@ -1029,6 +1256,7 @@ export function mountApp(root: HTMLElement): void {
     }
     customColorEl.closest(".color-custom")?.classList.toggle("is-active", !matched);
     customColorEl.value = normalized;
+    if (colorValue) colorValue.textContent = normalized.toUpperCase();
   }
 
   function applyColor(hex: string, announce = true): void {
@@ -1052,6 +1280,7 @@ export function mountApp(root: HTMLElement): void {
       btn.classList.toggle("is-active", active);
       btn.setAttribute("aria-checked", String(active));
     }
+    if (strokeValue) strokeValue.textContent = `${width} px`;
   }
 
   function applyStroke(width: number, announce = true): void {
@@ -1293,6 +1522,19 @@ export function mountApp(root: HTMLElement): void {
       ?.focus({ preventScroll: true });
   });
 
+  /** Swap the rail to the active tool's own property groups. */
+  function paintProps(id: ShellToolId): void {
+    const spec = PROPS[id] ?? { hint: "", groups: [] };
+    const tool = TOOLS.find((t) => t.id === id);
+    propsTitle.textContent = tool ? tool.label : id;
+    propsHint.textContent = spec.hint;
+    strokeLabel.textContent = spec.strokeLabel ?? "Width";
+    for (const group of Array.from(propsBody.querySelectorAll<HTMLElement>("[data-group]"))) {
+      group.hidden = !spec.groups.includes((group.dataset.group ?? "") as PropGroup);
+    }
+    propsEl.classList.toggle("is-contextless", spec.groups.length === 0);
+  }
+
   function selectTool(id: ShellToolId, announce = true): void {
     try {
       editor.setTool(id as ToolId);
@@ -1300,8 +1542,7 @@ export function mountApp(root: HTMLElement): void {
       setStatus(`${id} is not available in this build: ${errText(e)}`, "error");
       return;
     }
-    textBar.hidden = id !== "text";
-    blurBar.hidden = id !== "blur";
+    paintProps(id);
     for (const [key, btn] of toolButtons) {
       const active = key === id;
       btn.classList.toggle("is-active", active);
@@ -1333,6 +1574,8 @@ export function mountApp(root: HTMLElement): void {
     setTheme: (next) => setTheme(next),
     getSettings: () => settings,
     updateSettings: (patch, opts) => updateSettings(patch, opts),
+    registerHotkeys: () => applyHotkeys(true),
+    getHotkeyStatus: () => hotkeyStatus,
   });
 
   guardSaveBtn.addEventListener("click", () => void onGuardSave());
@@ -1398,6 +1641,7 @@ export function mountApp(root: HTMLElement): void {
     const canRedo = typeof detail?.canRedo === "boolean" ? detail.canRedo : editor.canRedo();
     undoBtn.disabled = !hasImage || !canUndo;
     redoBtn.disabled = !hasImage || !canRedo;
+    if (detail?.tool) paintProps(detail.tool as ShellToolId);
     syncDirty();
   });
 
@@ -1458,6 +1702,23 @@ export function mountApp(root: HTMLElement): void {
     /* plain browser or an older backend without the tray */
   });
 
+  // A registered global shortcut fired (Wayland GlobalShortcuts portal).
+  void listen<{ id?: string }>("hotkey-activated", (ev) => {
+    const id = ev.payload?.id;
+    if (id === "capture-full") void runCapture("full");
+    else if (id === "capture-region") void runCapture("region");
+  }).catch(() => {
+    /* no hotkey backend in this build */
+  });
+
+  // The floating widget asked for a capture of its own.
+  void listen<{ mode?: string }>("widget-capture", (ev) => {
+    const requested: CaptureMode = ev.payload?.mode === "region" ? "region" : "full";
+    void runCapture(requested);
+  }).catch(() => {
+    /* widget window absent */
+  });
+
   // Rust intercepts the close while the canvas is dirty and asks us to guard it.
   void listen("close-requested", () => {
     syncDirty();
@@ -1508,6 +1769,32 @@ export function mountApp(root: HTMLElement): void {
   syncBlurFromEditor();
 
   setStatus("Ready — press PrintScreen for the full screen, Shift+PrintScreen for a region.");
+
+  // Restore the hotkey bindings and floating widget from last session.
+  void (async () => {
+    try {
+      hotkeyStatus = normalizeStatus(await invoke<unknown>("get_hotkey_status"));
+    } catch {
+      hotkeyStatus = null;
+    }
+    // Enables + binds when hotkeys are on; unbinds anything a previous session
+    // left bound when they are off.
+    await applyHotkeys(false);
+    paintHotkeyHint();
+    panel?.refresh();
+
+    if (settings.widget) {
+      try {
+        await invoke("open_widget");
+        widgetVisible = true;
+      } catch {
+        widgetVisible = false;
+        settings = { ...settings, widget: false };
+        saveExportSettings(settings);
+        panel?.refresh();
+      }
+    }
+  })();
 
   void (async () => {
     try {

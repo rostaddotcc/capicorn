@@ -13,7 +13,8 @@
 //!
 //! `save_image` (PNG/JPEG/WebP + quality) lives in `export.rs`; the close-guard
 //! commands (`force_close`, `set_dirty`, `is_dirty`, `set_minimize_to_tray`,
-//! `get_minimize_to_tray`) live in `windows.rs`.
+//! `get_minimize_to_tray`) live in `windows.rs`; the screen-recording commands
+//! (`start_recording`, `stop_recording`, `is_recording`) live in `recording.rs`.
 //!
 //! `dataUrl` is always a full `data:image/png;base64,…` URL. Errors become
 //! rejected promises carrying the message string.

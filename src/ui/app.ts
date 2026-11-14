@@ -9,12 +9,15 @@ import {
   SettingsPanel,
   applyTheme,
   buildFilename,
+  expandPattern,
   formatLabel,
+  recFormatLabel,
   readExportSettings,
   readTheme,
   saveExportSettings,
   type ExportFormat,
   type ExportSettings,
+  type RecFormat,
   type HotkeyBackend,
   type HotkeyStatus,
   type Theme,
@@ -100,6 +103,8 @@ const ICONS = {
     `<path d="M2.6 5.2h10.8M2.6 10.8h10.8"/><circle cx="6" cy="5.2" r="1.8"/><circle cx="10.2" cy="10.8" r="1.8"/>`,
   ),
   close: icon(`<path d="M4.6 4.6 11.4 11.4M11.4 4.6 4.6 11.4"/>`, 14, 1.7),
+  record: icon(`<circle cx="8" cy="8" r="5.2" fill="currentColor" stroke="none"/>`),
+  stop: icon(`<rect x="3.6" y="3.6" width="8.8" height="8.8" rx="1.8" fill="currentColor" stroke="none"/>`),
   ocr: icon(
     `<path d="M2.6 5.4V3.6a1 1 0 0 1 1-1h1.8M10.6 2.6h1.8a1 1 0 0 1 1 1v1.8M13.4 10.6v1.8a1 1 0 0 1-1 1h-1.8M5.4 13.4H3.6a1 1 0 0 1-1-1v-1.8"/><path d="M5.6 5.8h4.8M5.6 8h3.2M5.6 10.2h4"/>`,
   ),
@@ -490,6 +495,17 @@ export function mountApp(root: HTMLElement): void {
           <button type="button" class="icon-btn" id="theme-toggle" title="Switch to dark theme" aria-label="Switch to dark theme" aria-pressed="false">${currentTheme === "dark" ? ICONS.sun : ICONS.moon}</button>
           <button type="button" class="icon-btn" id="settings-btn" title="Settings (Ctrl+,)" aria-label="Settings">${ICONS.settings}</button>
         </div>
+        <div class="rec-group">
+          <div class="rec-pill" id="rec-pill" hidden>
+            <span class="rec-pulse" aria-hidden="true"></span>
+            <span class="rec-timer" id="rec-timer" role="timer" aria-label="Recording time">00:00</span>
+            <span class="rec-format" id="rec-format">MP4</span>
+          </div>
+          <button type="button" class="rec-btn" id="record" aria-pressed="false" title="Record the screen (opens the system screen picker)" aria-label="Record screen">
+            <span class="rec-glyph" id="rec-glyph" aria-hidden="true">${ICONS.record}</span>
+            <span class="rec-label" id="rec-label">Record</span>
+          </button>
+        </div>
         <div class="split-btn" id="capture-split">
           <button type="button" class="btn-primary split-main" id="capture" aria-keyshortcuts="PrintScreen" title="Capture full screen (PrintScreen)">
             ${ICONS.capture}
@@ -736,6 +752,12 @@ export function mountApp(root: HTMLElement): void {
   const splitEl = $<HTMLDivElement>("#capture-split");
   const themeBtn = $<HTMLButtonElement>("#theme-toggle");
   const settingsBtn = $<HTMLButtonElement>("#settings-btn");
+  const recordBtn = $<HTMLButtonElement>("#record");
+  const recGlyphEl = $<HTMLSpanElement>("#rec-glyph");
+  const recLabelEl = $<HTMLSpanElement>("#rec-label");
+  const recPillEl = $<HTMLDivElement>("#rec-pill");
+  const recTimerEl = $<HTMLSpanElement>("#rec-timer");
+  const recFormatEl = $<HTMLSpanElement>("#rec-format");
   const undoBtn = $<HTMLButtonElement>("#undo");
   const redoBtn = $<HTMLButtonElement>("#redo");
   const copyBtn = $<HTMLButtonElement>("#copy");
@@ -823,6 +845,14 @@ export function mountApp(root: HTMLElement): void {
   let ocrLang: OcrLang = readStore(OCR_LANG_KEY) === "swe" ? "swe" : "eng";
   let ocrBusy = false;
   let lastOcrText = "";
+  /** Screen recording: our own start time, plus flags for async races. */
+  let recording = false;
+  let recStartedAt = 0;
+  let recTick = 0;
+  let recStarting = false;
+  let recStopping = false;
+  /** Format the running take was started with (the setting can change mid-take). */
+  let recFormatUsed: RecFormat | null = null;
 
   function setStatus(message: string, kind: StatusKind = "info"): void {
     statusEl.textContent = message;
@@ -1014,6 +1044,8 @@ export function mountApp(root: HTMLElement): void {
             ? `Capture delay: ${settings.timer} s — press Capture to start the countdown`
             : "Capture delay: off — captures immediately",
         );
+      } else if (patch.recFormat !== undefined) {
+        setStatus(`Recording format: ${recFormatLabel(settings.recFormat)}`);
       } else if (patch.format !== undefined) {
         setStatus(
           `Export format: ${formatLabel(settings.format)}${
@@ -1387,8 +1419,126 @@ export function mountApp(root: HTMLElement): void {
     busy = value;
     captureBtn.disabled = value;
     caretBtn.disabled = value;
+    recordBtn.disabled = value || recStarting;
     captureBtn.classList.toggle("is-busy", value);
     if (value) setMenuOpen(false);
+  }
+
+  /* ------------------------------------------------------------ recording */
+
+  /** mm:ss for the pill; minutes keep counting past 60 on long takes. */
+  function elapsedLabel(ms: number): string {
+    const total = Math.max(0, Math.floor(ms / 1000));
+    const mm = String(Math.floor(total / 60)).padStart(2, "0");
+    const ss = String(total % 60).padStart(2, "0");
+    return `${mm}:${ss}`;
+  }
+
+  function paintRecTimer(): void {
+    if (!recording) return;
+    recTimerEl.textContent = elapsedLabel(Date.now() - recStartedAt);
+  }
+
+  /** One place that paints Rec → Stop, the pill and the disabled capture controls. */
+  function paintRecording(active: boolean): void {
+    recordBtn.classList.toggle("is-recording", active);
+    recordBtn.setAttribute("aria-pressed", String(active));
+    recordBtn.title = active
+      ? "Stop the recording and save it"
+      : "Record the screen (opens the system screen picker)";
+    recordBtn.setAttribute("aria-label", active ? "Stop recording" : "Record screen");
+    recLabelEl.textContent = active ? "Stop" : "Record";
+    recGlyphEl.innerHTML = active ? ICONS.stop : ICONS.record;
+    recPillEl.hidden = !active;
+    recFormatEl.textContent = recFormatLabel(recFormatUsed ?? settings.recFormat);
+    captureBtn.disabled = active || busy;
+    caretBtn.disabled = active || busy;
+    if (active) setMenuOpen(false);
+  }
+
+  function beginRecording(): void {
+    if (!recording) recording = true;
+    if (!recStartedAt) recStartedAt = Date.now();
+    window.clearInterval(recTick);
+    paintRecTimer();
+    recTick = window.setInterval(paintRecTimer, 500);
+    paintRecording(true);
+  }
+
+  function endRecording(): void {
+    recording = false;
+    recStartedAt = 0;
+    recFormatUsed = null;
+    window.clearInterval(recTick);
+    recTick = 0;
+    recTimerEl.textContent = "00:00";
+    paintRecording(false);
+  }
+
+  /** Filename the backend writes: Capicorn-<date>-<time>.<mp4|gif>. */
+  const recordingFilename = (): string =>
+    `Capicorn-${expandPattern("{date}-{time}").replace(/\s+/g, "-")}.${settings.recFormat}`;
+
+  /** Ask the backend for the OS screen picker, then flip the bar into Stop mode. */
+  async function startRecording(): Promise<void> {
+    if (recording || recStarting || recStopping) return;
+    if (busy) {
+      setStatus("Wait for the capture to finish before recording.");
+      return;
+    }
+    const dir = await ensureSaveDir();
+    if (!dir) {
+      setStatus("Pick a save folder before recording.", "error");
+      return;
+    }
+    recStarting = true;
+    recFormatUsed = settings.recFormat;
+    recordBtn.disabled = true;
+    recordBtn.classList.add("is-busy");
+    recFormatEl.textContent = recFormatLabel(recFormatUsed);
+    setStatus(`Starting ${recFormatLabel(settings.recFormat)} recording — choose a screen…`);
+    try {
+      await invoke("start_recording", {
+        format: settings.recFormat,
+        dir,
+        filename: recordingFilename(),
+      });
+      recStartedAt = Date.now();
+      beginRecording();
+      setStatus("Recording — click Stop when you're done.", "success");
+    } catch (e) {
+      const message = errText(e);
+      if (/cancel|dismiss|denied|deny|refus/i.test(message)) {
+        setStatus("Recording cancelled — no screen was picked.");
+      } else {
+        setStatus(`Could not start recording: ${message}`, "error");
+      }
+      endRecording();
+    } finally {
+      recStarting = false;
+      recordBtn.disabled = false;
+      recordBtn.classList.remove("is-busy");
+    }
+  }
+
+  async function stopRecording(): Promise<void> {
+    if (!recording || recStopping) return;
+    recStopping = true;
+    recordBtn.disabled = true;
+    setStatus("Finishing the recording…");
+    try {
+      const path = await invoke<string>("stop_recording");
+      const saved = typeof path === "string" ? path.trim() : "";
+      endRecording();
+      if (saved) setStatus(`Recording saved: ${saved}`, "success");
+      else setStatus("Recording stopped, but no file was written.", "error");
+    } catch (e) {
+      endRecording();
+      setStatus(`Could not save the recording: ${errText(e)}`, "error");
+    } finally {
+      recStopping = false;
+      recordBtn.disabled = false;
+    }
   }
 
   /**
@@ -1448,6 +1598,10 @@ export function mountApp(root: HTMLElement): void {
 
   async function runCapture(requested: CaptureMode = mode): Promise<void> {
     if (busy || !guardEl.hidden) return;
+    if (recording) {
+      setStatus("Stop the recording before capturing a screen.");
+      return;
+    }
     setBusy(true);
     try {
       if (settings.timer > 0) {
@@ -2220,6 +2374,7 @@ export function mountApp(root: HTMLElement): void {
   settingsBtn.addEventListener("click", () => panel?.open());
 
   captureBtn.addEventListener("click", () => void runCapture());
+  recordBtn.addEventListener("click", () => void (recording ? stopRecording() : startRecording()));
   caretBtn.addEventListener("click", () => setMenuOpen(menuEl.hidden));
 
   // Opening from the caret with ArrowDown is a standard menu affordance.
@@ -2401,6 +2556,23 @@ export function mountApp(root: HTMLElement): void {
     /* widget window absent */
   });
 
+  // Recording state is authoritative on the Rust side (stop button, hotkey,
+  // screen-picker cancel) — mirror it instead of trusting our own click only.
+  void listen<{ recording?: boolean; path?: string | null }>("recording-state", (ev) => {
+    const live = ev.payload?.recording === true;
+    const path = typeof ev.payload?.path === "string" ? ev.payload.path.trim() : "";
+    if (live && !recording) {
+      beginRecording();
+      setStatus("Recording — click Stop when you're done.", "success");
+    } else if (!live && recording && !recStopping) {
+      endRecording();
+      if (path) setStatus(`Recording saved: ${path}`, "success");
+      else setStatus("Recording stopped.");
+    }
+  }).catch(() => {
+    /* older backend without the recorder */
+  });
+
   // Rust intercepts the close while the canvas is dirty and asks us to guard it.
   void listen("close-requested", () => {
     syncDirty();
@@ -2455,6 +2627,18 @@ export function mountApp(root: HTMLElement): void {
   ocrLangSelect.value = ocrLang;
 
   setStatus("Ready — press PrintScreen for the full screen, Shift+PrintScreen for a region.");
+
+  // Adopt a recording that was already running (window reload, external start).
+  void invoke<boolean>("is_recording")
+    .then((live) => {
+      if (!live || recording) return;
+      recStartedAt = Date.now();
+      beginRecording();
+      setStatus("Recording — click Stop when you're done.", "success");
+    })
+    .catch(() => {
+      /* no recorder in this build */
+    });
 
   // Restore the hotkey bindings and floating widget from last session.
   void (async () => {

@@ -8,6 +8,8 @@
 
 export type Theme = "light" | "dark";
 export type ExportFormat = "png" | "jpeg" | "webp";
+/** Container the screen recorder writes. */
+export type RecFormat = "mp4" | "gif";
 
 export const THEME_KEY = "capicorn:theme";
 
@@ -44,8 +46,10 @@ export const HOTKEYS_ENABLED_KEY = "capicorn:hotkeys-enabled";
 export const HOTKEY_FULL_KEY = "capicorn:hotkey-full";
 export const HOTKEY_REGION_KEY = "capicorn:hotkey-region";
 export const WIDGET_KEY = "capicorn:widget";
+export const REC_FORMAT_KEY = "capicorn:rec-format";
 
 export const DEFAULT_FORMAT: ExportFormat = "png";
+export const DEFAULT_REC_FORMAT: RecFormat = "mp4";
 export const DEFAULT_QUALITY = 90;
 export const DEFAULT_TIMER = 0;
 export const DEFAULT_PATTERN = "Capicorn-{date}-{time}";
@@ -86,6 +90,8 @@ export interface ExportSettings {
   hotkeyRegion: string;
   /** Whether the floating capture widget was left open. */
   widget: boolean;
+  /** Screen-recording container (MP4 or GIF). */
+  recFormat: RecFormat;
 }
 
 const store = (key: string): string | null => {
@@ -105,6 +111,13 @@ const clampInt = (raw: string | null, fallback: number, min: number, max: number
 
 export const isExportFormat = (value: string): value is ExportFormat =>
   value === "png" || value === "jpeg" || value === "webp";
+
+export const isRecFormat = (value: string): value is RecFormat =>
+  value === "mp4" || value === "gif";
+
+/** Human label for a recording container. */
+export const recFormatLabel = (format: RecFormat): string =>
+  format === "gif" ? "GIF" : "MP4";
 
 /**
  * Tidy a user-typed trigger: collapse whitespace, uppercase the modifiers and
@@ -133,6 +146,7 @@ export function readExportSettings(): ExportSettings {
   const rawFormat = store(FORMAT_KEY) ?? "";
   const rawTimer = clampInt(store(TIMER_KEY), DEFAULT_TIMER, 0, 60);
   const rawPattern = store(FILENAME_KEY);
+  const rawRec = store(REC_FORMAT_KEY) ?? "";
   return {
     format: isExportFormat(rawFormat) ? rawFormat : DEFAULT_FORMAT,
     quality: clampInt(store(QUALITY_KEY), DEFAULT_QUALITY, 1, 100),
@@ -145,6 +159,7 @@ export function readExportSettings(): ExportSettings {
     hotkeyFull: normalizeTrigger(store(HOTKEY_FULL_KEY) ?? "", DEFAULT_HOTKEY_FULL),
     hotkeyRegion: normalizeTrigger(store(HOTKEY_REGION_KEY) ?? "", DEFAULT_HOTKEY_REGION),
     widget: store(WIDGET_KEY) === "true",
+    recFormat: isRecFormat(rawRec) ? rawRec : DEFAULT_REC_FORMAT,
   };
 }
 
@@ -160,6 +175,7 @@ export function saveExportSettings(settings: ExportSettings): void {
     localStorage.setItem(HOTKEY_FULL_KEY, settings.hotkeyFull);
     localStorage.setItem(HOTKEY_REGION_KEY, settings.hotkeyRegion);
     localStorage.setItem(WIDGET_KEY, String(settings.widget));
+    localStorage.setItem(REC_FORMAT_KEY, settings.recFormat);
   } catch {
     /* storage unavailable — the preferences just aren't remembered */
   }
@@ -272,6 +288,7 @@ export class SettingsPanel {
   private changeBtn!: HTMLButtonElement;
   private timerPills: HTMLButtonElement[] = [];
   private formatSelect!: HTMLSelectElement;
+  private recFormatSelect!: HTMLSelectElement;
   private qualityField!: HTMLElement;
   private qualityInput!: HTMLInputElement;
   private qualityOut!: HTMLOutputElement;
@@ -347,6 +364,7 @@ export class SettingsPanel {
     }
 
     this.formatSelect.value = settings.format;
+    this.recFormatSelect.value = settings.recFormat;
     this.paintQuality(settings.format, settings.quality);
 
     // Never fight the caret while the pattern is being typed.
@@ -557,6 +575,17 @@ export class SettingsPanel {
                 <span class="select-arrow" aria-hidden="true">${ICONS.caret}</span>
               </div>
             </div>
+            <div class="field">
+              <label class="field-label" for="settings-rec-format">Recording format</label>
+              <div class="select-wrap">
+                <select id="settings-rec-format" class="field-select">
+                  <option value="mp4">MP4 · video, smallest for long takes</option>
+                  <option value="gif">GIF · loops anywhere, no player</option>
+                </select>
+                <span class="select-arrow" aria-hidden="true">${ICONS.caret}</span>
+              </div>
+              <p class="token-hint">Used by the Record button in the top bar.</p>
+            </div>
             <div class="field" id="settings-quality-field" hidden>
               <label class="field-label" for="settings-quality">Quality <output class="field-value" id="settings-quality-out" for="settings-quality">90</output></label>
               <input type="range" class="slider" id="settings-quality" min="1" max="100" step="1" value="90" aria-label="Export quality" />
@@ -592,6 +621,7 @@ export class SettingsPanel {
     this.segments = Array.from(root.querySelectorAll<HTMLButtonElement>("[data-theme-choice]"));
     this.timerPills = Array.from(root.querySelectorAll<HTMLButtonElement>("[data-timer]"));
     this.formatSelect = root.querySelector<HTMLSelectElement>("#settings-format")!;
+    this.recFormatSelect = root.querySelector<HTMLSelectElement>("#settings-rec-format")!;
     this.qualityField = root.querySelector<HTMLElement>("#settings-quality-field")!;
     this.qualityInput = root.querySelector<HTMLInputElement>("#settings-quality")!;
     this.qualityOut = root.querySelector<HTMLOutputElement>("#settings-quality-out")!;
@@ -685,6 +715,10 @@ export class SettingsPanel {
       this.paintPreview();
     });
 
+    this.recFormatSelect.addEventListener("change", () => {
+      const value = this.recFormatSelect.value;
+      this.opts.updateSettings({ recFormat: isRecFormat(value) ? value : DEFAULT_REC_FORMAT });
+    });
     this.qualityInput.addEventListener("input", () => {
       const quality = clampInt(this.qualityInput.value, DEFAULT_QUALITY, 1, 100);
       this.opts.updateSettings({ quality }, { silent: true });

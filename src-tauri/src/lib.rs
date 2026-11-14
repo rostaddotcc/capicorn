@@ -4,6 +4,7 @@ mod commands;
 mod export;
 mod hotkeys;
 mod ocr;
+mod recording;
 mod tray;
 mod windows;
 
@@ -17,6 +18,9 @@ pub fn run() {
         // Global-hotkey state: the live backend, the granted combos and the
         // handles that keep the portal session alive (see `hotkeys.rs`).
         .manage(hotkeys::HotkeyState::new())
+        // Screen recording (Wave 8): stop signal, capture thread and — on Linux —
+        // the live ScreenCast portal session (see `recording.rs`).
+        .manage(recording::RecordingState::new())
         .invoke_handler(tauri::generate_handler![
             commands::capture_screenshot,
             commands::save_png,
@@ -46,7 +50,11 @@ pub fn run() {
             ocr::ocr_available,
             ocr::ocr_languages,
             windows::pin_image,
-            windows::close_pins
+            windows::close_pins,
+            // Wave 8: screen recording (ScreenCast portal -> PipeWire -> ffmpeg)
+            recording::start_recording,
+            recording::stop_recording,
+            recording::is_recording
         ])
         .setup(|app| {
             // Order matters: the close guard must exist before the window can be

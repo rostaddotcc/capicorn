@@ -824,6 +824,7 @@ mod imp {
         stop: Arc<AtomicBool>,
         loopweak: pw::main_loop::MainLoopWeak,
         out: PathBuf,
+        log: PathBuf,
         format: RecordingFormat,
         /// Selected rectangle, constant for the whole take. `None` records the
         /// whole monitor exactly as before.
@@ -835,6 +836,19 @@ mod imp {
         /// Reused scratch for the cropped (and padded) rgb24 frame.
         cropped: Vec<u8>,
         spawned: bool,
+    }
+
+    /// Best-effort diagnostic log next to the recording, so a failed take can be
+    /// diagnosed without running the app from a terminal.
+    fn rec_log(path: &Path, msg: &str) {
+        use std::io::Write;
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+            let ts = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis())
+                .unwrap_or(0);
+            let _ = writeln!(f, "[{ts}] {msg}");
+        }
     }
 
     fn quit(ud: &Ud) {
@@ -946,6 +960,15 @@ mod imp {
         let child_slot: Rc<RefCell<Option<(Child, ChildStdin)>>> = Rc::new(RefCell::new(None));
         let notify = Rc::new(RefCell::new(Some(started)));
         let frames = Rc::new(Cell::new(0u64));
+        let log_path = {
+            let mut p = out.clone().into_os_string();
+            p.push(".rec.log");
+            PathBuf::from(p)
+        };
+        rec_log(
+            &log_path,
+            &format!("capture start: node={node} size={}x{} region={region:?}", size.0, size.1),
+        );
 
         let ud = Ud {
             fmt: VideoInfoRaw::new(),
@@ -955,6 +978,7 @@ mod imp {
             stop: stop.clone(),
             loopweak: mainloop.downgrade(),
             out: out.clone(),
+            log: log_path.clone(),
             format,
             region,
             // Filled in by `ensure_ffmpeg` once the negotiated size is known.
@@ -986,11 +1010,19 @@ mod imp {
                         fps.num,
                         fps.denom
                     );
+                    rec_log(
+                        &ud.log,
+                        &format!(
+                            "format negotiated {:?} {}x{} @ {}/{}",
+                            ud.fmt.format(), size.width, size.height, fps.num, fps.denom
+                        ),
+                    );
                 }
             })
-            .state_changed(|_, _, old, new| {
+            .state_changed(|_, ud, old, new| {
                 if old != new {
                     eprintln!("capicorn: capture stream {old:?} -> {new:?}");
+                    rec_log(&ud.log, &format!("stream state {old:?} -> {new:?}"));
                 }
             })
             .process(|stream, ud| {
@@ -1082,6 +1114,9 @@ mod imp {
 
                 let count = ud.frames.get() + 1;
                 ud.frames.set(count);
+                if count == 1 {
+                    rec_log(&ud.log, "first frame written to ffmpeg");
+                }
             })
             .register()
             .map_err(|e| format!("cannot register the capture callbacks: {e}"))?;
@@ -1111,6 +1146,7 @@ mod imp {
                 &mut params,
             )
             .map_err(|e| format!("cannot connect the capture stream: {e}"))?;
+        rec_log(&log_path, "stream connected; entering main loop");
 
         // Poll the stop flag from the loop: on a static screen no buffers arrive,
         // so a stop that only lived in `process()` could never land.
@@ -1138,6 +1174,7 @@ mod imp {
             "capicorn: captured {captured} frames -> {}",
             out.to_string_lossy()
         );
+        rec_log(&log_path, &format!("capture ended: {captured} frames"));
 
         // If the stream ended before the first frame (cancel, compositor quit) the
         // command is still waiting on `notify`.

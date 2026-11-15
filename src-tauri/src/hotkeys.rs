@@ -347,7 +347,8 @@ mod portal {
                 match event {
                     Some(activated) => {
                         let id = activated.shortcut_id().to_string();
-                        if let Err(err) = app_task.emit("hotkey-activated", serde_json::json!({ "id": id }))
+                        if let Err(err) =
+                            app_task.emit("hotkey-activated", serde_json::json!({ "id": id }))
                         {
                             eprintln!("capicorn: could not emit hotkey-activated: {err}");
                         }
@@ -428,7 +429,9 @@ pub fn get_hotkey_status(state: tauri::State<'_, HotkeyState>) -> HotkeyStatus {
 
 /// Release every binding and close the portal session.
 #[tauri::command]
-pub async fn unregister_hotkeys(state: tauri::State<'_, HotkeyState>) -> Result<HotkeyStatus, String> {
+pub async fn unregister_hotkeys(
+    state: tauri::State<'_, HotkeyState>,
+) -> Result<HotkeyStatus, String> {
     state.stop_task();
     Ok(state.set_status(HotkeyStatus::none()))
 }

@@ -129,11 +129,13 @@ impl Bands {
         })
     }
 
+    #[allow(dead_code)]
     pub fn rows(&self) -> usize {
         self.rows
     }
 
     /// How many bands survived the variance floor (0 = featureless frame).
+    #[allow(dead_code)]
     pub fn active_bands(&self) -> usize {
         self.active.len()
     }
@@ -143,6 +145,7 @@ impl Bands {
     }
 
     /// Cheap "nothing changed" test: identical signatures mean no scroll.
+    #[allow(dead_code)]
     pub fn is_same(&self, other: &Bands) -> bool {
         self.rows == other.rows && self.data == other.data
     }
@@ -415,7 +418,10 @@ pub(crate) mod tests {
         let prev = Bands::new(&flat, 320, 400).expect("signature");
         let cur = Bands::new(&flat, 320, 400).expect("signature");
         assert_eq!(prev.active_bands(), 0, "no band carries signal");
-        assert!(find_offset(&prev, &cur, 8).is_none(), "blank must not match");
+        assert!(
+            find_offset(&prev, &cur, 8).is_none(),
+            "blank must not match"
+        );
     }
 
     #[test]

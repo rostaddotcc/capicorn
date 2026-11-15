@@ -8,7 +8,44 @@ on:
     tags: ["v*"]
 
 jobs:
+  # Lint + tests gate the release: nothing ships unless rustfmt, clippy and the
+  # unit tests are clean.
+  quality:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install Tauri + PipeWire build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev build-essential curl wget file \
+            libxdo-dev libssl-dev libayatana-appindicator3-dev \
+            librsvg2-dev libpipewire-0.3-dev libspa-0.2-dev
+          GCC_INC=$(ls -d /usr/lib/gcc/x86_64-linux-gnu/*/include | head -1)
+          echo "BINDGEN_EXTRA_CLANG_ARGS=-I$GCC_INC" >> "$GITHUB_ENV"
+
+      - run: cargo fmt --manifest-path src-tauri/Cargo.toml --check
+      - run: cargo clippy --manifest-path src-tauri/Cargo.toml --lib -- -D warnings
+      - run: cargo test --manifest-path src-tauri/Cargo.toml --lib
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec tsc --noEmit
+
   linux:
+    needs: quality
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -56,6 +93,7 @@ jobs:
           if-no-files-found: error
 
   windows:
+    needs: quality
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4

@@ -32,17 +32,18 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread::JoinHandle;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use tauri::{Emitter, Manager, State};
 
 mod align;
 mod cap;
-mod stitcher;
 #[cfg(target_os = "linux")]
 mod source;
+mod stitcher;
 
+#[allow(unused_imports)]
 pub use align::{find_offset, Bands};
 pub use stitcher::{ScrollingStitcher, Status};
 
@@ -133,6 +134,7 @@ struct Active {
     /// Signalled by the stitcher thread once it has published its [`Outcome`].
     done: mpsc::Receiver<()>,
     out: Arc<Mutex<Option<Outcome>>>,
+    #[allow(dead_code)] // kept for the status readout
     width: u32,
     #[cfg(target_os = "linux")]
     source: Option<source::Source>,
@@ -188,11 +190,15 @@ impl ScrollingState {
     }
 
     pub fn is_active(&self) -> bool {
-        self.inner.lock().map(|slot| slot.is_some()).unwrap_or(false)
+        self.inner
+            .lock()
+            .map(|slot| slot.is_some())
+            .unwrap_or(false)
     }
 
     /// Claim the slot; on collision the caller gets its `Active` back so it can
     /// tear down the capture it just started.
+    #[allow(clippy::result_large_err)]
     fn begin(&self, active: Active) -> Result<(), Active> {
         match self.inner.lock() {
             Ok(mut slot) if slot.is_none() => {
@@ -311,7 +317,8 @@ pub async fn scrolling_cancel(state: State<'_, ScrollingState>) -> Result<(), St
 #[tauri::command]
 pub fn set_click_through(app: tauri::AppHandle, ignore: bool) -> Result<(), String> {
     if let Some(win) = app.get_webview_window("main") {
-        win.set_ignore_cursor_events(ignore).map_err(|e| e.to_string())?;
+        win.set_ignore_cursor_events(ignore)
+            .map_err(|e| e.to_string())?;
     }
     Ok(())
 }
@@ -343,8 +350,8 @@ fn encode_png(outcome: Outcome) -> Result<(String, u32, u32), String> {
 #[cfg(target_os = "linux")]
 mod imp {
     use super::{
-        cap, imp_crop::crop, Active, Outcome, Region, ScrollStatus, ScrollingStitcher,
-        ScrollingState, Status, IDLE_STOP, POLL_INTERVAL,
+        cap, imp_crop::crop, Active, Outcome, Region, ScrollStatus, ScrollingState,
+        ScrollingStitcher, Status, IDLE_STOP, POLL_INTERVAL,
     };
     use std::sync::atomic::Ordering;
     use std::sync::{mpsc, Arc, Mutex};
@@ -365,9 +372,7 @@ mod imp {
         let region = region
             .clamp_to(stream_w.max(0) as u32, stream_h.max(0) as u32)
             .ok_or_else(|| {
-                format!(
-                    "the selected region does not fit inside the {stream_w}x{stream_h} stream"
-                )
+                format!("the selected region does not fit inside the {stream_w}x{stream_h} stream")
             })?;
 
         let latest = source.latest();
@@ -520,7 +525,6 @@ mod imp {
             },
         );
     }
-
 }
 
 /// Cropping helper, kept separate so it is testable without a portal.
@@ -562,8 +566,9 @@ mod tests {
 
     #[test]
     fn region_deserializes_from_the_overlay_payload() {
-        let region: Region = serde_json::from_str(r#"{"left":10,"top":20,"width":300,"height":400}"#)
-            .expect("camelCase region");
+        let region: Region =
+            serde_json::from_str(r#"{"left":10,"top":20,"width":300,"height":400}"#)
+                .expect("camelCase region");
         assert_eq!(
             region,
             Region {

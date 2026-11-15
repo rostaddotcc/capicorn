@@ -12,8 +12,7 @@ async fn main() -> anyhow::Result<()> {
     // ashpd 0.14 models URIs as an opaque string: no `to_file_path`.
     let uri = shot.uri().as_str();
     let path = std::path::PathBuf::from(
-        uri
-            .strip_prefix("file://")
+        uri.strip_prefix("file://")
             .ok_or_else(|| anyhow::anyhow!("not a file uri: {uri}"))?,
     );
     let bytes = std::fs::read(&path)?;
@@ -22,6 +21,10 @@ async fn main() -> anyhow::Result<()> {
     let _b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
     let out = std::env::temp_dir().join("capicorn-probe.png");
     std::fs::write(&out, &bytes)?;
-    println!("PROBE_OK {w}x{h} bytes={} saved={}", bytes.len(), out.display());
+    println!(
+        "PROBE_OK {w}x{h} bytes={} saved={}",
+        bytes.len(),
+        out.display()
+    );
     Ok(())
 }

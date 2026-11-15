@@ -96,9 +96,7 @@ mod imp {
     use std::sync::{mpsc, Arc};
     use std::time::Duration;
 
-    use ashpd::desktop::screencast::{
-        CursorMode, Screencast, SelectSourcesOptions, SourceType,
-    };
+    use ashpd::desktop::screencast::{CursorMode, Screencast, SelectSourcesOptions, SourceType};
     use ashpd::desktop::{PersistMode, Session};
     use pipewire as pw;
     use pw::spa;
@@ -109,7 +107,7 @@ mod imp {
     use spa::utils::{Choice, ChoiceEnum, ChoiceFlags, Id};
     use std::path::PathBuf;
 
-    use super::{FIRST_FRAME_WAIT, PICKER_TIMEOUT, PORTAL_CALL_TIMEOUT, SourceKind};
+    use super::{SourceKind, FIRST_FRAME_WAIT, PICKER_TIMEOUT, PORTAL_CALL_TIMEOUT};
 
     // -- pixel formats (same table + conversion as `scrolling/source.rs`) ----
 
@@ -241,11 +239,7 @@ mod imp {
     /// The CAPTURE stream must NOT send one: KWin rejects a large explicit pool
     /// with "error alloc buffers" — MAP_BUFFERS producer defaults are correct.
     #[allow(dead_code)]
-    fn buffers_param(
-        size_per_frame: u32,
-        stride: u32,
-        count: i32,
-    ) -> Result<Vec<u8>, String> {
+    fn buffers_param(size_per_frame: u32, stride: u32, count: i32) -> Result<Vec<u8>, String> {
         let properties = vec![
             Property::new(spa::sys::SPA_PARAM_BUFFERS_buffers, Value::Int(count)),
             Property::new(spa::sys::SPA_PARAM_BUFFERS_blocks, Value::Int(1)),
@@ -253,7 +247,10 @@ mod imp {
                 spa::sys::SPA_PARAM_BUFFERS_size,
                 Value::Int(size_per_frame as i32),
             ),
-            Property::new(spa::sys::SPA_PARAM_BUFFERS_stride, Value::Int(stride as i32)),
+            Property::new(
+                spa::sys::SPA_PARAM_BUFFERS_stride,
+                Value::Int(stride as i32),
+            ),
         ];
         let object = spa::pod::Object {
             type_: spa::utils::SpaTypes::ObjectParamBuffers.as_raw(),
@@ -300,7 +297,11 @@ mod imp {
         if let Some(parent) = path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
-        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+        {
             let ts = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_millis())
@@ -326,9 +327,13 @@ mod imp {
             SourceKind::Window => SourceType::WINDOW,
             SourceKind::Monitor => SourceType::MONITOR,
         };
-        clog(&format!("{} capture: opening the ScreenCast portal", kind.noun()));
+        clog(&format!(
+            "{} capture: opening the ScreenCast portal",
+            kind.noun()
+        ));
 
-        let proxy = portal_call(PORTAL_CALL_TIMEOUT, "ScreenCast portal", Screencast::new()).await?;
+        let proxy =
+            portal_call(PORTAL_CALL_TIMEOUT, "ScreenCast portal", Screencast::new()).await?;
 
         let session = portal_call(
             PORTAL_CALL_TIMEOUT,
@@ -578,16 +583,14 @@ mod imp {
                     Err(_) => return,
                 }
                 ud.got.set(true);
-                clog(&format!(
-                    "{name}: first frame captured {width}x{height}"
-                ));
+                clog(&format!("{name}: first frame captured {width}x{height}"));
                 quit(ud);
             })
             .register()
             .map_err(|e| format!("cannot register the capture callbacks: {e}"))?;
 
         let (width, height) = (size.0.max(1) as u32, size.1.max(1) as u32);
-        let mut pods = make_params(
+        let pods = make_params(
             width,
             height,
             &[
@@ -616,9 +619,9 @@ mod imp {
                 .register();
             let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
             while !seen.get() && std::time::Instant::now() < deadline {
-                let _ = mainloop
-                    .loop_()
-                    .iterate(pw::loop_::Timeout::Finite(std::time::Duration::from_millis(20)));
+                let _ = mainloop.loop_().iterate(pw::loop_::Timeout::Finite(
+                    std::time::Duration::from_millis(20),
+                ));
             }
         }
 
@@ -712,11 +715,10 @@ mod imp {
 
         // Wait for the frame off the async runtime: the picker already happened,
         // so this only covers "first buffers never arrived".
-        let received = tauri::async_runtime::spawn_blocking(move || {
-            rx.recv_timeout(FIRST_FRAME_WAIT)
-        })
-        .await
-        .map_err(|e| format!("waiting for the captured frame failed: {e}"))?;
+        let received =
+            tauri::async_runtime::spawn_blocking(move || rx.recv_timeout(FIRST_FRAME_WAIT))
+                .await
+                .map_err(|e| format!("waiting for the captured frame failed: {e}"))?;
 
         // Stop + join before the session goes away, so no callback can fire
         // against a closing PipeWire connection.

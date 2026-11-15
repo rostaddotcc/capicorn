@@ -18,6 +18,7 @@ use super::align::{find_offset, Bands};
 use super::cap;
 
 /// Starting height cap for tests: the real one is [`cap::MAX_HEIGHT`].
+#[allow(unused_imports)]
 pub use super::cap::MAX_HEIGHT;
 
 /// Outcome of offering one frame to the stitcher.
@@ -135,8 +136,8 @@ impl ScrollingStitcher {
             // case appending would duplicate a band.
             let from = (self.height - moved) as usize * row_bytes;
             let fresh = &rgb[from..];
-            let already = self.acc.len() >= moved_bytes
-                && self.acc[self.acc.len() - moved_bytes..] == *fresh;
+            let already =
+                self.acc.len() >= moved_bytes && self.acc[self.acc.len() - moved_bytes..] == *fresh;
             if already {
                 self.accept_reference(rgb, cur);
                 self.pred = found.shift;
@@ -170,6 +171,7 @@ impl ScrollingStitcher {
         self.frames += 1;
     }
 
+    #[allow(dead_code)]
     pub fn width(&self) -> u32 {
         self.width
     }
@@ -193,6 +195,7 @@ impl ScrollingStitcher {
         (self.acc, self.width, self.rows)
     }
 
+    #[allow(dead_code)]
     pub fn pixels(&self) -> &[u8] {
         &self.acc
     }
@@ -321,9 +324,7 @@ mod tests {
         );
         // Count occurrences of the whole 60-row header block.
         let occurrences = (0..=expected as usize - HEADER)
-            .filter(|&y| {
-                stitched[y * W * 3..(y + HEADER) * W * 3] == *header
-            })
+            .filter(|&y| stitched[y * W * 3..(y + HEADER) * W * 3] == *header)
             .count();
         assert_eq!(occurrences, 1, "the sticky header must not be repeated");
     }

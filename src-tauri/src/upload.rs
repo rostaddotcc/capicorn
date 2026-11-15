@@ -8,8 +8,6 @@
 //! Transport is `curl`, which is present on every Linux desktop and ships with
 //! Windows 10+, so this stays dependency-free (no TLS stack to bundle).
 
-use tauri::Manager as _;
-
 /// Upload `data_url` to `endpoint` as `multipart/form-data` (`file` field) and
 /// return the link.
 ///
@@ -47,9 +45,7 @@ pub async fn upload_image(data_url: String, endpoint: String) -> Result<String, 
         .output();
     let _ = std::fs::remove_file(&tmp);
 
-    let output = output.map_err(|e| {
-        format!("could not run curl (is it installed?): {e}")
-    })?;
+    let output = output.map_err(|e| format!("could not run curl (is it installed?): {e}"))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -104,5 +100,11 @@ pub fn open_url(app: tauri::AppHandle, url: String) -> Result<(), String> {
     };
     status
         .map_err(|e| format!("could not open the link: {e}"))
-        .and_then(|s| if s.success() { Ok(()) } else { Err("the opener exited with an error".to_string()) })
+        .and_then(|s| {
+            if s.success() {
+                Ok(())
+            } else {
+                Err("the opener exited with an error".to_string())
+            }
+        })
 }

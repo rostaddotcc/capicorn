@@ -3,6 +3,10 @@
 All notable changes to Capicorn, newest first. Full release notes for every tag live on
 the [releases page](https://github.com/rostaddotcc/capicorn/releases).
 
+## v0.27.1
+- **Quality gate in CI.** A new `quality` job runs `cargo fmt --check`, `cargo clippy -D warnings`, the Rust unit tests and `tsc --noEmit`; both platform builds now depend on it.
+- The whole Rust tree is **rustfmt-formatted** and **clippy-clean** (zero warnings).
+
 ## v0.27.0
 - **Watermark.** Burn a text mark into exports — Settings → Export sets the text, opacity and corner. It never touches the editor or the live capture, and the size scales with the image so a 4K shot stays readable.
 - **Upload.** File → Upload… POSTs the flattened PNG to *your* endpoint (Settings → Export) as `multipart/form-data` and copies the link the server answers with. No provider hardcoded, no credentials shipped — point it at your own handler.

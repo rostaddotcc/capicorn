@@ -30,7 +30,7 @@ impl Format {
             "png" => Ok(Format::Png),
             "jpeg" | "jpg" => Ok(Format::Jpeg),
             "webp" => Ok(Format::Webp),
-            other if other.is_empty() => Err("no export format given".to_string()),
+            "" => Err("no export format given".to_string()),
             other => Err(format!(
                 "unsupported export format '{other}' (expected png, jpeg or webp)"
             )),
@@ -324,7 +324,10 @@ mod tests {
         assert_eq!(safe_filename("shot", Format::Webp), "shot.webp");
         assert_eq!(safe_filename("shot.PNG", Format::Png), "shot.PNG");
         assert_eq!(safe_filename("shot.png", Format::Jpeg), "shot.jpg");
-        assert_eq!(safe_filename("../../etc/passwd", Format::Png), "capicorn.png");
+        assert_eq!(
+            safe_filename("../../etc/passwd", Format::Png),
+            "capicorn.png"
+        );
         assert_eq!(safe_filename("   ", Format::Jpeg), "capicorn.jpg");
     }
 
@@ -332,14 +335,32 @@ mod tests {
     fn chosen_save_paths_get_the_format_extension() {
         let p = |s: &str| PathBuf::from(s);
         // Matching extensions (any case, either JPEG spelling) survive intact.
-        assert_eq!(ensure_extension(&p("/tmp/shot.png"), Format::Png), p("/tmp/shot.png"));
-        assert_eq!(ensure_extension(&p("/tmp/shot.PNG"), Format::Png), p("/tmp/shot.PNG"));
-        assert_eq!(ensure_extension(&p("/tmp/shot.jpeg"), Format::Jpeg), p("/tmp/shot.jpeg"));
+        assert_eq!(
+            ensure_extension(&p("/tmp/shot.png"), Format::Png),
+            p("/tmp/shot.png")
+        );
+        assert_eq!(
+            ensure_extension(&p("/tmp/shot.PNG"), Format::Png),
+            p("/tmp/shot.PNG")
+        );
+        assert_eq!(
+            ensure_extension(&p("/tmp/shot.jpeg"), Format::Jpeg),
+            p("/tmp/shot.jpeg")
+        );
         // Mismatched extension: swapped, never left lying about the bytes.
-        assert_eq!(ensure_extension(&p("/tmp/shot.png"), Format::Jpeg), p("/tmp/shot.jpg"));
-        assert_eq!(ensure_extension(&p("/tmp/shot.tar.gz"), Format::Webp), p("/tmp/shot.tar.webp"));
+        assert_eq!(
+            ensure_extension(&p("/tmp/shot.png"), Format::Jpeg),
+            p("/tmp/shot.jpg")
+        );
+        assert_eq!(
+            ensure_extension(&p("/tmp/shot.tar.gz"), Format::Webp),
+            p("/tmp/shot.tar.webp")
+        );
         // No extension at all: appended.
-        assert_eq!(ensure_extension(&p("/tmp/shot"), Format::Webp), p("/tmp/shot.webp"));
+        assert_eq!(
+            ensure_extension(&p("/tmp/shot"), Format::Webp),
+            p("/tmp/shot.webp")
+        );
         // The directory is kept — this fix-up never renames the folder.
         assert_eq!(
             ensure_extension(&p("/home/me/pics/shot"), Format::Png),

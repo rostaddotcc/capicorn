@@ -157,11 +157,15 @@ fn humanise_source_name(raw: &str) -> String {
 
     let mut segments = base.split('.').filter(|s| !s.is_empty());
     let first = segments.next().unwrap_or(base);
-    let last = segments.last().unwrap_or(first);
+    let last = segments.next_back().unwrap_or(first);
 
     let pretty = last.replace(['-', '_'], " ");
     let pretty = pretty.trim();
-    let pretty = if pretty.is_empty() { "Audio device" } else { pretty };
+    let pretty = if pretty.is_empty() {
+        "Audio device"
+    } else {
+        pretty
+    };
     let mut chars = pretty.chars();
     let capitalised = match chars.next() {
         Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
@@ -184,7 +188,9 @@ fn humanise_source_name(raw: &str) -> String {
 fn parse_dshow_devices(text: &str) -> Vec<AudioSource> {
     let mut out = Vec::new();
     for line in text.lines() {
-        let Some(start) = line.find('"') else { continue };
+        let Some(start) = line.find('"') else {
+            continue;
+        };
         let rest = &line[start + 1..];
         let Some(end) = rest.find('"') else { continue };
         let name = rest[..end].trim();
@@ -370,9 +376,13 @@ impl RecordingState {
     }
 
     pub fn is_active(&self) -> bool {
-        self.inner.lock().map(|slot| slot.is_some()).unwrap_or(false)
+        self.inner
+            .lock()
+            .map(|slot| slot.is_some())
+            .unwrap_or(false)
     }
 
+    #[allow(dead_code)] // read by tests and future pause-aware callers
     pub fn is_paused(&self) -> bool {
         self.paused.load(Ordering::Relaxed)
     }
@@ -416,6 +426,7 @@ impl RecordingState {
 ///
 /// Resolves only once real frames are flowing into ffmpeg, so a denied/locked
 /// portal surfaces as a rejected promise instead of a silent "recording" badge.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn start_recording(
     app: tauri::AppHandle,
@@ -459,8 +470,7 @@ pub async fn start_recording(
     }
 
     let dir = PathBuf::from(dir.trim());
-    std::fs::create_dir_all(&dir)
-        .map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+    std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
     let out_path = dir.join(safe_filename(&filename, format));
 
     // A fresh take always starts unpaused, even if the last one was left paused.
@@ -595,9 +605,7 @@ mod imp {
     use std::sync::{mpsc, Arc};
     use std::time::{Duration, Instant};
 
-    use ashpd::desktop::screencast::{
-        CursorMode, Screencast, SelectSourcesOptions, SourceType,
-    };
+    use ashpd::desktop::screencast::{CursorMode, Screencast, SelectSourcesOptions, SourceType};
     use ashpd::desktop::PersistMode;
     use pipewire as pw;
     use pw::spa;
@@ -870,7 +878,12 @@ mod imp {
                      split[a][b];[a]palettegen=stats_mode=diff[p];\
                      [b][p]paletteuse=dither=bayer:bayer_scale=3"
                 );
-                args.extend(["-vf".to_string(), graph, "-loop".to_string(), "0".to_string()]);
+                args.extend([
+                    "-vf".to_string(),
+                    graph,
+                    "-loop".to_string(),
+                    "0".to_string(),
+                ]);
             }
         }
 
@@ -956,7 +969,11 @@ mod imp {
 
     /// Build one `EnumFormat` pod per candidate format. The caller keeps the
     /// `Vec<Vec<u8>>` alive: `Pod::from_bytes` only borrows.
-    fn make_params(width: u32, height: u32, formats: &[VideoFormat]) -> Result<Vec<Vec<u8>>, String> {
+    fn make_params(
+        width: u32,
+        height: u32,
+        formats: &[VideoFormat],
+    ) -> Result<Vec<Vec<u8>>, String> {
         let mut out = Vec::new();
         for format in formats {
             // libspa 0.10 has no `Into<Vec<Property>>` for `VideoInfoRaw`
@@ -1025,7 +1042,10 @@ mod imp {
                 spa::sys::SPA_PARAM_BUFFERS_size,
                 Value::Int(size_per_frame as i32),
             ),
-            Property::new(spa::sys::SPA_PARAM_BUFFERS_stride, Value::Int(stride as i32)),
+            Property::new(
+                spa::sys::SPA_PARAM_BUFFERS_stride,
+                Value::Int(stride as i32),
+            ),
         ];
         let object = spa::pod::Object {
             type_: spa::utils::SpaTypes::ObjectParamBuffers.as_raw(),
@@ -1076,7 +1096,11 @@ mod imp {
     /// monitors — never to a failed start — while `"any"`/`"both"` keeps the
     /// combined picker.
     fn source_type_for(source: Option<&str>) -> SourceType {
-        match source.map(str::trim).map(str::to_ascii_lowercase).as_deref() {
+        match source
+            .map(str::trim)
+            .map(str::to_ascii_lowercase)
+            .as_deref()
+        {
             Some("window") | Some("windows") => SourceType::WINDOW,
             Some("any") | Some("both") | Some("all") => SourceType::MONITOR | SourceType::WINDOW,
             _ => SourceType::MONITOR,
@@ -1164,16 +1188,17 @@ mod imp {
             Ok(Ok(streams)) => streams,
         };
 
-        portal_log(&format!("picker answered: {} stream(s)", streams.streams().len()));
-        let stream = streams
-            .streams()
-            .first()
-            .ok_or_else(|| {
-                let m = "the portal returned no streams (this compositor may not support monitor capture)"
+        portal_log(&format!(
+            "picker answered: {} stream(s)",
+            streams.streams().len()
+        ));
+        let stream = streams.streams().first().ok_or_else(|| {
+            let m =
+                "the portal returned no streams (this compositor may not support monitor capture)"
                     .to_string();
-                portal_log(&m);
-                m
-            })?;
+            portal_log(&m);
+            m
+        })?;
         let node = stream.pipe_wire_node_id();
         // The negotiated format can differ from this; it is only a hint for the
         // initial enumeration, and `param_changed` has the truth.
@@ -1206,6 +1231,7 @@ mod imp {
         fmt: VideoInfoRaw,
         child: Rc<RefCell<Option<(Child, ChildStdin)>>>,
         /// Report the first frame (or the first fatal error) to `start_recording`.
+        #[allow(clippy::type_complexity)]
         notify: Rc<RefCell<Option<mpsc::SyncSender<Result<(), String>>>>>,
         frames: Rc<Cell<u64>>,
         stop: Arc<AtomicBool>,
@@ -1238,7 +1264,11 @@ mod imp {
     /// diagnosed without running the app from a terminal.
     fn rec_log(path: &Path, msg: &str) {
         use std::io::Write;
-        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+        {
             let ts = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_millis())
@@ -1258,7 +1288,11 @@ mod imp {
         if let Some(parent) = path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
-        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+        {
             let ts = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_millis())
@@ -1311,8 +1345,12 @@ mod imp {
                 None => {
                     let msg = format!(
                         "the recording region {}x{}+{}+{} lies outside the {}x{} capture",
-                        region.width, region.height, region.left, region.top,
-                        size.width, size.height
+                        region.width,
+                        region.height,
+                        region.left,
+                        region.top,
+                        size.width,
+                        size.height
                     );
                     eprintln!("capicorn: {msg}");
                     report(ud, Err(msg));
@@ -1323,14 +1361,7 @@ mod imp {
             None => (size.width, size.height),
         };
 
-        match spawn_ffmpeg(
-            &ud.out,
-            ud.format,
-            out_w,
-            out_h,
-            &fps,
-            ud.audio.as_ref(),
-        ) {
+        match spawn_ffmpeg(&ud.out, ud.format, out_w, out_h, &fps, ud.audio.as_ref()) {
             Ok(pair) => {
                 *ud.child.borrow_mut() = Some(pair);
                 ud.out_size = (out_w, out_h);
@@ -1349,6 +1380,7 @@ mod imp {
 
     /// The whole capture half for one recording. Returns once the stream ended
     /// (stop requested, error, or the compositor closed the cast).
+    #[allow(clippy::too_many_arguments)]
     fn capture(
         fd: OwnedFd,
         node: u32,
@@ -1497,7 +1529,7 @@ mod imp {
                 // until the size comes back. Region takes are immune — the crop
                 // is sized by the region, not the frame.
                 if ud.region.is_none()
-                    && ud.out_size != (size.width.max(0) as u32, size.height.max(0) as u32)
+                    && ud.out_size != (size.width, size.height)
                 {
                     if !ud.mismatched {
                         rec_log(
@@ -1587,7 +1619,7 @@ mod imp {
             .map_err(|e| format!("cannot register the capture callbacks: {e}"))?;
 
         let (width, height) = (size.0.max(1) as u32, size.1.max(1) as u32);
-        let mut pods = make_params(
+        let pods = make_params(
             width,
             height,
             &[
@@ -1622,9 +1654,9 @@ mod imp {
                 .register();
             let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
             while !seen.get() && std::time::Instant::now() < deadline {
-                let _ = mainloop
-                    .loop_()
-                    .iterate(pw::loop_::Timeout::Finite(std::time::Duration::from_millis(20)));
+                let _ = mainloop.loop_().iterate(pw::loop_::Timeout::Finite(
+                    std::time::Duration::from_millis(20),
+                ));
             }
             rec_log(
                 &log_path,
@@ -1662,7 +1694,10 @@ mod imp {
                 }
             }
         });
-        let _ = tick.update_timer(Some(Duration::from_millis(100)), Some(Duration::from_millis(100)));
+        let _ = tick.update_timer(
+            Some(Duration::from_millis(100)),
+            Some(Duration::from_millis(100)),
+        );
 
         mainloop.run();
 
@@ -1700,6 +1735,7 @@ mod imp {
         Ok(())
     }
 
+    #[allow(clippy::type_complexity)]
     fn report_early(
         notify: &Rc<RefCell<Option<mpsc::SyncSender<Result<(), String>>>>>,
         captured: u64,
@@ -1737,7 +1773,11 @@ mod imp {
                 eprintln!(
                     "capicorn: recording {} audio source(s){}",
                     audio.input_count(),
-                    if audio.system { " including system audio" } else { "" }
+                    if audio.system {
+                        " including system audio"
+                    } else {
+                        ""
+                    }
                 );
             }
         }
@@ -1899,7 +1939,12 @@ mod imp {
         fn crop_recovers_exactly_the_selected_pixels() {
             let (fw, fh) = (5usize, 4usize);
             let frame = sample_frame(fw, fh);
-            let region = Region { left: 1, top: 2, width: 2, height: 2 };
+            let region = Region {
+                left: 1,
+                top: 2,
+                width: 2,
+                height: 2,
+            };
             let mut out = Vec::new();
 
             let size = crop_rgb24(&frame, fw, fh, region, &mut out).expect("region is inside");
@@ -1922,7 +1967,12 @@ mod imp {
             let (fw, fh) = (4usize, 3usize);
             let frame = sample_frame(fw, fh);
             // Only the single pixel at (3,2) is on screen.
-            let region = Region { left: 3, top: 2, width: 10, height: 10 };
+            let region = Region {
+                left: 3,
+                top: 2,
+                width: 10,
+                height: 10,
+            };
             let mut out = Vec::new();
 
             let size = crop_rgb24(&frame, fw, fh, region, &mut out).expect("it overlaps");
@@ -1938,7 +1988,12 @@ mod imp {
         fn crop_ignores_the_part_of_a_region_before_the_origin() {
             let (fw, fh) = (4usize, 3usize);
             let frame = sample_frame(fw, fh);
-            let region = Region { left: -2, top: -1, width: 4, height: 3 };
+            let region = Region {
+                left: -2,
+                top: -1,
+                width: 4,
+                height: 3,
+            };
             let mut out = Vec::new();
 
             let size = crop_rgb24(&frame, fw, fh, region, &mut out).expect("it overlaps");
@@ -1950,7 +2005,12 @@ mod imp {
         #[test]
         fn odd_region_sizes_are_padded_and_ffmpeg_is_told_that_size() {
             let frame = sample_frame(7, 5);
-            let region = Region { left: 2, top: 1, width: 3, height: 3 };
+            let region = Region {
+                left: 2,
+                top: 1,
+                width: 3,
+                height: 3,
+            };
             let mut out = Vec::new();
 
             let size = crop_rgb24(&frame, 7, 5, region, &mut out).expect("inside the frame");
@@ -1977,14 +2037,29 @@ mod imp {
             let frame = sample_frame(4, 3);
             let mut out = Vec::new();
 
-            let outside = Region { left: 9, top: 0, width: 2, height: 2 };
+            let outside = Region {
+                left: 9,
+                top: 0,
+                width: 2,
+                height: 2,
+            };
             assert!(crop_rgb24(&frame, 4, 3, outside, &mut out).is_none());
             assert!(region_size(outside, 4, 3).is_none());
 
-            let empty = Region { left: 0, top: 0, width: 0, height: 2 };
+            let empty = Region {
+                left: 0,
+                top: 0,
+                width: 0,
+                height: 2,
+            };
             assert!(crop_rgb24(&frame, 4, 3, empty, &mut out).is_none());
 
-            let short = Region { left: 0, top: 0, width: 2, height: 2 };
+            let short = Region {
+                left: 0,
+                top: 0,
+                width: 2,
+                height: 2,
+            };
             assert!(crop_rgb24(&frame[..8], 4, 3, short, &mut out).is_none());
         }
 
@@ -2023,7 +2098,10 @@ mod imp {
             assert!(graph.contains("palettegen"), "{graph}");
             assert!(graph.contains("paletteuse"), "{graph}");
             assert!(graph.starts_with("fps=15"), "{graph}");
-            assert!(graph.contains("scale=1280:"), "3840 wide is capped: {graph}");
+            assert!(
+                graph.contains("scale=1280:"),
+                "3840 wide is capped: {graph}"
+            );
         }
 
         // -- audio ----------------------------------------------------------
@@ -2114,7 +2192,10 @@ mod imp {
             );
             assert!(!args.contains(&"-filter_complex".to_string()), "{args:?}");
             assert!(has_pair(&args, "-map", "0:v"), "{args:?}");
-            assert!(has_pair(&args, "-map", "1:a"), "the only audio input: {args:?}");
+            assert!(
+                has_pair(&args, "-map", "1:a"),
+                "the only audio input: {args:?}"
+            );
             assert!(has_pair(&args, "-c:a", "aac"), "{args:?}");
             assert!(!args.contains(&"-an".to_string()), "{args:?}");
         }
@@ -2247,7 +2328,11 @@ mod imp {
             let bytes = encode_frames(&out, RecordingFormat::Gif);
             let log = ffmpeg_log(&out);
             let _ = std::fs::remove_file(&out);
-            assert!(bytes.len() > 200, "gif is {} bytes; ffmpeg said: {log}", bytes.len());
+            assert!(
+                bytes.len() > 200,
+                "gif is {} bytes; ffmpeg said: {log}",
+                bytes.len()
+            );
             assert_eq!(&bytes[..6], b"GIF89a", "not a GIF: {log}");
         }
     }
@@ -2351,12 +2436,15 @@ mod win {
         let audio = audio.filter(|_| format == RecordingFormat::Mp4);
         let devices = win_audio_devices(audio.as_ref());
         for device in &devices {
-            cmd.args(["-f", "dshow", "-i"]).arg(format!("audio={device}"));
+            cmd.args(["-f", "dshow", "-i"])
+                .arg(format!("audio={device}"));
         }
         cmd.args(audio_output_args(format, devices.len()));
         match format {
             RecordingFormat::Mp4 => {
-                cmd.args(["-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p"]);
+                cmd.args([
+                    "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+                ]);
             }
             RecordingFormat::Gif => {
                 // Palette pass keeps GIFs from banding; 12 fps keeps them sane.
@@ -2434,12 +2522,18 @@ mod tests {
         assert_eq!(safe_filename("demo", RecordingFormat::Mp4), "demo.mp4");
         assert_eq!(safe_filename("demo.MP4", RecordingFormat::Mp4), "demo.MP4");
         assert_eq!(safe_filename("demo.gif", RecordingFormat::Mp4), "demo.mp4");
-        assert_eq!(safe_filename("", RecordingFormat::Gif), "capicorn-recording.gif");
+        assert_eq!(
+            safe_filename("", RecordingFormat::Gif),
+            "capicorn-recording.gif"
+        );
         assert_eq!(
             safe_filename("../../etc/passwd", RecordingFormat::Mp4),
             "capicorn-recording.mp4"
         );
-        assert_eq!(safe_filename(".", RecordingFormat::Gif), "capicorn-recording.gif");
+        assert_eq!(
+            safe_filename(".", RecordingFormat::Gif),
+            "capicorn-recording.gif"
+        );
     }
 
     #[test]
@@ -2491,10 +2585,10 @@ mod tests {
         assert!(parse_pactl_sources("not\ta\tdevice row\n").is_empty());
         assert!(parse_pactl_sources("7\t\n").is_empty());
         // A pseudo-source cannot be handed to `-i` as a device.
-        assert!(parse_pactl_sources(
-            "3\t@DEFAULT_MONITOR@\tPipeWire\ts16le 2ch 44100Hz\tIDLE\n"
-        )
-        .is_empty());
+        assert!(
+            parse_pactl_sources("3\t@DEFAULT_MONITOR@\tPipeWire\ts16le 2ch 44100Hz\tIDLE\n")
+                .is_empty()
+        );
     }
 
     #[test]

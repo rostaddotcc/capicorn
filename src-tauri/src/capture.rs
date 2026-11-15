@@ -68,7 +68,11 @@ async fn grab_one(kind: crate::portal_capture::SourceKind) -> anyhow::Result<(St
 ///
 /// Validates the buffer length first: `RgbImage::from_raw` returns `None` on a
 /// short buffer, and handing that to the encoder would be a silent blank image.
-pub fn rgb24_to_data_url(rgb: &[u8], width: u32, height: u32) -> anyhow::Result<(String, u32, u32)> {
+pub fn rgb24_to_data_url(
+    rgb: &[u8],
+    width: u32,
+    height: u32,
+) -> anyhow::Result<(String, u32, u32)> {
     let expected = width as usize * height as usize * 3;
     if width == 0 || height == 0 || rgb.len() < expected {
         anyhow::bail!(
@@ -205,12 +209,7 @@ mod tests {
         // production path uses.
         let mut buf = image::RgbaImage::new(3, 2);
         for (x, y, px) in buf.enumerate_pixels_mut() {
-            *px = image::Rgba([
-                (x * 80) as u8,
-                (y * 120) as u8,
-                200,
-                255,
-            ]);
+            *px = image::Rgba([(x * 80) as u8, (y * 120) as u8, 200, 255]);
         }
         let mut out = Vec::new();
         let mut cursor = std::io::Cursor::new(&mut out);

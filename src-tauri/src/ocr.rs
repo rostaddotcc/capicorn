@@ -71,10 +71,7 @@ pub fn sanitize_lang(lang: &str) -> String {
 /// lines survive — they are paragraph breaks in the original layout.
 pub fn clean_output(raw: &str) -> String {
     let normalised = raw.replace("\r\n", "\n").replace('\r', "\n");
-    let lines: Vec<&str> = normalised
-        .split('\n')
-        .map(|line| line.trim_end())
-        .collect();
+    let lines: Vec<&str> = normalised.split('\n').map(|line| line.trim_end()).collect();
 
     let first = lines.iter().position(|line| !line.is_empty());
     let last = lines.iter().rposition(|line| !line.is_empty());
@@ -111,7 +108,13 @@ fn tesseract_version_line() -> Option<String> {
     if !output.status.success() {
         return None;
     }
-    Some(String::from_utf8_lossy(&output.stdout).lines().next().unwrap_or("").to_string())
+    Some(
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .next()
+            .unwrap_or("")
+            .to_string(),
+    )
 }
 
 /// Decode → temp file → tesseract → text. Blocking; call it from
@@ -122,6 +125,7 @@ fn run_tesseract(png: &[u8], lang: &str) -> Result<String, String> {
         .map_err(|e| format!("could not write the OCR temp file {}: {e}", path.display()))?;
 
     // Everything below must remove the temp file, including early returns.
+    #[allow(clippy::redundant_closure_call)] // the closure gives us one cleanup path
     let result = (|| {
         let output = Command::new("tesseract")
             .arg(&path)
@@ -144,19 +148,22 @@ fn run_tesseract(png: &[u8], lang: &str) -> Result<String, String> {
                     format!("tesseract failed: {detail}")
                 })
             }
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Err(
-                "OCR needs the tesseract binary, which is not installed. \
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                Err("OCR needs the tesseract binary, which is not installed. \
                  Install it with `sudo apt install tesseract-ocr` (add \
                  `tesseract-ocr-swe` for Swedish)."
-                    .to_string(),
-            ),
+                    .to_string())
+            }
             Err(err) => Err(format!("could not start tesseract: {err}")),
         }
     })();
 
     if let Err(err) = std::fs::remove_file(&path) {
         // Not fatal: a leaked temp file is noise, a failed OCR is the story.
-        eprintln!("capicorn: could not remove OCR temp file {}: {err}", path.display());
+        eprintln!(
+            "capicorn: could not remove OCR temp file {}: {err}",
+            path.display()
+        );
     }
 
     result
@@ -196,7 +203,10 @@ pub fn ocr_available() -> bool {
 /// The languages the "grab text" menu offers (all of them pass `sanitize_lang`).
 #[tauri::command]
 pub fn ocr_languages() -> Vec<String> {
-    SUPPORTED_LANGS.iter().map(|lang| lang.to_string()).collect()
+    SUPPORTED_LANGS
+        .iter()
+        .map(|lang| lang.to_string())
+        .collect()
 }
 
 #[cfg(test)]
@@ -231,7 +241,10 @@ mod tests {
 
     #[test]
     fn output_is_trimmed_without_losing_paragraphs() {
-        assert_eq!(clean_output("  hello  \n\n  world \n\n"), "hello\n\n  world");
+        assert_eq!(
+            clean_output("  hello  \n\n  world \n\n"),
+            "hello\n\n  world"
+        );
         assert_eq!(clean_output("a\r\nb\r"), "a\nb");
         assert_eq!(clean_output("\n\n   \n"), "");
         assert_eq!(clean_output(""), "");

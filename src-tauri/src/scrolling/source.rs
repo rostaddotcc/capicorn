@@ -171,7 +171,10 @@ fn buffers_param(size_per_frame: u32, stride: u32, count: i32) -> Result<Vec<u8>
             spa::sys::SPA_PARAM_BUFFERS_size,
             Value::Int(size_per_frame as i32),
         ),
-        Property::new(spa::sys::SPA_PARAM_BUFFERS_stride, Value::Int(stride as i32)),
+        Property::new(
+            spa::sys::SPA_PARAM_BUFFERS_stride,
+            Value::Int(stride as i32),
+        ),
     ];
     let object = spa::pod::Object {
         type_: spa::utils::SpaTypes::ObjectParamBuffers.as_raw(),
@@ -313,13 +316,10 @@ async fn open_portal() -> Result<PortalCapture, String> {
         Ok(Ok(streams)) => streams,
     };
 
-    let stream = streams
-        .streams()
-        .first()
-        .ok_or_else(|| {
-            "the portal returned no streams (this compositor may not support monitor capture)"
-                .to_string()
-        })?;
+    let stream = streams.streams().first().ok_or_else(|| {
+        "the portal returned no streams (this compositor may not support monitor capture)"
+            .to_string()
+    })?;
     let node = stream.pipe_wire_node_id();
     // Only a hint for format enumeration; `param_changed` has the truth.
     let size = stream.size().unwrap_or((1920, 1080));
@@ -345,6 +345,7 @@ struct Ud {
     fmt: VideoInfoRaw,
     latest: Latest,
     /// Report the first frame (or the first fatal error) to [`open`].
+    #[allow(clippy::type_complexity)]
     notify: Rc<RefCell<Option<mpsc::SyncSender<Result<(), String>>>>>,
     stop: Arc<AtomicBool>,
     loopweak: pw::main_loop::MainLoopWeak,
@@ -511,7 +512,7 @@ fn capture(
         .map_err(|e| format!("cannot register the capture callbacks: {e}"))?;
 
     let (width, height) = (size.0.max(1) as u32, size.1.max(1) as u32);
-    let mut pods = make_params(
+    let pods = make_params(
         width,
         height,
         &[
@@ -539,9 +540,9 @@ fn capture(
             .register();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
         while !node_seen.get() && std::time::Instant::now() < deadline {
-            let _ = mainloop
-                .loop_()
-                .iterate(pw::loop_::Timeout::Finite(std::time::Duration::from_millis(20)));
+            let _ = mainloop.loop_().iterate(pw::loop_::Timeout::Finite(
+                std::time::Duration::from_millis(20),
+            ));
         }
     }
 
@@ -567,7 +568,10 @@ fn capture(
             }
         }
     });
-    let _ = tick.update_timer(Some(Duration::from_millis(100)), Some(Duration::from_millis(100)));
+    let _ = tick.update_timer(
+        Some(Duration::from_millis(100)),
+        Some(Duration::from_millis(100)),
+    );
 
     mainloop.run();
 
@@ -616,7 +620,14 @@ pub async fn open() -> Result<Source, String> {
         std::thread::Builder::new()
             .name("capicorn-scrolling-source".to_string())
             .spawn(move || {
-                let result = capture(portal.fd, portal.node, portal.size, latest, stop, started_tx);
+                let result = capture(
+                    portal.fd,
+                    portal.node,
+                    portal.size,
+                    latest,
+                    stop,
+                    started_tx,
+                );
                 if let Err(err) = &result {
                     eprintln!("capicorn: scrolling source stopped: {err}");
                 }
@@ -713,7 +724,10 @@ mod tests {
         for (format, src) in cases {
             let (bpp, idx) = pixfmt(format).expect("supported");
             let mut out = Vec::new();
-            assert!(convert_into(&src, 1, 1, bpp, idx, bpp, &mut out), "{format:?}");
+            assert!(
+                convert_into(&src, 1, 1, bpp, idx, bpp, &mut out),
+                "{format:?}"
+            );
             assert_eq!(out, vec![255, 0, 0], "{format:?} must convert to red");
         }
     }

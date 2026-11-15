@@ -123,7 +123,10 @@ fn handle_close<R: Runtime>(app: &AppHandle<R>) {
 
     // Hide only when a tray icon really exists, or the app would become
     // unreachable. No tray (e.g. no appindicator on this desktop) → just quit.
-    if flags.as_ref().map(|f| f.minimize_to_tray()).unwrap_or(false)
+    if flags
+        .as_ref()
+        .map(|f| f.minimize_to_tray())
+        .unwrap_or(false)
         && crate::tray::is_available()
     {
         if let Some(win) = app.get_webview_window("main") {
@@ -223,25 +226,22 @@ fn widget_window(app: &AppHandle) -> Option<WebviewWindow> {
 /// Create the widget window. Returns the live window; the caller decides
 /// whether to show it.
 fn build_widget(app: &AppHandle) -> Result<WebviewWindow, String> {
-    let builder = WebviewWindowBuilder::new(
-        app,
-        WIDGET_LABEL,
-        WebviewUrl::App("widget.html".into()),
-    )
-    .title("Capicorn")
-    // Starts folded: an idle widget is a small tab, never a parked pill.
-    .inner_size(WIDGET_TAB_WIDTH, WIDGET_TAB_HEIGHT)
-    .decorations(false)
-    .transparent(true)
-    .shadow(false)
-    // Resizable on purpose: GTK clamps `gtk_window_resize` to the window's
-    // geometry hints, and `resizable(false)` pins those hints to the current
-    // size — a fixed-size widget can never grow into the pill. There is no
-    // titlebar and no resize border, so nothing can be resized by hand.
-    .resizable(true)
-    .skip_taskbar(true)
-    .visible(true)
-    .focused(true);
+    let builder =
+        WebviewWindowBuilder::new(app, WIDGET_LABEL, WebviewUrl::App("widget.html".into()))
+            .title("Capicorn")
+            // Starts folded: an idle widget is a small tab, never a parked pill.
+            .inner_size(WIDGET_TAB_WIDTH, WIDGET_TAB_HEIGHT)
+            .decorations(false)
+            .transparent(true)
+            .shadow(false)
+            // Resizable on purpose: GTK clamps `gtk_window_resize` to the window's
+            // geometry hints, and `resizable(false)` pins those hints to the current
+            // size — a fixed-size widget can never grow into the pill. There is no
+            // titlebar and no resize border, so nothing can be resized by hand.
+            .resizable(true)
+            .skip_taskbar(true)
+            .visible(true)
+            .focused(true);
 
     // Requesting always-on-top at build time can fail on Wayland; apply it the
     // same best-effort way everywhere so window creation itself never fails.
@@ -251,7 +251,9 @@ fn build_widget(app: &AppHandle) -> Result<WebviewWindow, String> {
 
     // Best-effort on Wayland (see module comment above).
     if let Err(err) = window.set_always_on_top(true) {
-        eprintln!("capicorn: widget always-on-top not supported here ({err}); normal stacking applies");
+        eprintln!(
+            "capicorn: widget always-on-top not supported here ({err}); normal stacking applies"
+        );
     }
     place_top_right(&window, WIDGET_TAB_WIDTH);
     Ok(window)

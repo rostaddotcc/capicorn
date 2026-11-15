@@ -39,6 +39,7 @@ pub fn check(width: u32, rows: u32, add: u32) -> Result<(), String> {
 
 /// Rows still allowed for the given width, so the stitcher can trim a big
 /// accepted shift instead of dropping the frame.
+#[allow(dead_code)]
 pub fn room(width: u32, rows: u32) -> u32 {
     let by_height = MAX_HEIGHT.saturating_sub(rows);
     let by_bytes = if width == 0 {

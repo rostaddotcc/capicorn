@@ -261,7 +261,11 @@ pub async fn pick_save_dir(app: tauri::AppHandle) -> Result<String, String> {
 /// filename sanitising and `create_dir_all`, with the extension forced to
 /// `.png`. The PNG bytes are written verbatim (no re-encode).
 #[tauri::command]
-pub async fn save_png_to_dir(data_url: String, dir: String, filename: String) -> Result<String, String> {
+pub async fn save_png_to_dir(
+    data_url: String,
+    dir: String,
+    filename: String,
+) -> Result<String, String> {
     crate::export::write_export(&data_url, &dir, &filename, "png", 100)
 }
 
@@ -273,8 +277,7 @@ pub async fn save_png_to_dir(data_url: String, dir: String, filename: String) ->
 #[tauri::command]
 pub async fn read_image_file(path: String) -> Result<String, String> {
     let path = std::path::PathBuf::from(path.trim());
-    let bytes = std::fs::read(&path)
-        .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    let bytes = std::fs::read(&path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
     let image = image::load_from_memory(&bytes)
         .map_err(|e| format!("{} is not an image Capicorn can read: {e}", path.display()))?;
     let mut png = Vec::new();

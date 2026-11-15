@@ -3,6 +3,11 @@
 All notable changes to Capicorn, newest first. Full release notes for every tag live on
 the [releases page](https://github.com/rostaddotcc/capicorn/releases).
 
+## v0.17.1
+- Screen recording fix: `no target node available` — drop the `target.object` stream
+  property (it pre-resolved the target before the portal node was in the registry) and wait
+  for the node to appear in the registry before connecting.
+
 ## v0.17.0
 - Paste (`Ctrl+V`) or drag-and-drop an image to annotate it.
 

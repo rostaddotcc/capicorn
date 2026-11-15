@@ -215,6 +215,17 @@ pub async fn start_recording(
     let format = RecordingFormat::parse(&format)?;
     let region = region.map(Region::validate).transpose()?;
 
+    // Fail fast with a clear message before the portal picker opens: a missing
+    // encoder is the most common "recording does nothing" cause.
+    #[cfg(target_os = "linux")]
+    if !imp::ffmpeg_available() {
+        return Err(
+            "ffmpeg is required for screen recording but was not found on PATH. \
+             Install it (e.g. `sudo apt install ffmpeg` or `sudo dnf install ffmpeg`) and try again."
+                .to_string(),
+        );
+    }
+
     if dir.trim().is_empty() {
         return Err("no save directory given".to_string());
     }
@@ -488,6 +499,20 @@ mod imp {
             .ok()
             .filter(|v| !v.trim().is_empty())
             .unwrap_or_else(|| "ffmpeg".to_string())
+    }
+
+    /// Pre-flight: is an ffmpeg binary actually runnable? Checked before the
+    /// portal picker opens so a missing encoder is a clear, immediate error
+    /// instead of a failure after the user has already chosen a screen.
+    pub(super) fn ffmpeg_available() -> bool {
+        Command::new(ffmpeg_program())
+            .arg("-version")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
     }
 
     /// Complete argument list for the encoder child.

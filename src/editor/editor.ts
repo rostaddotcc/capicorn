@@ -23,12 +23,10 @@ import {
 import {
   ACCENT,
   BlurRegion,
-  MAGNIFY_ZOOM,
   MAX_STROKE_WIDTH,
   MIN_STROKE_WIDTH,
   STROKE_WIDTH,
   blurRegionPreview,
-  clampMagnifyZoom,
   type Box,
   type ImageInfo,
   type Point,
@@ -37,11 +35,9 @@ import {
   type Tool,
   type ToolHost,
   createTool,
-  drawMagnify,
   fitBox,
   isBlurRegion,
   isHighlighterRegion,
-  isMagnifyRegion,
   isSpotlightRegion,
 } from "./tools";
 
@@ -60,7 +56,6 @@ export type ToolId =
   | "callout"
   | "step"
   | "bucket"
-  | "magnify"
   | "brush";
 
 const TOOL_IDS: readonly ToolId[] = [
@@ -75,7 +70,6 @@ const TOOL_IDS: readonly ToolId[] = [
   "callout",
   "step",
   "bucket",
-  "magnify",
   "brush",
 ];
 
@@ -180,7 +174,6 @@ export interface ToolSizeRange {
  * actually changes what you draw, so a single slider drives all of them:
  * brush→stroke width, arrow/rect→stroke width, text→font size,
  * blur→radius, step→badge diameter, callout→caption size,
- * spotlight/highlighter→outline thickness, magnify→zoom.
  * Tools with no meaningful size (select, crop, bucket) report null.
  */
 const TOOL_SIZE_RANGES: Record<ToolId, ToolSizeRange | null> = {
@@ -195,7 +188,6 @@ const TOOL_SIZE_RANGES: Record<ToolId, ToolSizeRange | null> = {
   callout: { min: MIN_CALLOUT_FONT_SIZE, max: MAX_CALLOUT_FONT_SIZE, step: 1 },
   step: { min: MIN_STEP_SIZE, max: MAX_STEP_SIZE, step: 1 },
   bucket: null,
-  magnify: { min: 1.2, max: 6, step: 0.1 },
   brush: { min: MIN_BRUSH_WIDTH, max: MAX_BRUSH_WIDTH, step: 1 },
 };
 
@@ -222,8 +214,7 @@ const isToolId = (value: string): value is ToolId =>
 const isEffectRegion = (object: fabric.FabricObject): boolean =>
   isBlurRegion(object) ||
   isSpotlightRegion(object) ||
-  isHighlighterRegion(object) ||
-  isMagnifyRegion(object);
+  isHighlighterRegion(object);
 
 export class Editor {
   private readonly container: HTMLElement;
@@ -283,8 +274,6 @@ export class Editor {
   private calloutFontSize = DEFAULT_CALLOUT_FONT_SIZE;
   /** Outline thickness for NEW spotlight / highlighter regions. */
   private regionThickness = DEFAULT_REGION_THICKNESS;
-  /** Magnification for NEW lenses. */
-  private magnifyZoom = MAGNIFY_ZOOM;
   /** Drop shadow applied to NEW arrow/rect/text/callout/step annotations. */
   private shadow: ShadowStyle = { ...DEFAULT_SHADOW };
 
@@ -338,7 +327,6 @@ export class Editor {
       stepSize: () => this.stepSize,
       calloutFontSize: () => this.calloutFontSize,
       regionThickness: () => this.regionThickness,
-      magnifyZoom: () => this.magnifyZoom,
       shadow: () => this.getShadow(),
     };
 
@@ -758,8 +746,6 @@ export class Editor {
       case "spotlight":
       case "highlighter":
         return this.regionThickness;
-      case "magnify":
-        return this.magnifyZoom;
       default:
         return 0;
     }
@@ -805,14 +791,6 @@ export class Editor {
         if (changed) this.notify();
         return;
       }
-      case "magnify": {
-        const zoom = clampMagnifyZoom(value);
-        const changed = this.magnifyZoom !== zoom;
-        this.magnifyZoom = zoom;
-        if (this.retuneLensSelection()) return;
-        if (changed) this.notify();
-        return;
-      }
       default:
         return;
     }
@@ -836,17 +814,6 @@ export class Editor {
       });
       region.dirty = true;
     }
-    this.commit();
-    this.canvas.requestRenderAll();
-    return true;
-  }
-
-  /** Apply the active zoom to selected lenses. */
-  private retuneLensSelection(): boolean {
-    if (this.restoring) return false;
-    const targets = this.canvas.getActiveObjects().filter(isMagnifyRegion);
-    if (!targets.length) return false;
-    for (const lens of targets) lens.zoom = this.magnifyZoom;
     this.commit();
     this.canvas.requestRenderAll();
     return true;
@@ -1764,7 +1731,6 @@ export class Editor {
     };
 
     const spotlights: DeviceRect[] = [];
-    const lenses: Array<{ rect: DeviceRect; zoom: number }> = [];
     for (const object of effects) {
       const rect = device(object);
       if (isBlurRegion(object)) {
@@ -1772,8 +1738,6 @@ export class Editor {
         applyBlurRegion(layer, rect, object.mode, Math.max(1, object.radius * multiplier));
       } else if (isHighlighterRegion(object)) {
         applyHighlighter(layer, rect, object.ink, object.alpha);
-      } else if (isMagnifyRegion(object)) {
-        lenses.push({ rect, zoom: object.zoom });
       } else if (isSpotlightRegion(object)) {
         spotlights.push(rect);
       }
@@ -1781,10 +1745,6 @@ export class Editor {
 
     if (spotlights.length) applySpotlight(layer, spotlights);
 
-    // Lenses last: each one copies finished pixels under its box and blows them
-    // up, so it must not pick up the still-live region objects or get dimmed by
-    // a neighbouring spotlight border.
-    for (const lens of lenses) drawMagnify(layer, lens.rect, lens.zoom);
   }
 
   /* ------------------------------------------------------------------ events */

@@ -3,6 +3,12 @@
 All notable changes to Capicorn, newest first. Full release notes for every tag live on
 the [releases page](https://github.com/rostaddotcc/capicorn/releases).
 
+## v0.24.0
+- **The unicorn head is now the File menu** — it replaces the word "File" and the topbar brand text (which only took space). Clicking it opens save/settings/widget/About.
+- **Settings icon removed** from the topbar; Settings… stays in the File menu (Ctrl+,).
+- **About dialog** added (File → About) with the version, license and repository; the version also shows beside the row.
+- **Magnify removed** — its live preview was only a tinted box (no enlargement until export), so the half-working tool is gone from the toolbar, editor and shortcut list.
+
 ## v0.23.0
 - **The timer is now a small always-on-top countdown**, not a full-window overlay. The main window shrinks to a clean timer card (decorations off), so the desktop stays usable — open menus, hover tooltips, arrange the shot — while it counts down.
 - **The floating widget comes back after a capture**, and closing the editor now leaves the widget on top instead of quitting the app. Closing the widget brings the editor back, so the app can never become unreachable.

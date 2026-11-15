@@ -100,8 +100,7 @@ type ShellToolId =
   | "bucket"
   | "spotlight"
   | "highlighter"
-  | "callout"
-  | "magnify";
+  | "callout";
 
 /** Wave 5 blur tuning. Optional so the shell builds against either editor revision. */
 type BlurMode = "gaussian" | "pixelate" | "blackout";
@@ -295,14 +294,6 @@ const TOOLS: ReadonlyArray<{ id: ShellToolId; label: string; hint: string; icon:
     hint: "Numbered callout steps (S)",
     icon: icon(`<circle cx="8" cy="8" r="5.5"/><path d="M7.1 6.3 8.2 5.5v5M6.6 10.5h3.2"/>`),
   },
-  {
-    id: "magnify",
-    label: "Magnify",
-    hint: "Zoom lens over a small detail",
-    icon: icon(
-      `<circle cx="7.1" cy="7.1" r="3.7"/><path d="M9.9 9.9 13.4 13.4"/><path d="M5.5 7.1h3.2M7.1 5.5v3.2"/>`,
-    ),
-  },
 ];
 
 const COLORS: ReadonlyArray<{ name: string; hex: string }> = [
@@ -381,11 +372,6 @@ const PROPS: Record<string, { hint: string; groups: ReadonlyArray<PropGroup>; st
     hint: "Click to place a speech bubble, then type the note.",
     groups: ["color", "font", "stroke", "shadow"],
     strokeLabel: "Outline",
-  },
-  magnify: {
-    hint: "Drag over a detail to magnify it — width sets the lens border.",
-    groups: ["color", "stroke"],
-    strokeLabel: "Lens border",
   },
 };
 
@@ -706,7 +692,10 @@ export function mountApp(root: HTMLElement): void {
     <header class="topbar">
       <div class="topbar-left">
         <div class="file-menu-wrap">
-          <button type="button" class="file-btn" id="file-btn" aria-haspopup="menu" aria-expanded="false" aria-controls="file-menu" title="File menu">File<span class="file-caret" aria-hidden="true">${ICONS.caret}</span></button>
+          <button type="button" class="file-btn file-btn-mark" id="file-btn" aria-haspopup="menu" aria-expanded="false" aria-controls="file-menu" title="File menu — save, settings, about">
+            <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 32 32" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M17.6 9.3 C 22.2 9.4 26 11.9 27.4 15.6 C 28 17.4 28.1 19.1 27.4 20.4 C 26.6 21.9 24.9 22.5 23.2 21.9 C 21.6 22.5 20.4 23.9 19.8 25.9 L 19.3 28.7 L 10.5 28.7 C 10.3 24.5 10.2 20.3 11.4 16.3 C 12.3 13.3 14.5 10.7 17.6 9.3 Z M 22.5 16.1 a 1.1 1.1 0 1 1 -2.2 0 a 1.1 1.1 0 1 1 2.2 0 Z" /><path d="M13.4 10.2 C 12.7 8.1 12.4 6.2 12.7 4.9 C 14.1 6.5 15.6 8.0 16.7 9.2 Z" /><path d="M17.9 9.5 L22.4 1.9 L20.1 10.4 Z" /></svg></span>
+            <span class="file-caret" aria-hidden="true">${ICONS.caret}</span>
+          </button>
           <div class="capture-menu file-menu" id="file-menu" role="menu" aria-label="File" hidden>
             <button type="button" class="menu-item" data-file="save-as" title="Choose a name, folder and format"><span class="menu-icon">${ICONS.saveAs}</span><span class="menu-label">Save As…</span><span class="menu-check"></span><kbd class="menu-key">Ctrl+Shift+S</kbd></button>
             <button type="button" class="menu-item" data-file="save" title="Save a copy at the default format"><span class="menu-icon">${ICONS.save}</span><span class="menu-label">Save</span><span class="menu-check"></span><kbd class="menu-key">Ctrl+S</kbd></button>
@@ -714,13 +703,9 @@ export function mountApp(root: HTMLElement): void {
             <div class="menu-sep" role="separator" aria-hidden="true"></div>
             <button type="button" class="menu-item" data-file="settings" title="All settings"><span class="menu-icon">${ICONS.settings}</span><span class="menu-label">Settings…</span><span class="menu-check"></span><kbd class="menu-key">Ctrl+,</kbd></button>
             <button type="button" class="menu-item" data-file="widget" role="menuitemcheckbox" aria-checked="false" title="Show or hide the floating capture widget"><span class="menu-icon">${ICONS.widget}</span><span class="menu-label">Floating widget</span><span class="menu-check">${ICONS.check}</span><span class="menu-key-space" aria-hidden="true"></span></button>
+            <div class="menu-sep" role="separator" aria-hidden="true"></div>
+            <button type="button" class="menu-item" data-file="about" title="Version, license and repository"><span class="menu-icon">${ICONS.help}</span><span class="menu-label">About</span><span class="menu-check"></span><kbd class="menu-key" id="about-menu-version"></kbd></button>
           </div>
-        </div>
-        <button type="button" class="icon-btn" id="settings-btn" title="Settings (Ctrl+,)" aria-label="Settings">${ICONS.settings}</button>
-        <div class="brand">
-          <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 32 32" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M17.6 9.3 C 22.2 9.4 26 11.9 27.4 15.6 C 28 17.4 28.1 19.1 27.4 20.4 C 26.6 21.9 24.9 22.5 23.2 21.9 C 21.6 22.5 20.4 23.9 19.8 25.9 L 19.3 28.7 L 10.5 28.7 C 10.3 24.5 10.2 20.3 11.4 16.3 C 12.3 13.3 14.5 10.7 17.6 9.3 Z M 22.5 16.1 a 1.1 1.1 0 1 1 -2.2 0 a 1.1 1.1 0 1 1 2.2 0 Z" /><path d="M13.4 10.2 C 12.7 8.1 12.4 6.2 12.7 4.9 C 14.1 6.5 15.6 8.0 16.7 9.2 Z" /><path d="M17.9 9.5 L22.4 1.9 L20.1 10.4 Z" /></svg></span>
-          <span class="brand-name">Capicorn</span>
-          <span class="version" id="version" hidden></span>
         </div>
       </div>
       <div class="topbar-right">
@@ -1063,6 +1048,23 @@ export function mountApp(root: HTMLElement): void {
       </div>
     </div>
 
+    <div class="modal-backdrop" id="about-modal" hidden>
+      <div class="modal modal-sm" role="dialog" aria-modal="true" aria-labelledby="about-title" tabindex="-1">
+        <header class="modal-head">
+          <div class="modal-heading">
+            <h2 class="modal-title" id="about-title">About</h2>
+          </div>
+          <button type="button" class="icon-btn modal-x" id="about-close" aria-label="Close" title="Close (Esc)">${ICONS.close}</button>
+        </header>
+        <div class="modal-body about-body">
+          <span class="about-mark" aria-hidden="true"><svg viewBox="0 0 32 32" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M17.6 9.3 C 22.2 9.4 26 11.9 27.4 15.6 C 28 17.4 28.1 19.1 27.4 20.4 C 26.6 21.9 24.9 22.5 23.2 21.9 C 21.6 22.5 20.4 23.9 19.8 25.9 L 19.3 28.7 L 10.5 28.7 C 10.3 24.5 10.2 20.3 11.4 16.3 C 12.3 13.3 14.5 10.7 17.6 9.3 Z M 22.5 16.1 a 1.1 1.1 0 1 1 -2.2 0 a 1.1 1.1 0 1 1 2.2 0 Z" /><path d="M13.4 10.2 C 12.7 8.1 12.4 6.2 12.7 4.9 C 14.1 6.5 15.6 8.0 16.7 9.2 Z" /><path d="M17.9 9.5 L22.4 1.9 L20.1 10.4 Z" /></svg></span>
+          <p class="about-version" id="about-version">—</p>
+          <p class="about-meta">Open-source screen capture and recording.</p>
+          <p class="about-meta about-repo">github.com/rostaddotcc/capicorn</p>
+          <p class="about-meta about-license">MIT licensed</p>
+        </div>
+      </div>
+    </div>
     <div class="modal-backdrop" id="shortcuts-modal" hidden>
       <div class="modal modal-sm" role="dialog" aria-modal="true" aria-labelledby="shortcuts-title" tabindex="-1">
         <header class="modal-head">
@@ -1080,7 +1082,7 @@ export function mountApp(root: HTMLElement): void {
             <div><dt><kbd>Ctrl</kbd> + <kbd>C</kbd></dt><dd>Copy to clipboard</dd></div>
             <div><dt><kbd>Ctrl</kbd> + <kbd>V</kbd></dt><dd>Paste an image to annotate</dd></div>
             <div><dt><kbd>Ctrl</kbd> + scroll</dt><dd>Zoom in / out</dd></div>
-            <div><dt><kbd>V</kbd> <kbd>R</kbd> <kbd>A</kbd> <kbd>T</kbd> <kbd>B</kbd> <kbd>P</kbd> <kbd>H</kbd> <kbd>S</kbd> <kbd>M</kbd> <kbd>E</kbd> <kbd>K</kbd></dt><dd>Tool shortcuts</dd></div>
+            <div><dt><kbd>V</kbd> <kbd>R</kbd> <kbd>A</kbd> <kbd>T</kbd> <kbd>B</kbd> <kbd>P</kbd> <kbd>H</kbd> <kbd>S</kbd> <kbd>E</kbd> <kbd>K</kbd></dt><dd>Tool shortcuts</dd></div>
             <div><dt><kbd>Ctrl</kbd> + <kbd>S</kbd></dt><dd>Save</dd></div>
             <div><dt><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>S</kbd></dt><dd>Save As…</dd></div>
             <div><dt><kbd>Ctrl</kbd> + <kbd>,</kbd></dt><dd>Settings</dd></div>
@@ -1133,7 +1135,8 @@ export function mountApp(root: HTMLElement): void {
   const emptyEl = $<HTMLDivElement>("#empty");
   const statusEl = $<HTMLSpanElement>("#status");
   const dotEl = $<HTMLSpanElement>("#dot");
-  const versionEl = $<HTMLSpanElement>("#version");
+  /** Version from the backend, for the About dialog + settings. */
+  let appVersion = "";
   const toolsEl = $<HTMLDivElement>("#tools");
   const captureBtn = $<HTMLButtonElement>("#capture");
   const caretBtn = $<HTMLButtonElement>("#capture-caret");
@@ -1141,7 +1144,6 @@ export function mountApp(root: HTMLElement): void {
   const menuEl = $<HTMLDivElement>("#capture-menu");
   const splitEl = $<HTMLDivElement>("#capture-split");
   const themeBtn = $<HTMLButtonElement>("#theme-toggle");
-  const settingsBtn = $<HTMLButtonElement>("#settings-btn");
   const recScopeEl = $<HTMLSpanElement>("#rec-scope");
   const recPillEl = $<HTMLDivElement>("#rec-pill");
   const recTimerEl = $<HTMLSpanElement>("#rec-timer");
@@ -2835,7 +2837,6 @@ export function mountApp(root: HTMLElement): void {
     spotlight: "Feather",
     highlighter: "Thickness",
     callout: "Outline",
-    magnify: "Zoom",
     blur: "Blur radius",
     text: "Font size",
   };
@@ -2843,7 +2844,6 @@ export function mountApp(root: HTMLElement): void {
   const SIZE_NOTES: Record<string, string> = {
     brush: "Nib width for freehand strokes.",
     text: "8–200 px — new labels only.",
-    magnify: "How far the lens zooms in.",
     blur: "Higher hides more — 2–60 px.",
     highlighter: "Marker thickness while swiping.",
   };
@@ -2851,8 +2851,7 @@ export function mountApp(root: HTMLElement): void {
   let activeTool: ShellToolId = "select";
   let sizeRange: { min: number; max: number; step: number } | null = null;
 
-  /** Pixels everywhere except the magnify lens, which is a zoom factor. */
-  const sizeUnit = (id: ShellToolId): string => (id === "magnify" ? "×" : " px");
+  const sizeUnit = (_id: ShellToolId): string => " px";
 
   const paintSliderFill = (input: HTMLInputElement, min: number, max: number): void => {
     const span = max - min || 1;
@@ -2909,7 +2908,7 @@ export function mountApp(root: HTMLElement): void {
     toolSizeLabel.textContent = label;
     toolSizeInput.setAttribute(
       "aria-label",
-      id === "magnify" ? "Magnify zoom factor" : `${label} in pixels`,
+      `${label} in pixels`,
     );
     toolSizeInput.min = String(sizeRange.min);
     toolSizeInput.max = String(sizeRange.max);
@@ -3771,7 +3770,7 @@ export function mountApp(root: HTMLElement): void {
     getSaveDir: () => saveDir,
     changeSaveDir: () => pickSaveDir(),
     resetSaveDir: () => resetSaveDir(),
-    getVersion: () => (versionEl.hidden ? null : versionEl.textContent),
+    getVersion: () => (appVersion ? appVersion : null),
     setTheme: (next) => setTheme(next),
     getSettings: () => settings,
     updateSettings: (patch, opts) => updateSettings(patch, opts),
@@ -3793,7 +3792,6 @@ export function mountApp(root: HTMLElement): void {
   });
 
   themeBtn.addEventListener("click", () => setTheme(theme === "dark" ? "light" : "dark"));
-  settingsBtn.addEventListener("click", () => panel?.open());
 
   captureBtn.addEventListener("click", () => void runCapture());
   recStopBtn.addEventListener("click", () => void stopRecording());
@@ -3842,6 +3840,9 @@ export function mountApp(root: HTMLElement): void {
           break;
         case "widget":
           void setWidget(!settings.widget);
+          break;
+        case "about":
+          openAbout();
           break;
       }
     });
@@ -4020,6 +4021,34 @@ export function mountApp(root: HTMLElement): void {
     if (ev.target === shortcutsModalEl) closeShortcuts();
   });
 
+  // About dialog (File → About): version, license and repository.
+  const aboutModalEl = $<HTMLDivElement>("#about-modal");
+  const aboutCloseBtn = $<HTMLButtonElement>("#about-close");
+  const openAbout = (): void => {
+    if (!aboutModalEl.hidden) return;
+    aboutModalEl.hidden = false;
+    void aboutModalEl.offsetWidth;
+    aboutModalEl.classList.add("is-open");
+    aboutModalEl.querySelector<HTMLElement>(".modal")?.focus({ preventScroll: true });
+  };
+  const closeAbout = (): void => {
+    if (aboutModalEl.hidden) return;
+    aboutModalEl.classList.remove("is-open");
+    aboutModalEl.hidden = true;
+    fileBtn.focus({ preventScroll: true });
+  };
+  aboutCloseBtn.addEventListener("click", closeAbout);
+  aboutModalEl.addEventListener("pointerdown", (ev) => {
+    if (ev.target === aboutModalEl) closeAbout();
+  });
+  aboutModalEl.addEventListener("keydown", (ev) => {
+    if (ev.key === "Escape") {
+      ev.preventDefault();
+      ev.stopPropagation();
+      closeAbout();
+    }
+  });
+
   // Paste or drop an image to annotate it (Snagit-style).
   const loadImageFile = (file: File): void => {
     if (!file.type.startsWith("image/")) return;
@@ -4113,7 +4142,6 @@ export function mountApp(root: HTMLElement): void {
         p: "spotlight",
         h: "highlighter",
         s: "step",
-        m: "magnify",
         e: "brush",
         k: "bucket",
       };
@@ -4320,13 +4348,14 @@ export function mountApp(root: HTMLElement): void {
   void (async () => {
     try {
       const version = await invoke<string>("get_version");
-      if (version) {
-        versionEl.textContent = version.startsWith("v") ? version : `v${version}`;
-        versionEl.hidden = false;
-        panel?.refresh();
-      }
+      appVersion = version ? (version.startsWith("v") ? version : `v${version}`) : "";
+      const aboutVersion = document.getElementById("about-version");
+      if (aboutVersion) aboutVersion.textContent = appVersion || "unknown";
+      const aboutMenuVersion = document.getElementById("about-menu-version");
+      if (aboutMenuVersion) aboutMenuVersion.textContent = appVersion || "";
+      panel?.refresh();
     } catch {
-      versionEl.hidden = true;
+      appVersion = "";
     }
     await ensureSaveDir();
   })();

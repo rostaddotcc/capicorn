@@ -4315,3 +4315,52 @@ kbd {
   font-size: 12.5px;
   text-align: right;
 }
+
+/* File menu (top-left quick actions) */
+.file-menu-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.file-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 32px;
+  padding: 0 9px 0 12px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--fg-muted);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  transition:
+    background-color 140ms var(--ease),
+    color 140ms var(--ease),
+    border-color 140ms var(--ease);
+}
+
+.file-btn:hover,
+.file-menu-wrap.is-open .file-btn {
+  background: var(--surface-soft);
+  color: var(--fg);
+}
+
+.file-caret {
+  display: inline-flex;
+  color: var(--fg-subtle);
+}
+
+/* The shared .capture-menu anchors to the right; the File menu sits on the left. */
+.file-menu {
+  left: 0;
+  right: auto;
+  transform-origin: top left;
+  min-width: 224px;
+}
+
+.menu-icon-rec {
+  color: var(--rec);
+}

@@ -40,26 +40,52 @@ pub struct CaptureResult {
 /// captures would nest the app inside its own screenshot.
 const HIDE_SETTLE_MS: u64 = 220;
 
-#[tauri::command]
-pub async fn capture_screenshot(app: tauri::AppHandle) -> Result<CaptureResult, String> {
+/// Hide the app's own windows (main + floating widget) while a capture runs, so
+/// neither ends up in the shot — and so the widget can't be the only Capicorn
+/// window left on screen (which made it look like it "popped up" during a window
+/// pick). Returns whether the widget was visible so it can be restored after.
+fn hide_app_windows(app: &tauri::AppHandle) -> bool {
     use tauri::Manager as _;
-
-    let win = app.get_webview_window("main");
-
-    if let Some(win) = win.as_ref() {
+    let widget_visible = app
+        .get_webview_window("widget")
+        .map(|w| w.is_visible().unwrap_or(false))
+        .unwrap_or(false);
+    if let Some(win) = app.get_webview_window("main") {
         let _ = win.hide();
-        tokio::time::sleep(std::time::Duration::from_millis(HIDE_SETTLE_MS)).await;
     }
+    if widget_visible {
+        if let Some(widget) = app.get_webview_window("widget") {
+            let _ = widget.hide();
+        }
+    }
+    widget_visible
+}
 
-    // Capture first, restore second, return last: the restore must happen on
-    // both the success and the error path, so the window can never be left
-    // hidden behind a failed screenshot.
-    let captured = crate::capture::capture_full().await;
-
-    if let Some(win) = win.as_ref() {
+/// Restore the windows hidden by [`hide_app_windows`], on every code path.
+fn restore_app_windows(app: &tauri::AppHandle, widget_visible: bool) {
+    use tauri::Manager as _;
+    if let Some(win) = app.get_webview_window("main") {
         let _ = win.show();
         let _ = win.set_focus();
     }
+    if widget_visible {
+        if let Some(widget) = app.get_webview_window("widget") {
+            let _ = widget.show();
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn capture_screenshot(app: tauri::AppHandle) -> Result<CaptureResult, String> {
+    let widget_visible = hide_app_windows(&app);
+    tokio::time::sleep(std::time::Duration::from_millis(HIDE_SETTLE_MS)).await;
+
+    // Capture first, restore second, return last: the restore must happen on
+    // both the success and the error path, so no window can be left hidden
+    // behind a failed screenshot.
+    let captured = crate::capture::capture_full().await;
+
+    restore_app_windows(&app, widget_visible);
 
     let (data_url, width, height) = captured.map_err(|e| e.to_string())?;
     Ok(CaptureResult {
@@ -98,20 +124,12 @@ where
     F: FnOnce() -> Fut,
     Fut: std::future::Future<Output = anyhow::Result<(String, u32, u32)>>,
 {
-    use tauri::Manager as _;
-
-    let win = app.get_webview_window("main");
-    if let Some(win) = win.as_ref() {
-        let _ = win.hide();
-        tokio::time::sleep(std::time::Duration::from_millis(HIDE_SETTLE_MS)).await;
-    }
+    let widget_visible = hide_app_windows(&app);
+    tokio::time::sleep(std::time::Duration::from_millis(HIDE_SETTLE_MS)).await;
 
     let captured = grab().await;
 
-    if let Some(win) = win.as_ref() {
-        let _ = win.show();
-        let _ = win.set_focus();
-    }
+    restore_app_windows(&app, widget_visible);
 
     let (data_url, width, height) = captured.map_err(|e| e.to_string())?;
     Ok(CaptureResult {

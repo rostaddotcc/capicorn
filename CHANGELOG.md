@@ -3,6 +3,11 @@
 All notable changes to Capicorn, newest first. Full release notes for every tag live on
 the [releases page](https://github.com/rostaddotcc/capicorn/releases).
 
+## v0.20.0
+- New **File** menu (top-left): Save As…, Save, Copy image, Settings…, and a **Floating widget** toggle — the widget is easy to find again.
+- **Record modes live in the Capture menu** (Record full screen / Record region); the separate Record dropdown is gone, so there is one mode menu.
+- Window / screen captures **no longer leave the floating widget on screen** (it is hidden with the main window during a capture, so it can't "pop up").
+
 ## v0.19.0
 - Recording indicator is red and pulses (the status dot follows the recording state).
 - More shortcuts: bare-letter tool keys (`V R A T B P H S M E K`) and **Ctrl+scroll zoom**.

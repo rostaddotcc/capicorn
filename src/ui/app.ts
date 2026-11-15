@@ -197,6 +197,9 @@ const ICONS = {
   help: icon(
     `<circle cx="8" cy="8" r="6"/><path d="M6.1 6.2a2 2 0 1 1 2.8 1.9c-.6.3-.9.7-.9 1.3v.4"/><circle cx="8" cy="11.6" r=".55" fill="currentColor" stroke="none"/>`,
   ),
+  widget: icon(
+    `<rect x="2.4" y="2.4" width="5.4" height="5.4" rx="1.3"/><rect x="8.2" y="2.4" width="5.4" height="5.4" rx="1.3"/><rect x="2.4" y="8.2" width="5.4" height="5.4" rx="1.3"/><path d="M12.6 9.2v3.6M10.8 11h3.6"/>`,
+  ),
   record: icon(`<circle cx="8" cy="8" r="5.2" fill="currentColor" stroke="none"/>`),
   stop: icon(`<rect x="3.6" y="3.6" width="8.8" height="8.8" rx="1.8" fill="currentColor" stroke="none"/>`),
   ocr: icon(
@@ -705,6 +708,17 @@ export function mountApp(root: HTMLElement): void {
   root.innerHTML = `
     <header class="topbar">
       <div class="topbar-left">
+        <div class="file-menu-wrap">
+          <button type="button" class="file-btn" id="file-btn" aria-haspopup="menu" aria-expanded="false" aria-controls="file-menu" title="File menu">File<span class="file-caret" aria-hidden="true">${ICONS.caret}</span></button>
+          <div class="capture-menu file-menu" id="file-menu" role="menu" aria-label="File" hidden>
+            <button type="button" class="menu-item" data-file="save-as" title="Choose a name, folder and format"><span class="menu-icon">${ICONS.saveAs}</span><span class="menu-label">Save As…</span><span class="menu-check"></span><kbd class="menu-key">Ctrl+Shift+S</kbd></button>
+            <button type="button" class="menu-item" data-file="save" title="Save a copy at the default format"><span class="menu-icon">${ICONS.save}</span><span class="menu-label">Save</span><span class="menu-check"></span><kbd class="menu-key">Ctrl+S</kbd></button>
+            <button type="button" class="menu-item" data-file="copy" title="Copy the image to the clipboard"><span class="menu-icon">${ICONS.copy}</span><span class="menu-label">Copy image</span><span class="menu-check"></span><kbd class="menu-key">Ctrl+C</kbd></button>
+            <div class="menu-sep" role="separator" aria-hidden="true"></div>
+            <button type="button" class="menu-item" data-file="settings" title="All settings"><span class="menu-icon">${ICONS.settings}</span><span class="menu-label">Settings…</span><span class="menu-check"></span><kbd class="menu-key">Ctrl+,</kbd></button>
+            <button type="button" class="menu-item" data-file="widget" role="menuitemcheckbox" aria-checked="false" title="Show or hide the floating capture widget"><span class="menu-icon">${ICONS.widget}</span><span class="menu-label">Floating widget</span><span class="menu-check">${ICONS.check}</span><span class="menu-key-space" aria-hidden="true"></span></button>
+          </div>
+        </div>
         <button type="button" class="icon-btn" id="settings-btn" title="Settings (Ctrl+,)" aria-label="Settings">${ICONS.settings}</button>
         <div class="brand">
           <span class="brand-mark" aria-hidden="true">✦</span>
@@ -731,24 +745,6 @@ export function mountApp(root: HTMLElement): void {
               <span class="rec-label" id="rec-label">Record</span>
               <span class="rec-mode" id="rec-mode-label">Full</span>
             </button>
-            <span class="rec-divider" aria-hidden="true"></span>
-            <button type="button" class="rec-caret" id="record-caret" aria-haspopup="menu" aria-expanded="false" aria-controls="record-menu" aria-label="Recording options" title="Recording options">
-              ${ICONS.caret}
-            </button>
-            <div class="capture-menu record-menu" id="record-menu" role="menu" aria-label="Recording mode" hidden>
-              <button type="button" class="menu-item" role="menuitemradio" data-rec-mode="full" aria-checked="true" title="Record the whole screen (system picker)">
-                <span class="menu-icon">${ICONS.full}</span>
-                <span class="menu-label">Record full screen</span>
-                <span class="menu-check">${ICONS.check}</span>
-                <span class="menu-key-space" aria-hidden="true"></span>
-              </button>
-              <button type="button" class="menu-item" role="menuitemradio" data-rec-mode="region" aria-checked="false" title="Drag a rectangle, then record only that area">
-                <span class="menu-icon">${ICONS.region}</span>
-                <span class="menu-label">Record region</span>
-                <span class="menu-check">${ICONS.check}</span>
-                <span class="menu-key-space" aria-hidden="true"></span>
-              </button>
-            </div>
           </div>
         </div>
         <div class="split-btn" id="capture-split">
@@ -791,6 +787,19 @@ export function mountApp(root: HTMLElement): void {
               <span class="menu-icon">${ICONS.scrolling}</span>
               <span class="menu-label">Scrolling capture</span>
               <span class="menu-check">${ICONS.check}</span>
+              <span class="menu-key-space" aria-hidden="true"></span>
+            </button>
+            <div class="menu-sep" role="separator" aria-hidden="true"></div>
+            <button type="button" class="menu-item" role="menuitem" data-rec-mode="full" title="Record the whole screen (system picker)">
+              <span class="menu-icon menu-icon-rec">${ICONS.record}</span>
+              <span class="menu-label">Record full screen</span>
+              <span class="menu-check"></span>
+              <span class="menu-key-space" aria-hidden="true"></span>
+            </button>
+            <button type="button" class="menu-item" role="menuitem" data-rec-mode="region" title="Drag a rectangle, then record only that area">
+              <span class="menu-icon menu-icon-rec">${ICONS.record}</span>
+              <span class="menu-label">Record region</span>
+              <span class="menu-check"></span>
               <span class="menu-key-space" aria-hidden="true"></span>
             </button>
           </div>
@@ -1144,8 +1153,6 @@ export function mountApp(root: HTMLElement): void {
   const themeBtn = $<HTMLButtonElement>("#theme-toggle");
   const settingsBtn = $<HTMLButtonElement>("#settings-btn");
   const recordBtn = $<HTMLButtonElement>("#record");
-  const recordCaretBtn = $<HTMLButtonElement>("#record-caret");
-  const recordMenuEl = $<HTMLDivElement>("#record-menu");
   const recordSplitEl = $<HTMLDivElement>("#record-split");
   const recModeLabelEl = $<HTMLSpanElement>("#rec-mode-label");
   const recScopeEl = $<HTMLSpanElement>("#rec-scope");
@@ -1933,10 +1940,8 @@ export function mountApp(root: HTMLElement): void {
   }
 
   const captureMenu = createMenu(splitEl, menuEl, caretBtn);
-  const recordMenu = createMenu(recordSplitEl, recordMenuEl, recordCaretBtn);
 
   const setMenuOpen = (open: boolean): void => captureMenu.setOpen(open);
-  const setRecordMenuOpen = (open: boolean): void => recordMenu.setOpen(open);
 
   function setMode(next: CaptureMode, announce = false): void {
     mode = next;
@@ -1992,13 +1997,6 @@ export function mountApp(root: HTMLElement): void {
   function setRecMode(next: RecMode, announce = false): void {
     recMode = next;
     writeStore(REC_MODE_KEY, next);
-    for (const item of Array.from(
-      recordMenuEl.querySelectorAll<HTMLButtonElement>(".menu-item"),
-    )) {
-      const active = item.dataset.recMode === next;
-      item.classList.toggle("is-active", active);
-      item.setAttribute("aria-checked", String(active));
-    }
     const region = next === "region";
     recModeLabelEl.textContent = region ? "Region" : "Full";
     recordBtn.title = recordIdleTitle();
@@ -2017,7 +2015,6 @@ export function mountApp(root: HTMLElement): void {
     captureBtn.disabled = value;
     caretBtn.disabled = value;
     recordBtn.disabled = value || recStarting;
-    recordCaretBtn.disabled = value || recStarting || recording;
     captureBtn.classList.toggle("is-busy", value);
     splitEl.classList.toggle("is-busy", value);
     if (value) setMenuOpen(false);
@@ -2061,11 +2058,9 @@ export function mountApp(root: HTMLElement): void {
     recScopeEl.hidden = !(active && recRegionUsed !== null);
     recScopeEl.textContent = "Region";
     recFormatEl.textContent = recFormatLabel(recFormatUsed ?? settings.recFormat);
-    recordCaretBtn.disabled = active || busy || recStarting || recStopping;
     captureBtn.disabled = active || busy;
     caretBtn.disabled = active || busy;
     if (active) {
-      setRecordMenuOpen(false);
       setMenuOpen(false);
     }
   }
@@ -2137,7 +2132,6 @@ export function mountApp(root: HTMLElement): void {
     recStarting = true;
     recFormatUsed = settings.recFormat;
     recordBtn.disabled = true;
-    recordCaretBtn.disabled = true;
     recordSplitEl.classList.add("is-busy");
     recordBtn.classList.add("is-busy");
     recFormatEl.textContent = recFormatLabel(recFormatUsed);
@@ -2209,7 +2203,6 @@ export function mountApp(root: HTMLElement): void {
     } finally {
       recStarting = false;
       recordBtn.disabled = false;
-      recordCaretBtn.disabled = recording;
       recordSplitEl.classList.remove("is-busy");
       recordBtn.classList.remove("is-busy");
     }
@@ -2236,7 +2229,6 @@ export function mountApp(root: HTMLElement): void {
     } finally {
       recStopping = false;
       recordBtn.disabled = false;
-      recordCaretBtn.disabled = busy;
     }
   }
 
@@ -3875,7 +3867,67 @@ export function mountApp(root: HTMLElement): void {
   captureBtn.addEventListener("click", () => void runCapture());
   recordBtn.addEventListener("click", () => void (recording ? stopRecording() : startRecording()));
   caretBtn.addEventListener("click", () => setMenuOpen(!captureMenu.isOpen()));
-  recordCaretBtn.addEventListener("click", () => setRecordMenuOpen(!recordMenu.isOpen()));
+
+  /* ---------------------------------------------------------------- file menu */
+  const fileBtn = $<HTMLButtonElement>("#file-btn");
+  const fileMenuEl = $<HTMLDivElement>("#file-menu");
+  const fileWrapEl = fileMenuEl.parentElement as HTMLElement;
+  const fileMenu = createMenu(fileWrapEl, fileMenuEl, fileBtn);
+  const syncFileMenu = (): void => {
+    const widgetItem = fileMenuEl.querySelector<HTMLButtonElement>('[data-file="widget"]');
+    if (widgetItem) widgetItem.setAttribute("aria-checked", String(settings.widget));
+    for (const id of ["save", "save-as", "copy"]) {
+      const el = fileMenuEl.querySelector<HTMLButtonElement>(`[data-file="${id}"]`);
+      if (el) el.disabled = !hasImage;
+    }
+  };
+  const setFileMenuOpen = (open: boolean): void => {
+    if (open) syncFileMenu();
+    fileMenu.setOpen(open);
+  };
+  fileBtn.addEventListener("click", () => setFileMenuOpen(!fileMenu.isOpen()));
+  fileBtn.addEventListener("keydown", (ev) => {
+    if (ev.key !== "ArrowDown" || !fileMenuEl.hidden) return;
+    ev.preventDefault();
+    setFileMenuOpen(true);
+  });
+  for (const item of Array.from(fileMenuEl.querySelectorAll<HTMLButtonElement>(".menu-item"))) {
+    item.addEventListener("click", () => {
+      const action = item.dataset.file;
+      setFileMenuOpen(false);
+      fileBtn.focus({ preventScroll: true });
+      switch (action) {
+        case "save-as":
+          void saveAs();
+          break;
+        case "save":
+          void saveEdited();
+          break;
+        case "copy":
+          void copyPng();
+          break;
+        case "settings":
+          panel?.open();
+          break;
+        case "widget":
+          void setWidget(!settings.widget);
+          break;
+      }
+    });
+  }
+  fileMenuEl.addEventListener("keydown", (ev) => {
+    const items = Array.from(fileMenuEl.querySelectorAll<HTMLButtonElement>(".menu-item"));
+    const idx = items.indexOf(document.activeElement as HTMLButtonElement);
+    if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
+      ev.preventDefault();
+      const step = ev.key === "ArrowDown" ? 1 : -1;
+      items[(idx + step + items.length) % items.length]?.focus();
+    } else if (ev.key === "Escape") {
+      ev.preventDefault();
+      setFileMenuOpen(false);
+      fileBtn.focus({ preventScroll: true });
+    }
+  });
 
   // Opening from the caret with ArrowDown is a standard menu affordance.
   caretBtn.addEventListener("keydown", (ev) => {
@@ -3886,6 +3938,15 @@ export function mountApp(root: HTMLElement): void {
 
   for (const item of Array.from(menuEl.querySelectorAll<HTMLButtonElement>(".menu-item"))) {
     item.addEventListener("click", () => {
+      // Record entries now live in the same Capture menu.
+      const recRaw = item.dataset.recMode;
+      if (recRaw === "full" || recRaw === "region") {
+        setMenuOpen(false);
+        setRecMode(recRaw, true);
+        caretBtn.focus({ preventScroll: true });
+        void startRecording(recRaw);
+        return;
+      }
       const raw = item.dataset.mode;
       const next: CaptureMode =
         raw === "region" || raw === "window" || raw === "monitor" || raw === "scrolling"
@@ -3921,45 +3982,10 @@ export function mountApp(root: HTMLElement): void {
   // Record menu: same affordances as Capture — ArrowDown from the caret, arrow
   // keys / Home / End inside, Esc back to the caret. Selecting a mode persists it
   // AND starts that kind of take immediately.
-  recordCaretBtn.addEventListener("keydown", (ev) => {
-    if (ev.key !== "ArrowDown" || !recordMenuEl.hidden) return;
-    ev.preventDefault();
-    setRecordMenuOpen(true);
-  });
-
-  for (const item of Array.from(recordMenuEl.querySelectorAll<HTMLButtonElement>(".menu-item"))) {
-    item.addEventListener("click", () => {
-      const next: RecMode = item.dataset.recMode === "region" ? "region" : "full";
-      setRecMode(next, true);
-      setRecordMenuOpen(false);
-      recordCaretBtn.focus({ preventScroll: true });
-      void startRecording(next);
-    });
-  }
-
-  recordMenuEl.addEventListener("keydown", (ev) => {
-    const items = Array.from(recordMenuEl.querySelectorAll<HTMLButtonElement>(".menu-item"));
-    const idx = items.indexOf(document.activeElement as HTMLButtonElement);
-    if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
-      ev.preventDefault();
-      const step = ev.key === "ArrowDown" ? 1 : -1;
-      items[(idx + step + items.length) % items.length]?.focus();
-    } else if (ev.key === "Home" || ev.key === "End") {
-      ev.preventDefault();
-      items[ev.key === "Home" ? 0 : items.length - 1]?.focus();
-    } else if (ev.key === "Escape") {
-      ev.preventDefault();
-      setRecordMenuOpen(false);
-      recordCaretBtn.focus({ preventScroll: true });
-    }
-  });
-
   const onDocPointerDown = (ev: PointerEvent): void => {
     const target = ev.target as Node | null;
     if (!menuEl.hidden && !(target && splitEl.contains(target))) setMenuOpen(false);
-    if (!recordMenuEl.hidden && !(target && recordSplitEl.contains(target))) {
-      setRecordMenuOpen(false);
-    }
+    if (!fileMenuEl.hidden && !(target && fileWrapEl.contains(target))) setFileMenuOpen(false);
   };
   document.addEventListener("pointerdown", onDocPointerDown);
 

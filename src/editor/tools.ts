@@ -122,12 +122,15 @@ export class SpotlightRegion extends fabric.Rect {
     const height = this.height ?? 0;
     if (width <= 0 || height <= 0) return;
     const reach = 100000;
+    // fabric's `_render` context is centred on the object, so draw about -w/2,-h/2.
+    const left = -width / 2;
+    const top = -height / 2;
 
     context.save();
     context.fillStyle = SPOTLIGHT_DIM;
     context.beginPath();
-    context.rect(-reach, -reach, width + reach * 2, height + reach * 2);
-    context.rect(0, 0, width, height);
+    context.rect(-reach, -reach, reach * 2, reach * 2);
+    context.rect(left, top, width, height);
     context.fill("evenodd");
     context.restore();
 
@@ -135,7 +138,7 @@ export class SpotlightRegion extends fabric.Rect {
     context.strokeStyle = "rgba(255, 255, 255, 0.9)";
     context.lineWidth = Math.max(1, Math.min(60, this.thickness || 1));
     context.setLineDash([6, 4]);
-    context.strokeRect(0.5, 0.5, width - 1, height - 1);
+    context.strokeRect(left + 0.5, top + 0.5, width - 1, height - 1);
     context.restore();
   }
 }
@@ -1607,16 +1610,19 @@ export class MagnifyRegion extends fabric.Rect {
     const height = this.height ?? 0;
     if (width <= 0 || height <= 0) return;
     const radius = Math.min(width, height) * 0.12;
+    // fabric's `_render` context is centred on the object, so draw about -w/2,-h/2.
+    const left = -width / 2;
+    const top = -height / 2;
 
     context.save();
     context.beginPath();
-    lensPath(context, 0, 0, width, height, radius);
+    lensPath(context, left, top, width, height, radius);
     context.clip();
     context.fillStyle = "rgba(12, 16, 24, 0.28)";
-    context.fillRect(0, 0, width, height);
+    context.fillRect(left, top, width, height);
     context.restore();
 
-    drawLensChrome(context, 0, 0, width, height, this.zoom);
+    drawLensChrome(context, left, top, width, height, this.zoom);
   }
 }
 fabric.classRegistry.setClass(MagnifyRegion, "capicorn_magnify");

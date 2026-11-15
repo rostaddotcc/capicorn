@@ -205,9 +205,6 @@ const ICONS = {
   ocr: icon(
     `<path d="M2.6 5.4V3.6a1 1 0 0 1 1-1h1.8M10.6 2.6h1.8a1 1 0 0 1 1 1v1.8M13.4 10.6v1.8a1 1 0 0 1-1 1h-1.8M5.4 13.4H3.6a1 1 0 0 1-1-1v-1.8"/><path d="M5.6 5.8h4.8M5.6 8h3.2M5.6 10.2h4"/>`,
   ),
-  pin: icon(
-    `<path d="M6.2 2.6h3.6l-.6 3.3 2.4 2.3v1.3H8.8V13l-.8.9-.8-.9V9.5H4.4V8.2l2.4-2.3z"/>`,
-  ),
   film: icon(
     `<rect x="2.4" y="4" width="11.2" height="8" rx="1.4"/><path d="M5.2 4v8M10.8 4v8"/><path d="M5.2 7.2h5.6M5.2 9.6h5.6"/>`,
   ),
@@ -813,7 +810,6 @@ export function mountApp(root: HTMLElement): void {
         <button type="button" class="chip chip-icon chip-badge" id="film-toggle" disabled title="Recent captures appear after your first capture" aria-label="Recent captures" aria-pressed="false">${ICONS.film}<span class="chip-count" id="film-count">0</span></button>
         <span class="toolbar-sep" aria-hidden="true"></span>
         <button type="button" class="chip" id="ocr" disabled title="Extract text from this capture">${ICONS.ocr}<span>OCR</span></button>
-        <button type="button" class="chip" id="pin" disabled title="Pin this capture on top of other windows">${ICONS.pin}<span>Pin</span></button>
         <span class="toolbar-sep" aria-hidden="true"></span>
         <button type="button" class="chip" id="copy" disabled title="Copy to clipboard (Ctrl+C)">${ICONS.copy}<span>Copy</span></button>
         <button type="button" class="chip" id="save" disabled title="Save an edited copy to your save folder (Ctrl+S)">${ICONS.save}<span>Save</span></button>
@@ -1231,7 +1227,6 @@ export function mountApp(root: HTMLElement): void {
   const filmClearBtn = $<HTMLButtonElement>("#film-clear");
   const filmCloseBtn = $<HTMLButtonElement>("#film-close");
   const ocrBtn = $<HTMLButtonElement>("#ocr");
-  const pinBtn = $<HTMLButtonElement>("#pin");
   const ocrModalEl = $<HTMLDivElement>("#ocr-modal");
   const ocrLangSelect = $<HTMLSelectElement>("#ocr-lang");
   const ocrRunBtn = $<HTMLButtonElement>("#ocr-run");
@@ -1698,7 +1693,10 @@ export function mountApp(root: HTMLElement): void {
         document.removeEventListener("keydown", cancel, true);
         countdownEl.classList.remove("is-open");
         countdownEl.hidden = true;
-        document.body.classList.remove("is-counting");
+        document.body.classList.remove("is-counting", "countdown-hud");
+        void invoke("set_hud_mode", { enabled: false, width: 0, height: 0 }).catch(() => {
+          /* nothing to restore */
+        });
         if (countdownCancel === cancel) countdownCancel = null;
         resolve(capture);
       };
@@ -1719,8 +1717,17 @@ export function mountApp(root: HTMLElement): void {
       };
 
       countdownHint.textContent = `${CAPTURE_HINT[requested]} · Esc to cancel`;
+      // The HUD hides #app, so the timer must live directly under <body> to stay visible.
+      if (countdownEl.parentElement !== document.body) {
+        document.body.appendChild(countdownEl);
+      }
       countdownEl.hidden = false;
-      document.body.classList.add("is-counting");
+      document.body.classList.add("is-counting", "countdown-hud");
+      // The timer gets its own small always-on-top window: the desktop stays
+      // usable, so the user can open menus and prepare the screen while it counts.
+      void invoke("set_hud_mode", { enabled: true, width: 280, height: 228 }).catch(() => {
+        /* older backend: the countdown stays a full-window overlay */
+      });
       void countdownEl.offsetWidth;
       countdownEl.classList.add("is-open");
       countdownCancel = cancel;
@@ -1868,7 +1875,6 @@ export function mountApp(root: HTMLElement): void {
     saveBtn.disabled = !loaded;
     saveAsBtn.disabled = !loaded;
     ocrBtn.disabled = !loaded;
-    pinBtn.disabled = !loaded;
     paintResizeState();
     syncHistory();
     syncDirty();
@@ -2422,7 +2428,7 @@ export function mountApp(root: HTMLElement): void {
       // The card gets its own small clickable window: the main window shrinks to
       // the card and click-through stays off, so Done (and Enter) actually work.
       document.body.classList.add("scroll-hud");
-      await invoke("set_scroll_mode", { enabled: true }).catch(() => {
+      await invoke("set_hud_mode", { enabled: true, width: 372, height: 330 }).catch(() => {
         /* older backend: fall back to the in-window card */
       });
       setStatus("Scrolling capture running — scroll the window, then press Enter.");
@@ -2466,7 +2472,7 @@ export function mountApp(root: HTMLElement): void {
       scrollFeed = null;
       document.body.classList.remove("scroll-hud");
       try {
-        await invoke("set_scroll_mode", { enabled: false });
+        await invoke("set_hud_mode", { enabled: false, width: 0, height: 0 });
       } catch {
         /* nothing to restore */
       }
@@ -2573,6 +2579,12 @@ export function mountApp(root: HTMLElement): void {
       setStatus(`Capture failed: ${errText(e)}`, "error");
     } finally {
       setBusy(false);
+      // The widget hides during the grab; bring it back on top afterwards.
+      if (settings.widget) {
+        void invoke("open_widget").catch(() => {
+          /* the widget window may be gone */
+        });
+      }
     }
   }
 
@@ -3565,24 +3577,6 @@ export function mountApp(root: HTMLElement): void {
     }
   }
 
-  /* ----------------------------------------------------------------- pin */
-
-  async function pinImage(): Promise<void> {
-    if (!hasImage) {
-      setStatus("Nothing to pin — capture a screen first.", "error");
-      return;
-    }
-    pinBtn.disabled = true;
-    try {
-      await invoke("pin_image", { dataUrl: editor.flatten() });
-      setStatus("Pinned to screen — the floating copy stays on top.", "success");
-    } catch (e) {
-      setStatus(`Pin failed: ${errText(e)}`, "error");
-    } finally {
-      pinBtn.disabled = !hasImage;
-    }
-  }
-
   /* ---------------------------------------------------------------- wiring */
 
   toolsEl.innerHTML = TOOLS.map(
@@ -3951,7 +3945,6 @@ export function mountApp(root: HTMLElement): void {
   saveBtn.addEventListener("click", () => void saveEdited());
   saveAsBtn.addEventListener("click", () => void saveAs());
   ocrBtn.addEventListener("click", () => openOcr());
-  pinBtn.addEventListener("click", () => void pinImage());
 
   filmToggleBtn.addEventListener("click", () => setFilmOpen(!filmOpen));
   filmCloseBtn.addEventListener("click", () => {

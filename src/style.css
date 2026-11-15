@@ -4414,3 +4414,22 @@ body.scroll-hud .scroll-card {
   max-height: calc(100vh - 16px);
   overflow: auto;
 }
+
+/* ------------------------------------------- countdown owns the window */
+/* The timer shrinks the main window to itself — no scrim, no editor chrome —
+   so the desktop stays usable while it counts down. */
+body.countdown-hud #app {
+  display: none;
+}
+
+body.countdown-hud .countdown {
+  background: transparent;
+  backdrop-filter: none;
+  padding: 0;
+}
+
+body.countdown-hud .countdown-card {
+  border-radius: 12px;
+  padding: 16px 20px 14px;
+  min-width: 0;
+}

@@ -3,6 +3,12 @@
 All notable changes to Capicorn, newest first. Full release notes for every tag live on
 the [releases page](https://github.com/rostaddotcc/capicorn/releases).
 
+## v0.23.0
+- **The timer is now a small always-on-top countdown**, not a full-window overlay. The main window shrinks to a clean timer card (decorations off), so the desktop stays usable — open menus, hover tooltips, arrange the shot — while it counts down.
+- **The floating widget comes back after a capture**, and closing the editor now leaves the widget on top instead of quitting the app. Closing the widget brings the editor back, so the app can never become unreachable.
+- **Removed Pin** — it never worked reliably and its purpose was unclear; gone from the UI and the backend (with its tests).
+- `set_hud_mode` generalises the window-shrink used by both the scrolling card and the timer.
+
 ## v0.22.4
 - **Scrolling capture's Done button now works.** The card used to sit inside a full-size **click-through** window, so a click on Done passed straight through to the app below, and after scrolling another window Enter went there too. A new `set_scroll_mode` shrinks the main window to the card (min-size lifted while active), turns click-through off and keeps the card on top — Done is clickable and Enter is delivered. The app chrome is hidden while the card owns the window; the old Alt "mouse control" step is gone.
 

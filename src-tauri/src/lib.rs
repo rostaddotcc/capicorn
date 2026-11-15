@@ -20,7 +20,7 @@ pub fn run() {
         // Close-guard state: force-quit flag, editor-dirty flag, minimize-to-tray
         // preference. All three are driven by the commands in `windows.rs`.
         .manage(windows::AppFlags::new())
-        .manage(windows::ScrollWindowSize::default())
+        .manage(windows::HudWindowSize::default())
         // Global-hotkey state: the live backend, the granted combos and the
         // handles that keep the portal session alive (see `hotkeys.rs`).
         .manage(hotkeys::HotkeyState::new())
@@ -54,7 +54,7 @@ pub fn run() {
             windows::is_dirty,
             windows::set_minimize_to_tray,
             windows::get_minimize_to_tray,
-            windows::set_scroll_mode,
+            windows::set_hud_mode,
             // Floating quick-capture widget
             windows::open_widget,
             windows::close_widget,
@@ -68,8 +68,6 @@ pub fn run() {
             ocr::ocr_image,
             ocr::ocr_available,
             ocr::ocr_languages,
-            windows::pin_image,
-            windows::close_pins,
             // Wave 8: screen recording (ScreenCast portal -> PipeWire -> ffmpeg)
             recording::start_recording,
             recording::stop_recording,

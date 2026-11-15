@@ -64,7 +64,7 @@ impl Region {
 }
 
 /// Message for platforms without a capture backend yet.
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
 const NOT_SUPPORTED: &str = "recording not supported on this platform yet";
 
 /// How long `start_recording` waits for the first captured frame before it calls
@@ -225,6 +225,14 @@ pub async fn start_recording(
                 .to_string(),
         );
     }
+    #[cfg(target_os = "windows")]
+    if !win::ffmpeg_available() {
+        return Err(
+            "ffmpeg is required for screen recording but was not found on PATH. \
+             Install it from https://ffmpeg.org and add it to PATH, then try again."
+                .to_string(),
+        );
+    }
 
     if dir.trim().is_empty() {
         return Err("no save directory given".to_string());
@@ -242,7 +250,11 @@ pub async fn start_recording(
     {
         imp::start(app, state, format, out_path, region).await
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "windows")]
+    {
+        win::start(app, state, format, out_path, region)
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
     {
         let _ = (app, state, format, out_path, region);
         Err(NOT_SUPPORTED.to_string())
@@ -1615,6 +1627,112 @@ mod imp {
             assert!(bytes.len() > 200, "gif is {} bytes; ffmpeg said: {log}", bytes.len());
             assert_eq!(&bytes[..6], b"GIF89a", "not a GIF: {log}");
         }
+    }
+}
+
+/// Windows screen recording via ffmpeg's `gdigrab` input.
+///
+/// gdigrab reads the desktop straight from GDI — no portal, no extra permission.
+/// The only requirement is `ffmpeg` on PATH. The capture thread drives ffmpeg's
+/// stdin: writing `q` stops it gracefully so the container is finalised, and the
+/// shared `finish()` waits on the same done-channel it uses for the Linux path.
+#[cfg(target_os = "windows")]
+mod win {
+    use super::*;
+    use std::io::Write as _;
+    use std::process::{Command, Stdio};
+    use tauri::Emitter as _;
+
+    const FRAMERATE: u32 = 30;
+
+    /// Is an `ffmpeg` binary reachable on PATH?
+    pub fn ffmpeg_available() -> bool {
+        Command::new("ffmpeg")
+            .arg("-version")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
+
+    /// Spawn ffmpeg gdigrab and hand the recorder the active-slot state.
+    pub fn start(
+        app: tauri::AppHandle,
+        state: State<'_, RecordingState>,
+        format: RecordingFormat,
+        out_path: PathBuf,
+        region: Option<Region>,
+    ) -> Result<(), String> {
+        let mut cmd = Command::new("ffmpeg");
+        cmd.args(["-hide_banner", "-loglevel", "error", "-y"]);
+        cmd.args(["-f", "gdigrab", "-framerate", &FRAMERATE.to_string()]);
+        if let Some(r) = region {
+            cmd.args(["-offset_x", &r.left.to_string()]);
+            cmd.args(["-offset_y", &r.top.to_string()]);
+            cmd.args(["-video_size", &format!("{}x{}", r.width, r.height)]);
+        }
+        cmd.args(["-i", "desktop"]);
+        match format {
+            RecordingFormat::Mp4 => {
+                cmd.args(["-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p"]);
+            }
+            RecordingFormat::Gif => {
+                // Palette pass keeps GIFs from banding; 12 fps keeps them sane.
+                cmd.args([
+                    "-vf",
+                    "fps=12,split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse",
+                ]);
+            }
+        }
+        cmd.arg(&out_path);
+        cmd.stdin(Stdio::piped());
+        cmd.stdout(Stdio::null());
+        cmd.stderr(Stdio::null());
+
+        let mut child = cmd.spawn().map_err(|e| {
+            format!("could not start ffmpeg (install ffmpeg and add it to PATH): {e}")
+        })?;
+        let mut stdin = child.stdin.take();
+
+        let stop = Arc::new(AtomicBool::new(false));
+        let stop_flag = stop.clone();
+        let (done_tx, done) = mpsc::channel();
+
+        let join = std::thread::spawn(move || {
+            while !stop_flag.load(Ordering::Relaxed) {
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            if let Some(mut si) = stdin.take() {
+                let _ = si.write_all(b"q");
+                let _ = si.flush();
+            }
+            let _ = child.wait();
+            let _ = done_tx.send(());
+        });
+
+        let active = Active {
+            stop,
+            join: Some(join),
+            done,
+            out_path,
+        };
+        if let Err(mut a) = state.begin(active) {
+            a.stop.store(true, Ordering::Relaxed);
+            if let Some(h) = a.join.take() {
+                let _ = h.join();
+            }
+            return Err("a recording is already in progress".to_string());
+        }
+
+        let _ = app.emit(
+            "recording-state",
+            RecordingStateEvent {
+                recording: true,
+                path: None,
+            },
+        );
+        Ok(())
     }
 }
 

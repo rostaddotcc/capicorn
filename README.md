@@ -7,9 +7,9 @@ Capicorn is a clean-room, cross-platform reimplementation of the Snagit workflow
 spirit of the ArtCraft project (open-source clones of proprietary creative tools).
 
 > Status: **alpha.** Linux (Wayland/X11) is the primary, most complete target. A
-> Windows build is produced by CI (screenshots, editor, export, clipboard, tray).
-> Recording, scrolling capture and global hotkeys are Linux-only for now (Wayland
-> portal); Windows recording follows.
+> Windows build is produced by CI with the same feature set (screenshots, editor,
+> export, clipboard, tray, recording via ffmpeg `gdigrab`). Scrolling capture and
+> global hotkeys are Linux-only for now (Wayland portal).
 
 ## Why
 
@@ -47,7 +47,7 @@ share* flow in one lightweight app. Capicorn fills that gap.
 | Editor (annotations, blur, shadows, fonts) | ✅ | ✅ |
 | Copy / save (PNG / JPEG / WebP) | ✅ | ✅ |
 | System tray + floating widget | ✅ | ✅ |
-| Screen recording | ✅ ScreenCast portal (needs `ffmpeg`) | 🔜 Windows.Graphics.Capture |
+| Screen recording | ✅ ScreenCast portal (needs `ffmpeg`) | ✅ ffmpeg `gdigrab` (needs `ffmpeg`) |
 | Scrolling capture | ✅ | 🔜 |
 | Global hotkeys | ✅ GlobalShortcuts portal | 🔜 |
 

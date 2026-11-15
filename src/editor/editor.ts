@@ -23,10 +23,12 @@ import {
 import {
   ACCENT,
   BlurRegion,
+  MAGNIFY_ZOOM,
   MAX_STROKE_WIDTH,
   MIN_STROKE_WIDTH,
   STROKE_WIDTH,
   blurRegionPreview,
+  clampMagnifyZoom,
   type Box,
   type ImageInfo,
   type Point,
@@ -38,6 +40,7 @@ import {
   fitBox,
   isBlurRegion,
   isHighlighterRegion,
+  isMagnifyRegion,
   isSpotlightRegion,
 } from "./tools";
 
@@ -56,6 +59,7 @@ export type ToolId =
   | "callout"
   | "step"
   | "bucket"
+  | "magnify"
   | "brush";
 
 const TOOL_IDS: readonly ToolId[] = [
@@ -70,6 +74,7 @@ const TOOL_IDS: readonly ToolId[] = [
   "callout",
   "step",
   "bucket",
+  "magnify",
   "brush",
 ];
 
@@ -174,6 +179,7 @@ export interface ToolSizeRange {
  * actually changes what you draw, so a single slider drives all of them:
  * brush→stroke width, arrow/rect→stroke width, text→font size,
  * blur→radius, step→badge diameter, callout→caption size,
+ * spotlight/highlighter→outline thickness, magnify→zoom.
  * Tools with no meaningful size (select, crop, bucket) report null.
  */
 const TOOL_SIZE_RANGES: Record<ToolId, ToolSizeRange | null> = {
@@ -188,6 +194,7 @@ const TOOL_SIZE_RANGES: Record<ToolId, ToolSizeRange | null> = {
   callout: { min: MIN_CALLOUT_FONT_SIZE, max: MAX_CALLOUT_FONT_SIZE, step: 1 },
   step: { min: MIN_STEP_SIZE, max: MAX_STEP_SIZE, step: 1 },
   bucket: null,
+  magnify: { min: 1.5, max: 10, step: 0.5 },
   brush: { min: MIN_BRUSH_WIDTH, max: MAX_BRUSH_WIDTH, step: 1 },
 };
 
@@ -210,7 +217,13 @@ interface HistoryEntry {
 const isToolId = (value: string): value is ToolId =>
   (TOOL_IDS as readonly string[]).includes(value);
 
-/** Objects that are swapped for pixels on export instead of being drawn. */
+/**
+ * Objects that are swapped for pixels on export instead of being drawn.
+ *
+ * Magnify lenses are deliberately NOT effects: they paint their own live
+ * pixels in `_render`, so `toCanvasElement` exports exactly what the canvas
+ * shows — no separate export pass, no chance of the two drifting apart.
+ */
 const isEffectRegion = (object: fabric.FabricObject): boolean =>
   isBlurRegion(object) ||
   isSpotlightRegion(object) ||
@@ -274,6 +287,8 @@ export class Editor {
   private calloutFontSize = DEFAULT_CALLOUT_FONT_SIZE;
   /** Outline thickness for NEW spotlight / highlighter regions. */
   private regionThickness = DEFAULT_REGION_THICKNESS;
+  /** Magnification for NEW magnify lenses. */
+  private magnifyZoom = MAGNIFY_ZOOM;
   /** Drop shadow applied to NEW arrow/rect/text/callout/step annotations. */
   private shadow: ShadowStyle = { ...DEFAULT_SHADOW };
 
@@ -327,6 +342,9 @@ export class Editor {
       stepSize: () => this.stepSize,
       calloutFontSize: () => this.calloutFontSize,
       regionThickness: () => this.regionThickness,
+      magnifyZoom: () => this.magnifyZoom,
+      sourceImage: () => this.magnifySource(),
+      imageOrigin: () => this.magnifyOrigin(),
       shadow: () => this.getShadow(),
     };
 
@@ -746,6 +764,8 @@ export class Editor {
       case "spotlight":
       case "highlighter":
         return this.regionThickness;
+      case "magnify":
+        return this.magnifyZoom;
       default:
         return 0;
     }
@@ -791,6 +811,14 @@ export class Editor {
         if (changed) this.notify();
         return;
       }
+      case "magnify": {
+        const zoom = clampMagnifyZoom(value);
+        const changed = this.magnifyZoom !== zoom;
+        this.magnifyZoom = zoom;
+        if (this.retuneLensSelection()) return;
+        if (changed) this.notify();
+        return;
+      }
       default:
         return;
     }
@@ -813,6 +841,23 @@ export class Editor {
         strokeUniform: true,
       });
       region.dirty = true;
+    }
+    this.commit();
+    this.canvas.requestRenderAll();
+    return true;
+  }
+
+  /**
+   * Apply the active zoom to selected lenses. A lens paints its own pixels, so
+   * a new `zoom` shows up on the very next frame — the slider is live.
+   */
+  private retuneLensSelection(): boolean {
+    if (this.restoring) return false;
+    const targets = this.canvas.getActiveObjects().filter(isMagnifyRegion);
+    if (!targets.length) return false;
+    for (const lens of targets) {
+      lens.zoom = this.magnifyZoom;
+      lens.dirty = true;
     }
     this.commit();
     this.canvas.requestRenderAll();
@@ -1252,6 +1297,47 @@ export class Editor {
     };
   }
 
+  /* --------------------------------------------------------------- magnify */
+
+  /**
+   * The screenshot layer a magnify lens samples. It is the FabricImage's own
+   * element (an <img> for a fresh capture, a canvas after a resize), i.e. the
+   * pixels at native resolution; the object's scale only affects how the
+   * canvas displays them.
+   */
+  private magnifySource(): HTMLImageElement | HTMLCanvasElement | null {
+    const element = this.image?.getElement() ?? null;
+    if (!element || element instanceof HTMLVideoElement) return null;
+    return element;
+  }
+
+  /** Top-left corner of the screenshot, in canvas (scene) coordinates. */
+  private magnifyOrigin(): { left: number; top: number } {
+    const box = this.imageBox();
+    return { left: box.left, top: box.top };
+  }
+
+  /**
+   * Re-attach the screenshot to every lens. `source` and `background` are
+   * deliberately not serialized (a lens in the undo JSON must not carry a
+   * multi-megabyte image), so a restored or re-laid-out lens has to be handed
+   * the current layer and placement again — otherwise it would only draw its
+   * frame. Called on load/undo/zoom/resize, like `refreshBlurPreviews`.
+   */
+  private refreshMagnifySources(): void {
+    const lenses = this.canvas.getObjects().filter(isMagnifyRegion);
+    if (!lenses.length) return;
+    const source = this.magnifySource();
+    const origin = this.magnifyOrigin();
+    const scaleX = this.image?.scaleX ?? 1;
+    const scaleY = this.image?.scaleY ?? 1;
+    for (const lens of lenses) {
+      lens.source = source;
+      lens.background = { left: origin.left, top: origin.top, scaleX, scaleY };
+      lens.dirty = true;
+    }
+  }
+
   /** Typography the text tool should use for a new caption. */
   private textStyle(): TextStyle {
     return {
@@ -1553,6 +1639,8 @@ export class Editor {
 
     // Zoom/resize rescales the image, so the blur snapshots must be resampled.
     this.refreshBlurPreviews();
+    // The screenshot moved/scaled: lens placements follow it.
+    this.refreshMagnifySources();
     this.canvas.requestRenderAll();
   }
 
@@ -1576,6 +1664,8 @@ export class Editor {
     // drawn this drag only has a real size once the drag ends, so the snapshot
     // must be taken here rather than when the (1×1) region was first added.
     this.refreshBlurPreviews();
+    // Lenses sample the screenshot by reference; keep that reference current.
+    this.refreshMagnifySources();
     const json = this.canvas.toObject() as Record<string, unknown>;
     const crop = this.cropBox ? { ...this.cropBox } : null;
     const natural = { ...this.natural };
@@ -1668,6 +1758,8 @@ export class Editor {
     this.syncBrushCursor();
     // Fresh regions from JSON carry no snapshot; rebuild them from the capture.
     this.refreshBlurPreviews();
+    // Restored lenses carry no pixels either: hand them the screenshot again.
+    this.refreshMagnifySources();
     canvas.requestRenderAll();
     this.restoring = false;
     this.notify();

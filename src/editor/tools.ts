@@ -187,6 +187,197 @@ export const isHighlighterRegion = (
   object: fabric.FabricObject,
 ): object is HighlighterRegion => object instanceof HighlighterRegion;
 
+/* ---------------------------------------------------------------- magnify */
+
+/** Default magnification of a fresh lens. */
+export const MAGNIFY_ZOOM = 3;
+const MIN_MAGNIFY_ZOOM = 1.5;
+const MAX_MAGNIFY_ZOOM = 10;
+
+export const clampMagnifyZoom = (value: number): number => {
+  if (typeof value !== "number" || !Number.isFinite(value)) return MAGNIFY_ZOOM;
+  const clamped = Math.min(Math.max(value, MIN_MAGNIFY_ZOOM), MAX_MAGNIFY_ZOOM);
+  return Math.round(clamped * 10) / 10;
+};
+
+/**
+ * Where the screenshot sits in the canvas, as the lens needs it: its top-left
+ * corner plus the scene px each source px covers (the background image's own
+ * display scale). Written by Editor whenever the layout changes.
+ */
+export interface LensBackground {
+  left: number;
+  top: number;
+  scaleX: number;
+  scaleY: number;
+}
+
+/** Pixel size of a decoded capture (canvas after a resize, image before). */
+const sourceSize = (
+  source: HTMLImageElement | HTMLCanvasElement,
+): { width: number; height: number } => {
+  if (source instanceof HTMLImageElement) {
+    return {
+      width: source.naturalWidth || source.width,
+      height: source.naturalHeight || source.height,
+    };
+  }
+  return { width: source.width, height: source.height };
+};
+
+/** Rounded-rectangle path (no ctx.roundRect: WebKitGTK support is patchy). */
+const lensPath = (
+  context: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  radius: number,
+): void => {
+  const r = Math.max(0, Math.min(radius, Math.min(width, height) / 2));
+  context.moveTo(x + r, y);
+  context.lineTo(x + width - r, y);
+  context.arcTo(x + width, y, x + width, y + r, r);
+  context.lineTo(x + width, y + height - r);
+  context.arcTo(x + width, y + height, x + width - r, y + height, r);
+  context.lineTo(x + r, y + height);
+  context.arcTo(x, y + height, x, y + height - r, r);
+  context.lineTo(x, y + r);
+  context.arcTo(x, y, x + r, y, r);
+  context.closePath();
+};
+
+/**
+ * Magnify lens: a live magnifier, not a tinted placeholder.
+ *
+ * `_render` paints the real screenshot pixels under the box, blown up `zoom`x
+ * about the lens centre and clipped to a rounded aperture, so the enlargement
+ * is visible while editing. `flatten()` runs this very same `_render` on the
+ * ink layer, so the export needs no separate magnify pass and cannot drift
+ * from the canvas.
+ *
+ * The pixels come from the background screenshot (never from annotations), so
+ * the lens always magnifies the capture itself.
+ */
+export class MagnifyRegion extends fabric.Rect {
+  static type = "capicorn_magnify";
+  /** Zoom survives undo/redo; the pixels do not (Editor re-attaches them). */
+  static customProperties = ["zoom"];
+  zoom = MAGNIFY_ZOOM;
+  /**
+   * The screenshot layer to sample. Not serialized — the Editor re-attaches it
+   * (see `refreshMagnifySources`) after load / undo / resize.
+   */
+  source: HTMLImageElement | HTMLCanvasElement | null = null;
+  /** Placement of that layer in scene coords; set together with `source`. */
+  background: LensBackground | null = null;
+
+  constructor(options: RectOptions & { zoom?: number } = {}) {
+    const { zoom, ...rect } = options;
+    super(rect as RectOptions);
+    if (typeof zoom === "number" && Number.isFinite(zoom)) {
+      this.zoom = clampMagnifyZoom(zoom);
+    }
+    // Every pixel is painted in _render; a cache would clip the lens to its
+    // own bounding box (and freeze the zoom).
+    this.objectCaching = false;
+  }
+
+  _render(ctx: CanvasRenderingContext2D): void {
+    const w = this.width ?? 0;
+    const h = this.height ?? 0;
+    if (w <= 0 || h <= 0) return;
+    // fabric's `_render` context is centred on the object, so draw about
+    // -w/2,-h/2 (drawing at 0,0 shifts the whole lens by half its size).
+    const left = -w / 2;
+    const top = -h / 2;
+    const radius = this.rx ? Math.min(this.rx, Math.min(w, h) / 2) : Math.min(w, h) * 0.12;
+    const zoom = clampMagnifyZoom(this.zoom);
+    const source = this.source;
+    const natural = source ? sourceSize(source) : null;
+
+    ctx.save();
+    ctx.beginPath();
+    lensPath(ctx, left, top, w, h, radius);
+    ctx.clip();
+
+    if (!source || !natural || natural.width <= 0 || natural.height <= 0) {
+      // Nothing decoded yet (or a restored lens whose source is still being
+      // re-attached): a light tint keeps the aperture visible.
+      ctx.fillStyle = "rgba(12, 16, 24, 0.28)";
+      ctx.fillRect(left, top, w, h);
+    } else {
+      // Where the lens centre lands in the screenshot's pixel grid. The pixel
+      // under the centre must stay under the centre after the blow-up, and
+      // one source px must cover `zoom` × its on-screen size — so the
+      // destination rect is expressed in the lens' own (pre-scale) space,
+      // where the object's scale and the image's display scale cancel out.
+      const centre = this.getCenterPoint();
+      const place = this.background ?? { left: 0, top: 0, scaleX: 1, scaleY: 1 };
+      const lensScaleX = Math.abs(this.scaleX) || 1;
+      const lensScaleY = Math.abs(this.scaleY) || 1;
+      const imageScaleX = place.scaleX || 1;
+      const imageScaleY = place.scaleY || 1;
+
+      const dx = -(centre.x - place.left) / lensScaleX;
+      const dy = -(centre.y - place.top) / lensScaleY;
+      // At 1:1 (image drawn at its natural size, lens unscaled) dw/dh are the
+      // source's natural size, which is the common case.
+      const dw = (natural.width * imageScaleX) / lensScaleX;
+      const dh = (natural.height * imageScaleY) / lensScaleY;
+
+      ctx.scale(zoom, zoom);
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = "high";
+      ctx.drawImage(source, dx, dy, dw, dh);
+    }
+
+    ctx.restore();
+
+    // Chrome: drawn UNSCALED on top of the blown-up pixels.
+    const border = Math.max(1, Math.min(3, this.strokeWidth || 1.5));
+    ctx.save();
+    ctx.beginPath();
+    lensPath(ctx, left, top, w, h, radius);
+    ctx.lineWidth = border;
+    const ink = typeof this.stroke === "string" && this.stroke !== "transparent"
+      ? this.stroke
+      : ACCENT;
+    ctx.strokeStyle = ink;
+    ctx.stroke();
+
+    const label = `${zoom % 1 === 0 ? zoom.toFixed(0) : zoom.toFixed(1)}×`;
+    const shortest = Math.min(w, h);
+    const fontSize = Math.max(
+      9,
+      Math.min(20, Math.round(shortest * 0.16), Math.round(w * 0.3)),
+    );
+    ctx.font = `600 ${fontSize}px ${FONT_STACK}`;
+    ctx.textBaseline = "middle";
+    ctx.textAlign = "left";
+    const padding = Math.max(3, Math.round(fontSize * 0.34));
+    const badgeWidth = ctx.measureText(label).width + padding * 2;
+    const badgeHeight = fontSize + padding * 1.6;
+    const inset = border + 3;
+    if (badgeWidth + inset * 2 <= w && badgeHeight + inset * 2 <= h) {
+      const badgeX = left + inset;
+      const badgeY = top + inset;
+      ctx.beginPath();
+      lensPath(ctx, badgeX, badgeY, badgeWidth, badgeHeight, badgeHeight / 2);
+      ctx.fillStyle = "rgba(12, 16, 24, 0.82)";
+      ctx.fill();
+      ctx.fillStyle = "#ffffff";
+      ctx.fillText(label, badgeX + padding, badgeY + badgeHeight / 2 + 0.5);
+    }
+    ctx.restore();
+  }
+}
+fabric.classRegistry.setClass(MagnifyRegion, "capicorn_magnify");
+
+export const isMagnifyRegion = (
+  object: fabric.FabricObject,
+): object is MagnifyRegion => object instanceof MagnifyRegion;
+
 /** The source screenshot as the canvas currently holds it. */
 export interface ImageInfo {
   /** Original capture data URL (flood-fill samples its pixels). */
@@ -263,6 +454,12 @@ export interface ToolHost {
   calloutFontSize(): number;
   /** Outline thickness for new spotlight/highlighter regions, in scene px. */
   regionThickness(): number;
+  /** Magnification for NEW magnify lenses (1.5..10). */
+  magnifyZoom(): number;
+  /** The screenshot layer the canvas draws, sampled by magnify lenses. */
+  sourceImage(): HTMLImageElement | HTMLCanvasElement | null;
+  /** Top-left corner of that screenshot, in canvas (scene) coordinates. */
+  imageOrigin(): { left: number; top: number };
   /** Drop shadow applied to NEW arrow/rect/text/callout/step annotations. */
   shadow(): ShadowStyle;
 }
@@ -593,6 +790,43 @@ class HighlighterTool extends RegionTool<HighlighterRegion> {
       evented: false,
       objectCaching: false,
     });
+  }
+}
+
+class MagnifyTool extends RegionTool<MagnifyRegion> {
+  readonly id: ToolId = "magnify";
+  readonly cursor = "zoom-in";
+
+  protected createRegion(point: Point): MagnifyRegion {
+    const origin = this.host.imageOrigin();
+    const info = this.host.imageInfo();
+    const lens = new MagnifyRegion({
+      left: point.x,
+      top: point.y,
+      width: 1,
+      height: 1,
+      originX: "left",
+      originY: "top",
+      zoom: this.host.magnifyZoom(),
+      // The aperture is painted entirely by MagnifyRegion._render: no fill, and
+      // the thin border uses the active ink colour.
+      fill: "transparent",
+      stroke: this.host.color(),
+      strokeWidth: 1.6,
+      strokeUniform: true,
+      selectable: false,
+      evented: false,
+      objectCaching: false,
+    });
+    // Live pixels: the capture itself, plus where it currently sits.
+    lens.source = this.host.sourceImage();
+    lens.background = {
+      left: origin.left,
+      top: origin.top,
+      scaleX: info?.scaleX ?? 1,
+      scaleY: info?.scaleY ?? 1,
+    };
+    return lens;
   }
 }
 
@@ -1578,6 +1812,8 @@ export const createTool = (id: ToolId, host: ToolHost): Tool => {
       return new SpotlightTool(host);
     case "highlighter":
       return new HighlighterTool(host);
+    case "magnify":
+      return new MagnifyTool(host);
     case "callout":
       return new CalloutTool(host);
     case "text":

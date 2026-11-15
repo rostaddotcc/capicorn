@@ -5,6 +5,7 @@ import { listen } from "@tauri-apps/api/event";
 import { Editor, type ToolId } from "../editor/editor";
 import { cropDataUrl, selectRegion, type Box } from "./region";
 import {
+  DEFAULT_INTERVAL,
   DEFAULT_PATTERN,
   SettingsPanel,
   applyTheme,
@@ -25,9 +26,9 @@ import {
 
 type CaptureResult = { dataUrl: string; width: number; height: number };
 type StatusKind = "info" | "success" | "error" | "recording";
-type CaptureMode = "full" | "region" | "window" | "monitor" | "scrolling";
-/** Recording modes: the whole screen via the OS picker, or a dragged region. */
-type RecMode = "full" | "region";
+type CaptureMode = "full" | "region" | "window" | "monitor" | "scrolling" | "interval";
+/** Recording modes: the whole screen via the OS picker, a dragged region, or one window. */
+type RecMode = "full" | "region" | "window";
 
 /** Modes that hand the choice to the OS portal picker. */
 const PICKER_MODES = ["window", "monitor"] as const;
@@ -43,6 +44,7 @@ const CAPTURE_READY: Record<CaptureMode, string> = {
   window: "Opening the window picker…",
   monitor: "Opening the screen picker…",
   scrolling: "Preparing scrolling capture…",
+  interval: "Starting interval capture…",
 };
 
 /** What the countdown overlay calls the pending grab. */
@@ -52,6 +54,7 @@ const CAPTURE_HINT: Record<CaptureMode, string> = {
   window: "Window",
   monitor: "Screen",
   scrolling: "Scrolling capture",
+  interval: "Interval capture",
 };
 
 /** Portal dismissals and denials arrive as plain errors — read them as cancels. */
@@ -100,7 +103,8 @@ type ShellToolId =
   | "bucket"
   | "spotlight"
   | "highlighter"
-  | "callout";
+  | "callout"
+  | "magnify";
 
 /** Wave 5 blur tuning. Optional so the shell builds against either editor revision. */
 type BlurMode = "gaussian" | "pixelate" | "blackout";
@@ -172,6 +176,9 @@ const ICONS = {
   ),
   scrolling: icon(
     `<rect x="2.6" y="2.6" width="10.8" height="10.8" rx="1.6"/><path d="M8 4.9v6.2M5.9 6.9 8 4.8l2.1 2.1M10.1 9.1 8 11.2 5.9 9.1"/>`,
+  ),
+  interval: icon(
+    `<circle cx="8" cy="8.6" r="5.1"/><path d="M8 5.9v2.7l1.8 1.3"/><path d="M6.3 1.8h3.4M8 1.8v1.7"/>`,
   ),
   check: icon(`<path d="M3 8.6 6.4 12l6.6-7.6"/>`, 14, 2.1),
   undo: icon(`<path d="M6.2 4.2 3.4 7l2.8 2.8"/><path d="M3.6 7h5.2a3.6 3.6 0 0 1 0 7.2H6.4"/>`),
@@ -294,6 +301,14 @@ const TOOLS: ReadonlyArray<{ id: ShellToolId; label: string; hint: string; icon:
     hint: "Numbered callout steps (S)",
     icon: icon(`<circle cx="8" cy="8" r="5.5"/><path d="M7.1 6.3 8.2 5.5v5M6.6 10.5h3.2"/>`),
   },
+  {
+    id: "magnify",
+    label: "Magnify",
+    hint: "Zoom lens over a detail — the slider sets the zoom (M)",
+    icon: icon(
+      `<circle cx="7.1" cy="7.1" r="3.7"/><path d="M9.9 9.9 13.4 13.4"/><path d="M5.5 7.1h3.2M7.1 5.5v3.2"/>`,
+    ),
+  },
 ];
 
 const COLORS: ReadonlyArray<{ name: string; hex: string }> = [
@@ -372,6 +387,11 @@ const PROPS: Record<string, { hint: string; groups: ReadonlyArray<PropGroup>; st
     hint: "Click to place a speech bubble, then type the note.",
     groups: ["color", "font", "stroke", "shadow"],
     strokeLabel: "Outline",
+  },
+  magnify: {
+    hint: "Drag over a detail to zoom it — the slider sets the zoom.",
+    groups: ["color", "stroke"],
+    strokeLabel: "Lens border",
   },
 };
 
@@ -473,12 +493,16 @@ const readMode = (): CaptureMode => {
   return stored === "region" ||
     stored === "window" ||
     stored === "monitor" ||
-    stored === "scrolling"
+    stored === "scrolling" ||
+    stored === "interval"
     ? stored
     : "full";
 };
 
-const readRecMode = (): RecMode => (readStore(REC_MODE_KEY) === "region" ? "region" : "full");
+const readRecMode = (): RecMode => {
+  const stored = readStore(REC_MODE_KEY);
+  return stored === "region" || stored === "window" ? stored : "full";
+};
 
 const readColor = (): string => {
   const stored = readStore(INK_KEY) ?? "";
@@ -720,6 +744,7 @@ export function mountApp(root: HTMLElement): void {
             <span class="rec-scope" id="rec-scope" hidden>Region</span>
             <span class="rec-timer" id="rec-timer" role="timer" aria-label="Recording time">00:00</span>
             <span class="rec-format" id="rec-format">MP4</span>
+            <button type="button" class="rec-pause" id="rec-pause" title="Pause the recording" aria-pressed="false">Pause</button>
             <button type="button" class="rec-stop" id="rec-stop" title="Stop the recording and save it">Stop</button>
           </div>
         </div>
@@ -765,6 +790,12 @@ export function mountApp(root: HTMLElement): void {
               <span class="menu-check">${ICONS.check}</span>
               <span class="menu-key-space" aria-hidden="true"></span>
             </button>
+            <button type="button" class="menu-item" role="menuitemradio" data-mode="interval" aria-checked="false" title="Take a screenshot every N seconds, then build a timelapse">
+              <span class="menu-icon">${ICONS.interval}</span>
+              <span class="menu-label">Interval</span>
+              <span class="menu-check">${ICONS.check}</span>
+              <span class="menu-key-space" aria-hidden="true"></span>
+            </button>
             <div class="menu-sep" role="separator" aria-hidden="true"></div>
             <button type="button" class="menu-item" role="menuitem" data-rec-mode="full" title="Record the whole screen (system picker)">
               <span class="menu-icon menu-icon-rec">${ICONS.record}</span>
@@ -775,6 +806,12 @@ export function mountApp(root: HTMLElement): void {
             <button type="button" class="menu-item" role="menuitem" data-rec-mode="region" title="Drag a rectangle, then record only that area">
               <span class="menu-icon menu-icon-rec">${ICONS.record}</span>
               <span class="menu-label">Record region</span>
+              <span class="menu-check"></span>
+              <span class="menu-key-space" aria-hidden="true"></span>
+            </button>
+            <button type="button" class="menu-item" role="menuitem" data-rec-mode="window" title="Pick one window and record only that window">
+              <span class="menu-icon menu-icon-rec">${ICONS.record}</span>
+              <span class="menu-label">Record window</span>
               <span class="menu-check"></span>
               <span class="menu-key-space" aria-hidden="true"></span>
             </button>
@@ -1082,7 +1119,7 @@ export function mountApp(root: HTMLElement): void {
             <div><dt><kbd>Ctrl</kbd> + <kbd>C</kbd></dt><dd>Copy to clipboard</dd></div>
             <div><dt><kbd>Ctrl</kbd> + <kbd>V</kbd></dt><dd>Paste an image to annotate</dd></div>
             <div><dt><kbd>Ctrl</kbd> + scroll</dt><dd>Zoom in / out</dd></div>
-            <div><dt><kbd>V</kbd> <kbd>R</kbd> <kbd>A</kbd> <kbd>T</kbd> <kbd>B</kbd> <kbd>P</kbd> <kbd>H</kbd> <kbd>S</kbd> <kbd>E</kbd> <kbd>K</kbd></dt><dd>Tool shortcuts</dd></div>
+            <div><dt><kbd>V</kbd> <kbd>R</kbd> <kbd>A</kbd> <kbd>T</kbd> <kbd>B</kbd> <kbd>P</kbd> <kbd>H</kbd> <kbd>S</kbd> <kbd>M</kbd> <kbd>E</kbd> <kbd>K</kbd></dt><dd>Tool shortcuts</dd></div>
             <div><dt><kbd>Ctrl</kbd> + <kbd>S</kbd></dt><dd>Save</dd></div>
             <div><dt><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>S</kbd></dt><dd>Save As…</dd></div>
             <div><dt><kbd>Ctrl</kbd> + <kbd>,</kbd></dt><dd>Settings</dd></div>
@@ -1149,6 +1186,7 @@ export function mountApp(root: HTMLElement): void {
   const recTimerEl = $<HTMLSpanElement>("#rec-timer");
   const recFormatEl = $<HTMLSpanElement>("#rec-format");
   const recStopBtn = $<HTMLButtonElement>("#rec-stop");
+  const recPauseBtn = $<HTMLButtonElement>("#rec-pause");
   const undoBtn = $<HTMLButtonElement>("#undo");
   const redoBtn = $<HTMLButtonElement>("#redo");
   const copyBtn = $<HTMLButtonElement>("#copy");
@@ -1276,6 +1314,9 @@ export function mountApp(root: HTMLElement): void {
   let recTick = 0;
   let recStarting = false;
   let recStopping = false;
+  /** Pause is a backend stop of the frames; the pill only freezes its clock. */
+  let recPaused = false;
+  let recPausedAt = 0;
   /** Format the running take was started with (the setting can change mid-take). */
   let recFormatUsed: RecFormat | null = null;
   /** Which mode the primary Record button starts (persisted). */
@@ -1983,6 +2024,12 @@ export function mountApp(root: HTMLElement): void {
         aria: "Start a scrolling capture",
         announce: "Scrolling capture: press Capture, drag a region, then scroll it yourself.",
       },
+      interval: {
+        short: "Interval",
+        title: "Interval capture — a screenshot every few seconds, then a timelapse",
+        aria: "Start interval capture",
+        announce: "Interval capture: press Capture to start the loop, then Stop when you have enough shots.",
+      },
     };
     const copy = labels[next];
     modeLabelEl.textContent = copy.short;
@@ -1999,7 +2046,9 @@ export function mountApp(root: HTMLElement): void {
       setStatus(
         next === "region"
           ? "Recording mode: region — drag the area to record."
-          : "Recording mode: full screen — the system picker asks which screen to record.",
+          : next === "window"
+            ? "Recording mode: window — the system picker asks which window to record."
+            : "Recording mode: full screen — the system picker asks which screen to record.",
       );
     }
   }
@@ -2025,27 +2074,43 @@ export function mountApp(root: HTMLElement): void {
 
   function paintRecTimer(): void {
     if (!recording) return;
-    recTimerEl.textContent = elapsedLabel(Date.now() - recStartedAt);
+    // Paused takes keep the clock frozen at the moment Pause was pressed.
+    const now = recPaused && recPausedAt ? recPausedAt : Date.now();
+    recTimerEl.textContent = elapsedLabel(now - recStartedAt);
+  }
+
+  /** Pill shows Pause while live and Resume while paused; the dot stops pulsing. */
+  function paintRecPaused(): void {
+    recPillEl.classList.toggle("is-paused", recPaused);
+    recPauseBtn.textContent = recPaused ? "Resume" : "Pause";
+    recPauseBtn.setAttribute("aria-pressed", String(recPaused));
+    recPauseBtn.title = recPaused ? "Resume the recording" : "Pause the recording";
+    recTimerEl.setAttribute("aria-label", recPaused ? "Recording time, paused" : "Recording time");
+    paintRecTimer();
   }
 
   /** Show/hide the recording pill and lock the capture controls while a take runs. */
   function paintRecording(active: boolean): void {
     recPillEl.hidden = !active;
     recScopeEl.hidden = !(active && recRegionUsed !== null);
-    recScopeEl.textContent = "Region";
+    recScopeEl.textContent = recRegionUsed ? "Region" : "";
     recFormatEl.textContent = recFormatLabel(recFormatUsed ?? settings.recFormat);
+    recPauseBtn.hidden = !active;
     captureBtn.disabled = active || busy;
     caretBtn.disabled = active || busy;
     if (active) {
       setMenuOpen(false);
+      paintRecPaused();
     }
   }
 
   function beginRecording(): void {
     if (!recording) recording = true;
     if (!recStartedAt) recStartedAt = Date.now();
+    recPaused = false;
+    recPausedAt = 0;
     window.clearInterval(recTick);
-    paintRecTimer();
+    paintRecPaused();
     recTick = window.setInterval(paintRecTimer, 500);
     paintRecording(true);
   }
@@ -2053,12 +2118,33 @@ export function mountApp(root: HTMLElement): void {
   function endRecording(): void {
     recording = false;
     recStartedAt = 0;
+    recPaused = false;
+    recPausedAt = 0;
     recFormatUsed = null;
     recRegionUsed = null;
     window.clearInterval(recTick);
     recTick = 0;
     recTimerEl.textContent = "00:00";
     paintRecording(false);
+  }
+
+  /** Ask the backend to hold the frames (pause) or start them again (resume). */
+  async function toggleRecPause(): Promise<void> {
+    if (!recording || recStopping) return;
+    const next = !recPaused;
+    recPauseBtn.disabled = true;
+    try {
+      await invoke(next ? "pause_recording" : "resume_recording");
+    } catch (e) {
+      setStatus(`Could not ${next ? "pause" : "resume"} the recording: ${errText(e)}`, "error");
+      return;
+    } finally {
+      recPauseBtn.disabled = false;
+    }
+    recPaused = next;
+    recPausedAt = next ? Date.now() : 0;
+    paintRecPaused();
+    setStatus(next ? "Recording paused" : "Recording resumed", next ? "info" : "recording");
   }
 
   /** Filename the backend writes: Capicorn-<date>-<time>.<mp4|gif>. */
@@ -2131,14 +2217,23 @@ export function mountApp(root: HTMLElement): void {
         setStatus(
           `Starting ${recFormatLabel(settings.recFormat)} region recording — ${region.width} × ${region.height}…`,
         );
+      } else if (next === "window") {
+        setStatus(`Starting ${recFormatLabel(settings.recFormat)} window recording — choose a window…`);
       } else {
         setStatus(`Starting ${recFormatLabel(settings.recFormat)} recording — choose a screen…`);
       }
 
+      // Audio is always sent in full: the backend decides which halves it can
+      // honour, and null means "no microphone" rather than "unset".
+      const audio = { mic: settings.mic || null, system: settings.systemAudio };
       const args: Record<string, unknown> = {
         format: settings.recFormat,
         dir,
         filename: recordingFilename(),
+        audio,
+        // Fullscreen and region takes capture a monitor; window mode asks the
+        // portal for one window instead.
+        source: next === "window" ? "window" : "monitor",
       };
       // Full screen omits `region` entirely so the backend runs its OS picker.
       if (region) args.region = region;
@@ -2495,6 +2590,242 @@ export function mountApp(root: HTMLElement): void {
     }
   }
 
+  /* ------------------------------------------------------- interval capture */
+
+  /**
+   * One live interval loop. `seq` is the zero-padded shot counter the filename
+   * carries, so the shots of a run sort in capture order on disk.
+   */
+  type IntervalRun = {
+    stop: boolean;
+    shots: number;
+    seq: number;
+    startedAt: number;
+    dir: string;
+    every: number;
+    timelapse: boolean;
+  };
+
+  /** The running loop, or null while no interval capture is live. */
+  let intervalRun: IntervalRun | null = null;
+
+  /** Join a folder and a file name without doubling or dropping the slash. */
+  const joinPath = (dir: string, name: string): string => `${dir.replace(/[\\/]+$/, "")}/${name}`;
+
+  const pad4 = (n: number): string => String(Math.max(0, Math.round(n))).padStart(4, "0");
+
+  /**
+   * Shot filename: the user's own pattern plus the sequence number. The fixed
+   * `Capicorn-interval-` prefix is what the timelapse glob matches, and a
+   * leading "Capicorn-" in the pattern is folded into it instead of repeated.
+   */
+  function intervalFilename(date: Date, seq: number): string {
+    const expanded = expandPattern(settings.filename, date).replace(/^capicorn[-_ ]/i, "");
+    return `Capicorn-interval-${expanded}-${pad4(seq)}.png`;
+  }
+
+  /** Tiny stateful card for the loop; the widget repaints from the shell. */
+  type IntervalCard = {
+    paint(leftMs: number, elapsedMs: number): void;
+    setShots(shots: number): void;
+    setWarning(message: string): void;
+    dispose(): void;
+  };
+
+  /**
+   * Float the interval card and take the window over (the shell shrinks it to
+   * a 300 × 190 HUD), so the desktop stays usable between shots and Stop stays
+   * clickable. Mirrors the scrolling card's shape, one size smaller.
+   */
+  function showIntervalCard(run: IntervalRun): IntervalCard {
+    const el = document.createElement("div");
+    el.className = "interval-card";
+    el.setAttribute("role", "dialog");
+    el.setAttribute("aria-label", "Interval capture");
+    el.innerHTML = `
+      <div class="interval-head">
+        <span class="interval-live" aria-hidden="true"></span>
+        <span class="interval-title">Interval capture</span>
+        <span class="interval-every">every ${run.every >= 60 ? `${Math.round(run.every / 60)} min` : `${run.every} s`}</span>
+      </div>
+      <div class="interval-live-row">
+        <div class="interval-clock">
+          <span class="interval-count" data-count role="timer" aria-label="Time to the next shot">${run.every}</span>
+          <span class="interval-clock-unit" aria-hidden="true">s</span>
+        </div>
+        <div class="interval-stats">
+          <span class="interval-stat"><span class="interval-num" data-shots>0</span><span class="interval-unit">shots</span></span>
+          <span class="interval-stat"><span class="interval-num" data-elapsed>00:00</span><span class="interval-unit">elapsed</span></span>
+        </div>
+      </div>
+      <p class="interval-warn" data-warn role="status" aria-live="polite" hidden></p>
+      <label class="interval-check">
+        <input type="checkbox" data-timelapse${run.timelapse ? " checked" : ""} />
+        <span>Make a timelapse when stopped</span>
+      </label>
+      <button type="button" class="scroll-btn scroll-btn-primary interval-stop" data-act="stop" title="Stop the loop (Ctrl+.)">Stop</button>
+    `;
+
+    document.querySelectorAll(".interval-card").forEach((old) => old.remove());
+    document.body.appendChild(el);
+
+    const countEl = el.querySelector<HTMLElement>("[data-count]");
+    const shotsEl = el.querySelector<HTMLElement>("[data-shots]");
+    const elapsedEl = el.querySelector<HTMLElement>("[data-elapsed]");
+    const warnEl = el.querySelector<HTMLElement>("[data-warn]");
+    const timelapseEl = el.querySelector<HTMLInputElement>("[data-timelapse]");
+    const stopEl = el.querySelector<HTMLButtonElement>("[data-act=\"stop\"]");
+
+    /** Remember the choice immediately, so a stop mid-wait still honours it. */
+    timelapseEl?.addEventListener("change", () => {
+      run.timelapse = timelapseEl.checked === true;
+    });
+
+    stopEl?.addEventListener("click", () => {
+      run.stop = true;
+      stopEl.disabled = true;
+      stopEl.textContent = "Stopping…";
+    });
+
+    return {
+      paint(leftMs, elapsedMs) {
+        if (countEl) countEl.textContent = String(Math.max(0, Math.ceil(leftMs / 1000)));
+        if (elapsedEl) elapsedEl.textContent = elapsedLabel(elapsedMs);
+      },
+      setShots(shots) {
+        if (shotsEl) shotsEl.textContent = String(shots);
+      },
+      setWarning(message) {
+        if (!warnEl) return;
+        warnEl.hidden = message === "";
+        warnEl.textContent = message;
+      },
+      dispose() {
+        el.remove();
+      },
+    };
+  }
+
+  /** Sleep out one interval, painting the countdown; Stop wakes it early. */
+  function waitInterval(run: IntervalRun, card: IntervalCard): Promise<void> {
+    const total = Math.max(1, Math.round(run.every)) * 1000;
+    return new Promise<void>((resolve) => {
+      const started = Date.now();
+      let timer = 0;
+      const tick = (): void => {
+        const left = Math.max(0, total - (Date.now() - started));
+        card.paint(left, Date.now() - run.startedAt);
+        if (run.stop || left === 0) {
+          window.clearInterval(timer);
+          resolve();
+        }
+      };
+      timer = window.setInterval(tick, 200);
+      tick();
+    });
+  }
+
+  /** One shot: grab the screen, then write it as PNG under the run's folder. */
+  async function captureIntervalShot(run: IntervalRun): Promise<string> {
+    const res = await invoke<CaptureResult>("capture_screenshot");
+    const filename = intervalFilename(new Date(), ++run.seq);
+    await invoke<string>("save_png_to_dir", { dataUrl: res.dataUrl, dir: run.dir, filename });
+    return filename;
+  }
+
+  /**
+   * Interval capture: no region, no fullscreen — the window becomes a 300 × 190
+   * HUD card that counts down and grabs the screen every `intervalSeconds` until
+   * Stop (the button or Ctrl+.). Every shot lands in the save folder; the
+   * optional timelapse is assembled by the backend when the loop ends.
+   */
+  async function runIntervalCapture(): Promise<void> {
+    if (intervalRun) {
+      setStatus("Interval capture is already running — press Stop in the card.");
+      return;
+    }
+    const dir = await ensureSaveDir();
+    if (!dir) {
+      setStatus("Pick a save folder before interval capture.", "error");
+      return;
+    }
+
+    const every = Math.min(3600, Math.max(1, Math.round(settings.intervalSeconds) || DEFAULT_INTERVAL));
+    const run: IntervalRun = {
+      stop: false,
+      shots: 0,
+      seq: 0,
+      startedAt: Date.now(),
+      dir,
+      every,
+      timelapse: false,
+    };
+    intervalRun = run;
+
+    const card = showIntervalCard(run);
+    document.body.classList.add("interval-hud");
+    await invoke("set_hud_mode", { enabled: true, width: 300, height: 190 }).catch(() => {
+      /* older backend: the card stays inside a normal window */
+    });
+    setStatus(`Interval capture — a shot every ${every} s. Stop ends the loop.`);
+
+    try {
+      while (!run.stop) {
+        await waitInterval(run, card);
+        if (run.stop) break;
+        try {
+          await captureIntervalShot(run);
+          run.shots += 1;
+          card.setShots(run.shots);
+          card.setWarning("");
+          setStatus(
+            `Interval capture — ${run.shots} shot${run.shots === 1 ? "" : "s"} saved to ${dir}`,
+            "success",
+          );
+        } catch (e) {
+          // A failed grab must not end the loop: the next tick simply tries again.
+          card.setWarning(`That shot failed: ${errText(e)}`);
+        }
+      }
+    } finally {
+      intervalRun = null;
+      document.body.classList.remove("interval-hud");
+      card.dispose();
+      await invoke("set_hud_mode", { enabled: false, width: 0, height: 0 }).catch(() => {
+        /* nothing to restore */
+      });
+    }
+
+    if (run.shots === 0) {
+      setStatus("Interval capture stopped before the first shot — nothing was saved.");
+      return;
+    }
+
+    setStatus(
+      `Interval capture stopped — ${run.shots} shot${run.shots === 1 ? "" : "s"} saved to ${dir}`,
+      "success",
+    );
+    if (!run.timelapse) return;
+
+    const out = joinPath(dir, `Capicorn-timelapse-${expandPattern("{date}-{time}")}.mp4`);
+    setStatus(`Building a timelapse from ${run.shots} shots…`);
+    try {
+      const saved = await invoke<string>("make_timelapse", {
+        dir,
+        pattern: "Capicorn-interval-*.png",
+        fps: 10,
+        out,
+      });
+      const path = typeof saved === "string" && saved.trim() ? saved.trim() : out;
+      setStatus(`Timelapse saved: ${path} (${run.shots} shots, 10 fps)`, "success");
+    } catch (e) {
+      setStatus(
+        `Timelapse failed: ${errText(e)} — the ${run.shots} shots are still in ${dir}`,
+        "error",
+      );
+    }
+  }
+
   /**
    * Window / monitor capture: the OS portal shows its own picker, so the only
    * things we own are the waiting status, the load and the auto-save.
@@ -2547,7 +2878,7 @@ export function mountApp(root: HTMLElement): void {
     }
     setBusy(true);
     try {
-      if (settings.timer > 0 && requested !== "scrolling") {
+      if (settings.timer > 0 && requested !== "scrolling" && requested !== "interval") {
         setStatus(`Capturing in ${settings.timer} s — Esc to cancel`);
         const proceed = await runCountdown(settings.timer, requested);
         if (!proceed) {
@@ -2570,6 +2901,10 @@ export function mountApp(root: HTMLElement): void {
       }
       if (requested === "scrolling") {
         await runScrollingCapture();
+        return;
+      }
+      if (requested === "interval") {
+        await runIntervalCapture();
         return;
       }
       if (isPickerMode(requested)) {
@@ -2839,6 +3174,7 @@ export function mountApp(root: HTMLElement): void {
     callout: "Outline",
     blur: "Blur radius",
     text: "Font size",
+    magnify: "Zoom",
   };
 
   const SIZE_NOTES: Record<string, string> = {
@@ -2846,12 +3182,14 @@ export function mountApp(root: HTMLElement): void {
     text: "8–200 px — new labels only.",
     blur: "Higher hides more — 2–60 px.",
     highlighter: "Marker thickness while swiping.",
+    magnify: "How far the lens zooms in (1.5–10×).",
   };
 
   let activeTool: ShellToolId = "select";
   let sizeRange: { min: number; max: number; step: number } | null = null;
 
-  const sizeUnit = (_id: ShellToolId): string => " px";
+  /** Magnify reads its slider as a zoom factor, every other tool as pixels. */
+  const sizeUnit = (id: ShellToolId): string => (id === "magnify" ? "×" : " px");
 
   const paintSliderFill = (input: HTMLInputElement, min: number, max: number): void => {
     const span = max - min || 1;
@@ -2908,7 +3246,7 @@ export function mountApp(root: HTMLElement): void {
     toolSizeLabel.textContent = label;
     toolSizeInput.setAttribute(
       "aria-label",
-      `${label} in pixels`,
+      unit === "×" ? `${label} factor` : `${label} in pixels`,
     );
     toolSizeInput.min = String(sizeRange.min);
     toolSizeInput.max = String(sizeRange.max);
@@ -3780,6 +4118,13 @@ export function mountApp(root: HTMLElement): void {
       const text = await invoke<string>("recording_diagnostics");
       await navigator.clipboard.writeText(text);
     },
+    // Tauri stays here: the panel itself is importable without it.
+    listAudioSources: async () => {
+      const raw = await invoke<Array<{ id: string; name: string }>>("list_audio_sources");
+      return Array.isArray(raw)
+        ? raw.map((src) => ({ id: String(src.id), name: String(src.name ?? src.id) }))
+        : [];
+    },
   });
 
   guardSaveBtn.addEventListener("click", () => void onGuardSave());
@@ -3795,6 +4140,7 @@ export function mountApp(root: HTMLElement): void {
 
   captureBtn.addEventListener("click", () => void runCapture());
   recStopBtn.addEventListener("click", () => void stopRecording());
+  recPauseBtn.addEventListener("click", () => void toggleRecPause());
   caretBtn.addEventListener("click", () => setMenuOpen(!captureMenu.isOpen()));
 
   /* ---------------------------------------------------------------- file menu */
@@ -3872,7 +4218,7 @@ export function mountApp(root: HTMLElement): void {
     item.addEventListener("click", () => {
       // Record entries now live in the same Capture menu.
       const recRaw = item.dataset.recMode;
-      if (recRaw === "full" || recRaw === "region") {
+      if (recRaw === "full" || recRaw === "region" || recRaw === "window") {
         setMenuOpen(false);
         setRecMode(recRaw, true);
         caretBtn.focus({ preventScroll: true });
@@ -3881,15 +4227,15 @@ export function mountApp(root: HTMLElement): void {
       }
       const raw = item.dataset.mode;
       const next: CaptureMode =
-        raw === "region" || raw === "window" || raw === "monitor" || raw === "scrolling"
+        raw === "region" || raw === "window" || raw === "monitor" || raw === "scrolling" || raw === "interval"
           ? raw
           : "full";
       setMode(next, true);
       setMenuOpen(false);
       caretBtn.focus({ preventScroll: true });
       // Flow modes start right away: scrolling opens the region overlay, the
-      // picker modes hand over to the OS dialog.
-      if (next === "scrolling" || isPickerMode(next)) void runCapture(next);
+      // picker modes hand over to the OS dialog, interval opens its HUD card.
+      if (next === "scrolling" || next === "interval" || isPickerMode(next)) void runCapture(next);
     });
   }
 
@@ -4144,6 +4490,7 @@ export function mountApp(root: HTMLElement): void {
         s: "step",
         e: "brush",
         k: "bucket",
+        m: "magnify",
       };
       const tool = toolShortcuts[ev.key.toLowerCase()];
       if (tool) {
@@ -4155,6 +4502,14 @@ export function mountApp(root: HTMLElement): void {
     if (typing || !(ev.ctrlKey || ev.metaKey) || ev.altKey) return;
 
     const key = ev.key.toLowerCase();
+    if (key === ".") {
+      // Ctrl+. ends a running interval capture (the Stop button does the same).
+      if (!intervalRun) return;
+      ev.preventDefault();
+      intervalRun.stop = true;
+      setStatus("Stopping interval capture…");
+      return;
+    }
     if (key === ",") {
       ev.preventDefault();
       panel?.open();

@@ -18,11 +18,25 @@
 //!
 //! Commands (registered in `lib.rs`, state managed there too):
 //!
-//! | command           | args (camelCase)             | returns               |
-//! |-------------------|------------------------------|-----------------------|
-//! | `start_recording` | `format` (`mp4`/`gif`), `dir`, `filename`, `region` (optional) | `void` — resolves once frames flow |
-//! | `stop_recording`  | —                            | output path (`string`) |
-//! | `is_recording`    | —                            | `bool`                |
+//! | command             | args (camelCase)             | returns               |
+//! |---------------------|------------------------------|-----------------------|
+//! | `start_recording`   | `format` (`mp4`/`gif`), `dir`, `filename`, `region` (optional), `audio` (optional), `source` (optional) | `void` — resolves once frames flow |
+//! | `stop_recording`    | —                            | output path (`string`) |
+//! | `is_recording`      | —                            | `bool`                |
+//! | `pause_recording`   | —                            | `void`                |
+//! | `resume_recording`  | —                            | `void`                |
+//! | `list_audio_sources`| —                            | `[{id, name}]` (empty, never an error) |
+//!
+//! `audio` names the microphone (a `list_audio_sources` id) and/or turns on the
+//! default output's monitor; the sources are mixed into one AAC track. GIF is
+//! silent by construction, so audio is dropped for it.
+//!
+//! `source` is `"monitor"` (default) or `"window"`: it only narrows what the
+//! portal's picker offers, the capture pipeline is identical for both.
+//!
+//! Pausing drops frames on the consumer side while keeping the portal session,
+//! the PipeWire stream and the ffmpeg child alive, so resuming writes into the
+//! same file. Paused time is not buffered — it simply has no frames.
 //!
 //! `region` selects a rectangle of the monitor ({left,top,width,height} in
 //! stream pixels). Every captured frame is cropped to it before it reaches
@@ -61,6 +75,181 @@ impl Region {
         }
         Ok(self)
     }
+}
+
+/// Which audio to capture alongside the screen.
+///
+/// `mic` is a device id from [`list_audio_sources`] (`None` or blank = no
+/// microphone); `system` records what the machine plays. Both may be on at once
+/// and are mixed into a single AAC track. GIF takes never carry audio.
+#[derive(Deserialize, Clone, Debug, Default)]
+pub struct AudioConfig {
+    pub mic: Option<String>,
+    pub system: bool,
+}
+
+impl AudioConfig {
+    /// The microphone device, ignoring the blank ids a settings dropdown emits.
+    fn mic_source(&self) -> Option<&str> {
+        self.mic
+            .as_deref()
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+    }
+
+    /// How many audio inputs this config opens (0, 1 or 2).
+    fn input_count(&self) -> usize {
+        usize::from(self.mic_source().is_some()) + usize::from(self.system)
+    }
+}
+
+/// One selectable recording input, as offered to the settings UI.
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+pub struct AudioSource {
+    /// The id to pass back in [`AudioConfig::mic`]: a PulseAudio source name on
+    /// Linux, a dshow device name on Windows.
+    pub id: String,
+    /// Human-readable label for the picker.
+    pub name: String,
+}
+
+/// Parse `pactl list short sources`: one `index\tname\tdriver\tspec\tstate`
+/// row per device.
+///
+/// The source *name* is the id (that is what `-f pulse -i` wants). Anything
+/// that is not such a row — a header, a blank line, output from a renamed tool
+/// — is skipped, so a missing `pactl` degrades to "no devices", never an error.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn parse_pactl_sources(text: &str) -> Vec<AudioSource> {
+    let mut out = Vec::new();
+    for line in text.lines() {
+        let mut fields = line.split('\t');
+        let index = fields.next().unwrap_or("").trim();
+        // A real row always starts with the numeric index; this also rejects the
+        // column header of `pactl list sources`.
+        if index.parse::<u32>().is_err() {
+            continue;
+        }
+        let Some(name) = fields.next().map(str::trim) else {
+            continue;
+        };
+        if name.is_empty() || name.starts_with('@') {
+            continue;
+        }
+        out.push(AudioSource {
+            id: name.to_string(),
+            name: humanise_source_name(name),
+        });
+    }
+    out
+}
+
+/// `alsa_output.pci-0000_00_1f.3.analog-stereo.monitor` -> "Monitor of Analog stereo".
+///
+/// PulseAudio ids are driver-prefixed, dotted and hyphenated; the last segment
+/// is the part a person recognises. Empty results fall back to a plain label.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn humanise_source_name(raw: &str) -> String {
+    let (base, monitor) = match raw.strip_suffix(".monitor") {
+        Some(base) => (base, true),
+        None => (raw, false),
+    };
+
+    let mut segments = base.split('.').filter(|s| !s.is_empty());
+    let first = segments.next().unwrap_or(base);
+    let last = segments.last().unwrap_or(first);
+
+    let pretty = last.replace(['-', '_'], " ");
+    let pretty = pretty.trim();
+    let pretty = if pretty.is_empty() { "Audio device" } else { pretty };
+    let mut chars = pretty.chars();
+    let capitalised = match chars.next() {
+        Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
+        None => String::new(),
+    };
+
+    if monitor {
+        format!("Monitor of {capitalised}")
+    } else {
+        capitalised
+    }
+}
+
+/// Parse ffmpeg's dshow listing: one `"Device Name" (audio)` per capture device.
+///
+/// ffmpeg prints this to stderr and exits non-zero on purpose, so only the text
+/// matters. Video devices (`(video)`) are ignored; the bare device name doubles
+/// as the id because dshow takes `audio=<name>`.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn parse_dshow_devices(text: &str) -> Vec<AudioSource> {
+    let mut out = Vec::new();
+    for line in text.lines() {
+        let Some(start) = line.find('"') else { continue };
+        let rest = &line[start + 1..];
+        let Some(end) = rest.find('"') else { continue };
+        let name = rest[..end].trim();
+        if name.is_empty() {
+            continue;
+        }
+        if !rest[end + 1..].trim_start().starts_with("(audio)") {
+            continue;
+        }
+        out.push(AudioSource {
+            id: name.to_string(),
+            name: name.to_string(),
+        });
+    }
+    out
+}
+
+/// Every audio input this machine can record from (empty when unknown).
+fn audio_sources() -> Vec<AudioSource> {
+    #[cfg(target_os = "linux")]
+    {
+        imp::audio_sources()
+    }
+    #[cfg(target_os = "windows")]
+    {
+        win::audio_sources()
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    {
+        Vec::new()
+    }
+}
+
+/// Output-side audio args, in the place where `-an` used to sit.
+///
+/// GIF has no audio track, so a GIF take is silent whatever was requested; one
+/// live source needs no filter and is mapped through; two or more (microphone +
+/// system) are mixed with `amix` so the container gets a single AAC stream.
+fn audio_output_args(format: RecordingFormat, inputs: usize) -> Vec<String> {
+    if format == RecordingFormat::Gif || inputs == 0 {
+        return vec!["-an".to_string()];
+    }
+
+    let mut args: Vec<String> = Vec::new();
+    if inputs > 1 {
+        let labels: String = (1..=inputs).map(|i| format!("[{i}:a]")).collect();
+        args.extend([
+            "-filter_complex".to_string(),
+            format!("{labels}amix=inputs={inputs}:duration=longest[aout]"),
+            "-map".to_string(),
+            "0:v".to_string(),
+            "-map".to_string(),
+            "[aout]".to_string(),
+        ]);
+    } else {
+        // Input 0 is the rawvideo stream, so the only audio input is input 1.
+        args.extend([
+            "-map".to_string(),
+            "0:v".to_string(),
+            "-map".to_string(),
+            "1:a".to_string(),
+        ]);
+    }
+    args.extend(["-c:a", "aac", "-b:a", "160k", "-shortest"].map(String::from));
+    args
 }
 
 /// Message for platforms without a capture backend yet.
@@ -158,6 +347,12 @@ struct Active {
 /// Managed recorder state (`.manage(RecordingState::new())` in `lib.rs`).
 pub struct RecordingState {
     inner: Mutex<Option<Active>>,
+    /// Set by `pause_recording`, cleared by `resume_recording`: the capture loop
+    /// keeps consuming buffers but writes none of them.
+    ///
+    /// Shared with the capture thread through an `Arc` so the frame callback can
+    /// poll it without touching the recorder mutex.
+    paused: Arc<AtomicBool>,
 }
 
 impl Default for RecordingState {
@@ -170,11 +365,25 @@ impl RecordingState {
     pub fn new() -> Self {
         Self {
             inner: Mutex::new(None),
+            paused: Arc::new(AtomicBool::new(false)),
         }
     }
 
     pub fn is_active(&self) -> bool {
         self.inner.lock().map(|slot| slot.is_some()).unwrap_or(false)
+    }
+
+    pub fn is_paused(&self) -> bool {
+        self.paused.load(Ordering::Relaxed)
+    }
+
+    fn set_paused(&self, paused: bool) {
+        self.paused.store(paused, Ordering::Relaxed);
+    }
+
+    /// Handle the capture thread polls for the pause gate.
+    fn pause_flag(&self) -> Arc<AtomicBool> {
+        self.paused.clone()
     }
 
     /// Claim the slot. On collision the caller gets its `Active` back so it can
@@ -201,6 +410,10 @@ impl RecordingState {
 /// Start a recording of the monitor — or of `region` within it — into
 /// `dir/filename`.
 ///
+/// `audio` adds a microphone and/or the default output's monitor; `source`
+/// narrows the portal picker to monitors (`"monitor"`, the default) or windows
+/// (`"window"`).
+///
 /// Resolves only once real frames are flowing into ffmpeg, so a denied/locked
 /// portal surfaces as a rejected promise instead of a silent "recording" badge.
 #[tauri::command]
@@ -211,9 +424,13 @@ pub async fn start_recording(
     dir: String,
     filename: String,
     region: Option<Region>,
+    audio: Option<AudioConfig>,
+    source: Option<String>,
 ) -> Result<(), String> {
     let format = RecordingFormat::parse(&format)?;
     let region = region.map(Region::validate).transpose()?;
+    // A GIF cannot carry audio: drop the request before any input is opened.
+    let audio = audio.filter(|_| format == RecordingFormat::Mp4);
 
     // Fail fast with a clear message before the portal picker opens: a missing
     // encoder is the most common "recording does nothing" cause.
@@ -246,17 +463,20 @@ pub async fn start_recording(
         .map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
     let out_path = dir.join(safe_filename(&filename, format));
 
+    // A fresh take always starts unpaused, even if the last one was left paused.
+    state.set_paused(false);
+
     #[cfg(target_os = "linux")]
     {
-        imp::start(app, state, format, out_path, region).await
+        imp::start(app, state, format, out_path, region, audio, source).await
     }
     #[cfg(target_os = "windows")]
     {
-        win::start(app, state, format, out_path, region)
+        win::start(app, state, format, out_path, region, audio, source)
     }
     #[cfg(not(any(target_os = "linux", target_os = "windows")))]
     {
-        let _ = (app, state, format, out_path, region);
+        let _ = (app, state, format, out_path, region, audio, source);
         Err(NOT_SUPPORTED.to_string())
     }
 }
@@ -294,6 +514,37 @@ pub fn is_recording(state: State<'_, RecordingState>) -> bool {
     state.is_active()
 }
 
+/// Stop writing frames without ending the take.
+///
+/// The portal session, the PipeWire stream and the ffmpeg child all stay alive,
+/// so [`resume_recording`] carries on into the same file. Nothing is buffered:
+/// frames that arrive while paused are dequeued and dropped, so the take simply
+/// has no frames for the paused interval.
+///
+/// Linux only: the Windows path hands the whole capture to ffmpeg's gdigrab, so
+/// there is no frame loop to gate and pausing is a no-op there.
+#[tauri::command]
+pub fn pause_recording(state: State<'_, RecordingState>) {
+    if state.is_active() {
+        state.set_paused(true);
+    }
+}
+
+/// Resume a paused take (a no-op when nothing is recording).
+#[tauri::command]
+pub fn resume_recording(state: State<'_, RecordingState>) {
+    state.set_paused(false);
+}
+
+/// Audio inputs that can be recorded from (microphones plus output monitors).
+///
+/// Never fails: a machine without `pactl`/dshow simply reports no devices, so
+/// the settings list can show "None" instead of an error dialog.
+#[tauri::command]
+pub fn list_audio_sources() -> Result<Vec<AudioSource>, String> {
+    Ok(audio_sources())
+}
+
 /// Signal stop, wait for the capture thread to finalise ffmpeg, then drop the
 /// portal session. Returns the output path even when stopping timed out, so the
 /// caller can still tell the user where the (possibly truncated) file is.
@@ -329,7 +580,10 @@ fn finish(mut active: Active) -> (String, Result<(), String>) {
 
 #[cfg(target_os = "linux")]
 mod imp {
-    use super::{RecordingFormat, Region, FIRST_FRAME_WAIT};
+    use super::{
+        audio_output_args, parse_pactl_sources, AudioConfig, AudioSource, RecordingFormat, Region,
+        FIRST_FRAME_WAIT,
+    };
     use std::cell::{Cell, RefCell};
     use std::future::Future;
     use std::io::{Cursor, Write};
@@ -527,18 +781,44 @@ mod imp {
             .unwrap_or(false)
     }
 
+    /// PulseAudio input args: the chosen microphone and/or the default sink's
+    /// monitor, one `-f pulse -i <source>` pair each.
+    ///
+    /// `@DEFAULT_MONITOR@` is PulseAudio's pseudo-source for "the monitor of the
+    /// current default sink", so switching output mid-take keeps working — a
+    /// pinned `<sink>.monitor` name would go silent after the switch.
+    fn audio_inputs(audio: &AudioConfig) -> Vec<String> {
+        let mut args = Vec::new();
+        if let Some(mic) = audio.mic_source() {
+            args.extend(["-f", "pulse", "-i", mic].map(String::from));
+        }
+        if audio.system {
+            args.extend(["-f", "pulse", "-i", "@DEFAULT_MONITOR@"].map(String::from));
+        }
+        args
+    }
+
     /// Complete argument list for the encoder child.
     ///
     /// MP4 is h264/yuv420p with a 2-pixel pad so an odd screen width can never make
     /// libx264 fail; GIF uses the single-pass palettegen/paletteuse recipe verified
     /// in `recording.md` §5 (two-pass would mean re-reading a temp file).
+    ///
+    /// Layout is always: the rawvideo stdin input first, then one input per
+    /// enabled audio source, then either `-an` or the audio mapping/mixing tail,
+    /// then the video codec args and finally the output path.
     fn ffmpeg_args(
         out: &Path,
         format: RecordingFormat,
         width: u32,
         height: u32,
         fps: &str,
+        audio: Option<&AudioConfig>,
     ) -> Vec<String> {
+        // A GIF has no audio track: never open the inputs, even when asked.
+        let audio = audio.filter(|_| format != RecordingFormat::Gif);
+        let inputs = audio.map(AudioConfig::input_count).unwrap_or(0);
+
         let mut args: Vec<String> = vec![
             "-y".into(),
             "-hide_banner".into(),
@@ -554,8 +834,14 @@ mod imp {
             fps.to_string(),
             "-i".into(),
             "-".into(),
-            "-an".into(),
         ];
+
+        // Audio inputs come after the video input, so `-map 0:v` is the screen
+        // and the audio streams are inputs 1..=inputs.
+        if let Some(audio) = audio {
+            args.extend(audio_inputs(audio));
+        }
+        args.extend(audio_output_args(format, inputs));
 
         match format {
             RecordingFormat::Mp4 => args.extend(
@@ -598,6 +884,7 @@ mod imp {
         width: u32,
         height: u32,
         fps: &str,
+        audio: Option<&AudioConfig>,
     ) -> Result<(Child, ChildStdin), String> {
         if width == 0 || height == 0 {
             return Err("the capture stream reported an empty frame size".to_string());
@@ -612,7 +899,7 @@ mod imp {
             .map_err(|e| format!("cannot open {}: {e}", log_path.to_string_lossy()))?;
 
         let mut child = Command::new(ffmpeg_program())
-            .args(ffmpeg_args(out, format, width, height, fps))
+            .args(ffmpeg_args(out, format, width, height, fps, audio))
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .stderr(Stdio::from(stderr))
@@ -642,6 +929,26 @@ mod imp {
                     return;
                 }
             }
+        }
+    }
+
+    // -- input devices ------------------------------------------------------
+
+    /// PulseAudio capture sources via `pactl`; empty when it is missing, the
+    /// server is down, or the output is not what we expect.
+    ///
+    /// `pactl` ships with PipeWire (pipewire-pulse) on KDE Wayland, which is the
+    /// target platform; a box without it just shows "None" in the settings.
+    pub(super) fn audio_sources() -> Vec<AudioSource> {
+        let output = Command::new("pactl")
+            .args(["list", "short", "sources"])
+            .stdin(Stdio::null())
+            .output();
+        match output {
+            Ok(out) if out.status.success() => {
+                parse_pactl_sources(&String::from_utf8_lossy(&out.stdout))
+            }
+            _ => Vec::new(),
         }
     }
 
@@ -762,9 +1069,23 @@ mod imp {
         session: ashpd::desktop::Session<Screencast>,
     }
 
-    /// Create the session, ask the user which monitor, wait for approval, and open
-    /// the PipeWire remote. The returned session must outlive the capture.
-    async fn open_portal() -> Result<PortalCapture, String> {
+    /// What the picker may offer, derived from the command's `source` argument.
+    ///
+    /// `"window"` restricts it to windows, `"monitor"` (the default when the
+    /// argument is missing) to monitors. An unrecognised value falls back to
+    /// monitors — never to a failed start — while `"any"`/`"both"` keeps the
+    /// combined picker.
+    fn source_type_for(source: Option<&str>) -> SourceType {
+        match source.map(str::trim).map(str::to_ascii_lowercase).as_deref() {
+            Some("window") | Some("windows") => SourceType::WINDOW,
+            Some("any") | Some("both") | Some("all") => SourceType::MONITOR | SourceType::WINDOW,
+            _ => SourceType::MONITOR,
+        }
+    }
+
+    /// Create the session, ask the user what to share, wait for approval, and
+    /// open the PipeWire remote. The returned session must outlive the capture.
+    async fn open_portal(sources: SourceType) -> Result<PortalCapture, String> {
         portal_log("open_portal: creating ScreenCast proxy");
         let proxy = portal_call(PORTAL_CALL_TIMEOUT, "ScreenCast portal", Screencast::new())
             .await
@@ -785,17 +1106,18 @@ mod imp {
             e
         })?;
 
-        // Offer both monitors and windows so the KDE picker's screen/window choice
-        // both work. Keep the SelectSources request alive until the cast starts —
+        // Offer only the requested kind (monitor by default, window when asked)
+        // so the picker cannot hand back a node type the user did not choose.
+        // Keep the SelectSources request alive until the cast starts —
         // dropping it early can race the portal's selection on KDE.
-        portal_log("open_portal: select_sources (MONITOR|WINDOW)");
+        portal_log(&format!("open_portal: select_sources ({sources:?})"));
         let _selection = portal_call(
             PORTAL_CALL_TIMEOUT,
             "SelectSources",
             proxy.select_sources(
                 &session,
                 SelectSourcesOptions::default()
-                    .set_sources(SourceType::MONITOR | SourceType::WINDOW)
+                    .set_sources(sources)
                     // The cursor is baked into the frame: right for mp4 and gif.
                     .set_cursor_mode(CursorMode::EMBEDDED)
                     .set_multiple(false)
@@ -891,6 +1213,12 @@ mod imp {
         out: PathBuf,
         log: PathBuf,
         format: RecordingFormat,
+        /// Audio inputs chosen at start; `None` records a silent take.
+        audio: Option<AudioConfig>,
+        /// Pause gate shared with the command side. While it is set the loop
+        /// keeps dequeuing buffers (the producer needs them back) but writes
+        /// none, so the file simply has no frames for that interval.
+        paused: Arc<AtomicBool>,
         /// Selected rectangle, constant for the whole take. `None` records the
         /// whole monitor exactly as before.
         region: Option<Region>,
@@ -901,6 +1229,9 @@ mod imp {
         /// Reused scratch for the cropped (and padded) rgb24 frame.
         cropped: Vec<u8>,
         spawned: bool,
+        /// True while the producer's frame size differs from the `-s` ffmpeg was
+        /// spawned with (a window that got resized); logged once per episode.
+        mismatched: bool,
     }
 
     /// Best-effort diagnostic log next to the recording, so a failed take can be
@@ -992,7 +1323,14 @@ mod imp {
             None => (size.width, size.height),
         };
 
-        match spawn_ffmpeg(&ud.out, ud.format, out_w, out_h, &fps) {
+        match spawn_ffmpeg(
+            &ud.out,
+            ud.format,
+            out_w,
+            out_h,
+            &fps,
+            ud.audio.as_ref(),
+        ) {
             Ok(pair) => {
                 *ud.child.borrow_mut() = Some(pair);
                 ud.out_size = (out_w, out_h);
@@ -1018,6 +1356,8 @@ mod imp {
         out: PathBuf,
         format: RecordingFormat,
         region: Option<Region>,
+        audio: Option<AudioConfig>,
+        paused: Arc<AtomicBool>,
         stop: Arc<AtomicBool>,
         started: mpsc::SyncSender<Result<(), String>>,
     ) -> Result<(), String> {
@@ -1054,7 +1394,12 @@ mod imp {
         };
         rec_log(
             &log_path,
-            &format!("capture start: node={node} size={}x{} region={region:?}", size.0, size.1),
+            &format!(
+                "capture start: node={node} size={}x{} region={region:?} audio_inputs={}",
+                size.0,
+                size.1,
+                audio.as_ref().map(AudioConfig::input_count).unwrap_or(0)
+            ),
         );
 
         let ud = Ud {
@@ -1067,12 +1412,15 @@ mod imp {
             out: out.clone(),
             log: log_path.clone(),
             format,
+            audio,
+            paused,
             region,
             // Filled in by `ensure_ffmpeg` once the negotiated size is known.
             out_size: (0, 0),
             buf: Vec::new(),
             cropped: Vec::new(),
             spawned: false,
+            mismatched: false,
         };
 
         let listener = stream
@@ -1128,12 +1476,42 @@ mod imp {
                     return;
                 }
 
+                // Paused: the buffer is taken and dropped (never queued, never
+                // written) so the stream, the portal session and ffmpeg all stay
+                // alive and resuming continues the same file. Nothing is
+                // buffered — the paused interval simply has no frames.
+                if ud.paused.load(Ordering::Relaxed) {
+                    return;
+                }
+
                 if !ud.spawned && !ensure_ffmpeg(ud) {
                     return;
                 }
 
                 let size = ud.fmt.size();
                 let (width, height) = (size.width as usize, size.height as usize);
+
+                // A window can be resized mid-take, and the rawvideo input has a
+                // fixed `-s`: writing a differently sized frame would shear the
+                // rest of the file. Drop those frames instead (the take freezes)
+                // until the size comes back. Region takes are immune — the crop
+                // is sized by the region, not the frame.
+                if ud.region.is_none()
+                    && ud.out_size != (size.width.max(0) as u32, size.height.max(0) as u32)
+                {
+                    if !ud.mismatched {
+                        rec_log(
+                            &ud.log,
+                            &format!(
+                                "frame size {}x{} no longer matches the {}x{} encoder input — dropping frames",
+                                size.width, size.height, ud.out_size.0, ud.out_size.1
+                            ),
+                        );
+                        ud.mismatched = true;
+                    }
+                    return;
+                }
+                ud.mismatched = false;
                 let Some((bpp, idx)) = pixfmt(ud.fmt.format()) else {
                     return;
                 };
@@ -1343,8 +1721,10 @@ mod imp {
         format: RecordingFormat,
         out_path: PathBuf,
         region: Option<Region>,
+        audio: Option<AudioConfig>,
+        source: Option<String>,
     ) -> Result<(), String> {
-        let portal = open_portal().await?;
+        let portal = open_portal(source_type_for(source.as_deref())).await?;
 
         if let Some(region) = region {
             eprintln!(
@@ -1352,19 +1732,40 @@ mod imp {
                 region.width, region.height, region.left, region.top
             );
         }
+        if let Some(audio) = audio.as_ref() {
+            if audio.input_count() > 0 {
+                eprintln!(
+                    "capicorn: recording {} audio source(s){}",
+                    audio.input_count(),
+                    if audio.system { " including system audio" } else { "" }
+                );
+            }
+        }
 
         let stop = Arc::new(AtomicBool::new(false));
+        // The pause flag lives in the managed state so the commands can flip it
+        // while the capture thread is inside the PipeWire loop.
+        let paused = state.pause_flag();
         let (started_tx, started_rx) = mpsc::sync_channel(1);
         let (done_tx, done_rx) = mpsc::channel();
 
         let thread = {
             let stop = stop.clone();
             let out = out_path.clone();
+            let paused = paused.clone();
             std::thread::Builder::new()
                 .name("capicorn-recording".to_string())
                 .spawn(move || {
                     let result = capture(
-                        portal.fd, portal.node, portal.size, out, format, region, stop,
+                        portal.fd,
+                        portal.node,
+                        portal.size,
+                        out,
+                        format,
+                        region,
+                        audio,
+                        paused,
+                        stop,
                         started_tx,
                     );
                     if let Err(err) = &result {
@@ -1560,7 +1961,14 @@ mod imp {
 
             // The frame layout the encoder is spawned with must match the crop
             // exactly, or every take would shear.
-            let args = ffmpeg_args(Path::new("/tmp/out.mp4"), RecordingFormat::Mp4, size.0, size.1, "30");
+            let args = ffmpeg_args(
+                Path::new("/tmp/out.mp4"),
+                RecordingFormat::Mp4,
+                size.0,
+                size.1,
+                "30",
+                None,
+            );
             assert!(args.contains(&"4x4".to_string()), "{args:?}");
         }
 
@@ -1582,7 +1990,14 @@ mod imp {
 
         #[test]
         fn mp4_args_encode_h264_at_the_negotiated_size() {
-            let args = ffmpeg_args(Path::new("/tmp/out.mp4"), RecordingFormat::Mp4, 1920, 1080, "30");
+            let args = ffmpeg_args(
+                Path::new("/tmp/out.mp4"),
+                RecordingFormat::Mp4,
+                1920,
+                1080,
+                "30",
+                None,
+            );
             assert!(args.contains(&"rawvideo".to_string()));
             assert!(args.contains(&"1920x1080".to_string()));
             assert!(args.contains(&"libx264".to_string()));
@@ -1592,7 +2007,14 @@ mod imp {
 
         #[test]
         fn gif_args_use_the_palette_recipe_and_a_downscale() {
-            let args = ffmpeg_args(Path::new("/tmp/out.gif"), RecordingFormat::Gif, 3840, 2160, "30");
+            let args = ffmpeg_args(
+                Path::new("/tmp/out.gif"),
+                RecordingFormat::Gif,
+                3840,
+                2160,
+                "30",
+                None,
+            );
             let graph = args
                 .iter()
                 .position(|a| a == "-vf")
@@ -1602,6 +2024,149 @@ mod imp {
             assert!(graph.contains("paletteuse"), "{graph}");
             assert!(graph.starts_with("fps=15"), "{graph}");
             assert!(graph.contains("scale=1280:"), "3840 wide is capped: {graph}");
+        }
+
+        // -- audio ----------------------------------------------------------
+
+        fn args_with_audio(format: RecordingFormat, audio: Option<AudioConfig>) -> Vec<String> {
+            ffmpeg_args(
+                Path::new("/tmp/capicorn-out.bin"),
+                format,
+                1280,
+                720,
+                "30",
+                audio.as_ref(),
+            )
+        }
+
+        fn has_pair(args: &[String], first: &str, second: &str) -> bool {
+            args.windows(2).any(|w| w[0] == first && w[1] == second)
+        }
+
+        #[test]
+        fn mp4_with_microphone_and_system_audio_mixes_two_pulse_inputs() {
+            let audio = AudioConfig {
+                mic: Some("alsa_input.usb-046d_HD_Pro_Webcam_C920.analog-stereo".to_string()),
+                system: true,
+            };
+            let args = args_with_audio(RecordingFormat::Mp4, Some(audio));
+
+            // One pulse input per source, both after the rawvideo input.
+            assert_eq!(
+                args.iter().filter(|a| a.as_str() == "pulse").count(),
+                2,
+                "{args:?}"
+            );
+            let video = args
+                .iter()
+                .position(|a| a == "-")
+                .expect("the rawvideo stdin input");
+            let mic = args
+                .iter()
+                .position(|a| a == "alsa_input.usb-046d_HD_Pro_Webcam_C920.analog-stereo")
+                .expect("the microphone is the first pulse source");
+            let system = args
+                .iter()
+                .position(|a| a == "@DEFAULT_MONITOR@")
+                .expect("system audio is the default sink's monitor");
+            assert!(video < mic && mic < system, "{args:?}");
+
+            let graph = args
+                .iter()
+                .position(|a| a == "-filter_complex")
+                .map(|i| args[i + 1].clone())
+                .expect("two sources are mixed with amix");
+            assert_eq!(graph, "[1:a][2:a]amix=inputs=2:duration=longest[aout]");
+            assert!(has_pair(&args, "-map", "0:v"), "{args:?}");
+            assert!(has_pair(&args, "-map", "[aout]"), "{args:?}");
+            assert!(has_pair(&args, "-c:a", "aac"), "{args:?}");
+            assert!(has_pair(&args, "-b:a", "160k"), "{args:?}");
+            assert!(args.contains(&"-shortest".to_string()), "{args:?}");
+            assert!(
+                !args.contains(&"-an".to_string()),
+                "a take with audio must not be muted: {args:?}"
+            );
+        }
+
+        #[test]
+        fn mp4_without_audio_stays_silent() {
+            let args = args_with_audio(RecordingFormat::Mp4, None);
+            assert!(args.contains(&"-an".to_string()), "{args:?}");
+            assert!(!args.contains(&"pulse".to_string()), "{args:?}");
+            assert!(!args.contains(&"aac".to_string()), "{args:?}");
+            assert!(!args.contains(&"-filter_complex".to_string()), "{args:?}");
+            assert!(!args.contains(&"-map".to_string()), "{args:?}");
+            assert!(!args.contains(&"-shortest".to_string()), "{args:?}");
+        }
+
+        #[test]
+        fn a_single_audio_source_is_mapped_without_a_filter() {
+            let audio = AudioConfig {
+                mic: Some("alsa_input.usb-mic".to_string()),
+                system: false,
+            };
+            let args = args_with_audio(RecordingFormat::Mp4, Some(audio));
+
+            assert_eq!(
+                args.iter().filter(|a| a.as_str() == "pulse").count(),
+                1,
+                "{args:?}"
+            );
+            assert!(!args.contains(&"-filter_complex".to_string()), "{args:?}");
+            assert!(has_pair(&args, "-map", "0:v"), "{args:?}");
+            assert!(has_pair(&args, "-map", "1:a"), "the only audio input: {args:?}");
+            assert!(has_pair(&args, "-c:a", "aac"), "{args:?}");
+            assert!(!args.contains(&"-an".to_string()), "{args:?}");
+        }
+
+        #[test]
+        fn a_blank_microphone_name_opens_no_input() {
+            let audio = AudioConfig {
+                mic: Some("   ".to_string()),
+                system: false,
+            };
+            let args = args_with_audio(RecordingFormat::Mp4, Some(audio));
+            assert!(!args.contains(&"pulse".to_string()), "{args:?}");
+            assert!(args.contains(&"-an".to_string()), "{args:?}");
+        }
+
+        #[test]
+        fn gif_drops_the_audio_inputs_even_when_asked() {
+            let audio = AudioConfig {
+                mic: Some("alsa_input.usb-mic".to_string()),
+                system: true,
+            };
+            let args = args_with_audio(RecordingFormat::Gif, Some(audio));
+
+            assert!(!args.contains(&"pulse".to_string()), "{args:?}");
+            assert!(!args.contains(&"@DEFAULT_MONITOR@".to_string()), "{args:?}");
+            assert!(!args.contains(&"aac".to_string()), "{args:?}");
+            assert!(!args.contains(&"-filter_complex".to_string()), "{args:?}");
+            assert!(args.contains(&"-an".to_string()), "GIF is silent: {args:?}");
+
+            // The palette recipe is untouched by the audio request.
+            let graph = args
+                .iter()
+                .position(|a| a == "-vf")
+                .map(|i| args[i + 1].clone())
+                .expect("gif has a filter graph");
+            assert!(graph.contains("palettegen"), "{graph}");
+        }
+
+        // -- portal source type ---------------------------------------------
+
+        #[test]
+        fn source_argument_restricts_the_picker() {
+            assert_eq!(source_type_for(None), SourceType::MONITOR);
+            assert_eq!(source_type_for(Some("monitor")), SourceType::MONITOR);
+            assert_eq!(source_type_for(Some(" Window ")), SourceType::WINDOW);
+            // Both kinds stay available when explicitly asked for.
+            assert_eq!(
+                source_type_for(Some("both")),
+                SourceType::MONITOR | SourceType::WINDOW
+            );
+            // An unknown value must never fail a start: monitors are the default.
+            assert_eq!(source_type_for(Some("webcam")), SourceType::MONITOR);
         }
 
         // -- real ffmpeg children: the exact runtime path -------------------
@@ -1632,7 +2197,7 @@ mod imp {
         /// Pipe 30 synthetic rgb24 frames through the real encoder child.
         fn encode_frames(out: &Path, format: RecordingFormat) -> Vec<u8> {
             let (child, mut stdin) =
-                spawn_ffmpeg(out, format, 64, 48, "30").expect("spawn ffmpeg");
+                spawn_ffmpeg(out, format, 64, 48, "30", None).expect("spawn ffmpeg");
             let mut frame = vec![0u8; 64 * 48 * 3];
             for i in 0..30u32 {
                 for (x, px) in frame.chunks_mut(3).enumerate() {
@@ -1715,6 +2280,47 @@ mod win {
             .unwrap_or(false)
     }
 
+    /// dshow device names for the requested audio inputs.
+    ///
+    /// The microphone id comes straight from `list_audio_sources` (the dshow
+    /// device name). Windows has no `@DEFAULT_MONITOR@`; system audio is captured
+    /// through the conventional loopback device that screen-recorder setups
+    /// install as a dshow source.
+    fn win_audio_devices(audio: Option<&AudioConfig>) -> Vec<String> {
+        let Some(audio) = audio else {
+            return Vec::new();
+        };
+        let mut devices = Vec::new();
+        if let Some(mic) = audio.mic_source() {
+            devices.push(mic.to_string());
+        }
+        if audio.system {
+            devices.push("virtual-audio-capturer".to_string());
+        }
+        devices
+    }
+
+    /// dshow audio capture devices, parsed from `ffmpeg -list_devices`.
+    pub fn audio_sources() -> Vec<AudioSource> {
+        let output = Command::new("ffmpeg")
+            .args([
+                "-hide_banner",
+                "-list_devices",
+                "true",
+                "-f",
+                "dshow",
+                "-i",
+                "dummy",
+            ])
+            .stdin(Stdio::null())
+            .output();
+        match output {
+            // ffmpeg always exits non-zero here: the listing is on stderr.
+            Ok(out) => parse_dshow_devices(&String::from_utf8_lossy(&out.stderr)),
+            Err(_) => Vec::new(),
+        }
+    }
+
     /// Spawn ffmpeg gdigrab and hand the recorder the active-slot state.
     pub fn start(
         app: tauri::AppHandle,
@@ -1722,7 +2328,13 @@ mod win {
         format: RecordingFormat,
         out_path: PathBuf,
         region: Option<Region>,
+        audio: Option<AudioConfig>,
+        source: Option<String>,
     ) -> Result<(), String> {
+        // gdigrab records the composited desktop, never an individual window,
+        // so `source` is accepted and ignored here.
+        let _ = source;
+
         let mut cmd = Command::new("ffmpeg");
         cmd.args(["-hide_banner", "-loglevel", "error", "-y"]);
         cmd.args(["-f", "gdigrab", "-framerate", &FRAMERATE.to_string()]);
@@ -1732,6 +2344,16 @@ mod win {
             cmd.args(["-video_size", &format!("{}x{}", r.width, r.height)]);
         }
         cmd.args(["-i", "desktop"]);
+
+        // Audio inputs follow the video input, exactly like the Linux path, so
+        // the shared `audio_output_args` mapping (`0:v` + the audio inputs) holds.
+        // GIF is silent by construction.
+        let audio = audio.filter(|_| format == RecordingFormat::Mp4);
+        let devices = win_audio_devices(audio.as_ref());
+        for device in &devices {
+            cmd.args(["-f", "dshow", "-i"]).arg(format!("audio={device}"));
+        }
+        cmd.args(audio_output_args(format, devices.len()));
         match format {
             RecordingFormat::Mp4 => {
                 cmd.args(["-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p"]);
@@ -1825,5 +2447,125 @@ mod tests {
         let state = RecordingState::new();
         assert!(!state.is_active());
         assert!(state.take().is_none());
+    }
+
+    #[test]
+    fn pause_flag_is_independent_of_the_active_slot() {
+        let state = RecordingState::new();
+        assert!(!state.is_paused(), "a fresh recorder is not paused");
+        state.set_paused(true);
+        assert!(state.is_paused());
+        state.set_paused(false);
+        assert!(!state.is_paused());
+        // Pausing never touches the slot itself.
+        assert!(!state.is_active());
+    }
+
+    // -- audio device parsing -------------------------------------------
+
+    #[test]
+    fn pactl_sources_are_parsed_and_named() {
+        let listing = "\
+47\talsa_output.pci-0000_00_1f.3.analog-stereo.monitor\tPipeWire\ts32le 2ch 48000Hz\tIDLE
+48\talsa_input.pci-0000_00_1f.3.analog-stereo\tPipeWire\ts32le 2ch 48000Hz\tSUSPENDED
+49\talsa_input.usb-046d_HD_Pro_Webcam_C920.analog-stereo\tPipeWire\ts32le 2ch 48000Hz\tIDLE
+";
+        let sources = parse_pactl_sources(listing);
+
+        assert_eq!(sources.len(), 3, "{sources:?}");
+        // The id is the PulseAudio source name: that is what `-f pulse -i` needs.
+        assert_eq!(
+            sources[0].id,
+            "alsa_output.pci-0000_00_1f.3.analog-stereo.monitor"
+        );
+        assert_eq!(sources[0].name, "Monitor of Analog stereo");
+        assert_eq!(sources[1].id, "alsa_input.pci-0000_00_1f.3.analog-stereo");
+        assert_eq!(sources[1].name, "Analog stereo");
+        assert_eq!(sources[2].name, "Analog stereo");
+    }
+
+    #[test]
+    fn garbage_pactl_output_yields_no_devices() {
+        assert!(parse_pactl_sources("").is_empty());
+        assert!(parse_pactl_sources("index\tname\tdriver\tspec\tstate\n").is_empty());
+        assert!(parse_pactl_sources("not\ta\tdevice row\n").is_empty());
+        assert!(parse_pactl_sources("7\t\n").is_empty());
+        // A pseudo-source cannot be handed to `-i` as a device.
+        assert!(parse_pactl_sources(
+            "3\t@DEFAULT_MONITOR@\tPipeWire\ts16le 2ch 44100Hz\tIDLE\n"
+        )
+        .is_empty());
+    }
+
+    #[test]
+    fn dshow_audio_devices_are_parsed_from_the_listing() {
+        let listing = "\
+[dshow @ 0000021c] \"Integrated Camera\" (video)
+[dshow @ 0000021c]   Alternative name \"@device_pnp_\\\\?\\usb#vid_04f2\"
+[dshow @ 0000021c] \"Microphone (Realtek(R) Audio)\" (audio)
+[dshow @ 0000021c]   Alternative name \"@device_cm_{33D9A762}\"
+[dshow @ 0000021c] \"Stereo Mix (Realtek(R) Audio)\" (audio)
+";
+        let sources = parse_dshow_devices(listing);
+        let names: Vec<&str> = sources.iter().map(|s| s.name.as_str()).collect();
+
+        assert_eq!(
+            names,
+            vec![
+                "Microphone (Realtek(R) Audio)",
+                "Stereo Mix (Realtek(R) Audio)"
+            ],
+            "{sources:?}"
+        );
+        // dshow takes `audio=<device name>`, so the name doubles as the id.
+        assert_eq!(sources[0].id, sources[0].name);
+    }
+
+    #[test]
+    fn dshow_listing_without_audio_devices_is_empty() {
+        assert!(parse_dshow_devices("").is_empty());
+        assert!(parse_dshow_devices("[dshow @ 1] \"Camera\" (video)\n").is_empty());
+        assert!(parse_dshow_devices("[dshow @ 1] Cannot open device dummy\n").is_empty());
+    }
+
+    #[test]
+    fn audio_config_deserializes_from_the_ui_payload() {
+        // The UI always sends the full object; a null microphone means "none".
+        let config: AudioConfig =
+            serde_json::from_str(r#"{"mic":null,"system":true}"#).expect("null mic is valid");
+        assert!(config.mic.is_none());
+        assert!(config.system);
+        assert_eq!(config.input_count(), 1);
+
+        let config: AudioConfig =
+            serde_json::from_str(r#"{"mic":"alsa_input.usb-mic","system":false}"#)
+                .expect("a device id is valid");
+        assert_eq!(config.mic_source(), Some("alsa_input.usb-mic"));
+        assert_eq!(config.input_count(), 1);
+
+        assert_eq!(AudioConfig::default().input_count(), 0);
+    }
+
+    #[test]
+    fn audio_source_serializes_as_id_and_name() {
+        let json = serde_json::to_value(AudioSource {
+            id: "alsa_input.usb-mic".to_string(),
+            name: "Usb mic".to_string(),
+        })
+        .expect("serialises");
+        assert_eq!(json["id"], "alsa_input.usb-mic");
+        assert_eq!(json["name"], "Usb mic");
+    }
+
+    #[test]
+    fn listing_audio_sources_never_fails() {
+        // This box (and CI) may have no `pactl` at all: the command must still
+        // answer with a list — empty rather than an error — so the UI can show
+        // "None" instead of a failure banner.
+        let sources = list_audio_sources().expect("listing audio sources must not fail");
+        for source in &sources {
+            assert!(!source.id.trim().is_empty(), "{source:?}");
+            assert!(!source.name.trim().is_empty(), "{source:?}");
+        }
     }
 }

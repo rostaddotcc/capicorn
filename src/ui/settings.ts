@@ -48,6 +48,9 @@ export const HOTKEY_REGION_KEY = "capicorn:hotkey-region";
 export const WIDGET_KEY = "capicorn:widget";
 export const REC_FORMAT_KEY = "capicorn:rec-format";
 export const AUTOSAVE_KEY = "capicorn:autosave";
+export const INTERVAL_KEY = "capicorn:interval";
+export const MIC_KEY = "capicorn:mic";
+export const SYSTEM_AUDIO_KEY = "capicorn:system-audio";
 
 export const DEFAULT_FORMAT: ExportFormat = "png";
 export const DEFAULT_REC_FORMAT: RecFormat = "mp4";
@@ -56,8 +59,16 @@ export const DEFAULT_TIMER = 0;
 export const DEFAULT_PATTERN = "Capicorn-{date}-{time}";
 export const DEFAULT_HOTKEY_FULL = "Print";
 export const DEFAULT_HOTKEY_REGION = "SHIFT+Print";
+/** Delay between shots in Interval capture mode. */
+export const DEFAULT_INTERVAL = 30;
+/** Microphone captured with a take; empty means no microphone. */
+export const DEFAULT_MIC = "";
+/** Whether the desktop's own sound is mixed into a take. */
+export const DEFAULT_SYSTEM_AUDIO = false;
 /** Delays offered in Settings → Capture. */
 export const TIMER_CHOICES: ReadonlyArray<number> = [0, 3, 5, 10];
+/** Shot intervals offered in Settings → Capture → Interval capture. */
+export const INTERVAL_CHOICES: ReadonlyArray<number> = [5, 10, 30, 60, 300];
 
 /** Action ids shared with the Rust hotkey backend. */
 export type HotkeyId = "capture-full" | "capture-region";
@@ -95,6 +106,12 @@ export interface ExportSettings {
   recFormat: RecFormat;
   /** Write every fresh capture to the save folder without asking. */
   autoSave: boolean;
+  /** Seconds between shots in Interval capture mode. */
+  intervalSeconds: number;
+  /** Microphone device id for recordings; empty is no microphone. */
+  mic: string;
+  /** Mix the desktop's own sound into recordings. */
+  systemAudio: boolean;
 }
 
 const store = (key: string): string | null => {
@@ -150,6 +167,7 @@ export function readExportSettings(): ExportSettings {
   const rawTimer = clampInt(store(TIMER_KEY), DEFAULT_TIMER, 0, 60);
   const rawPattern = store(FILENAME_KEY);
   const rawRec = store(REC_FORMAT_KEY) ?? "";
+  const rawInterval = clampInt(store(INTERVAL_KEY), DEFAULT_INTERVAL, 1, 3600);
   return {
     format: isExportFormat(rawFormat) ? rawFormat : DEFAULT_FORMAT,
     quality: clampInt(store(QUALITY_KEY), DEFAULT_QUALITY, 1, 100),
@@ -165,6 +183,10 @@ export function readExportSettings(): ExportSettings {
     recFormat: isRecFormat(rawRec) ? rawRec : DEFAULT_REC_FORMAT,
     // On unless explicitly turned off (Wave 11 default).
     autoSave: store(AUTOSAVE_KEY) !== "false",
+    // Same rule as the capture delay: only an offered interval is honoured.
+    intervalSeconds: INTERVAL_CHOICES.includes(rawInterval) ? rawInterval : DEFAULT_INTERVAL,
+    mic: (store(MIC_KEY) ?? DEFAULT_MIC).trim(),
+    systemAudio: store(SYSTEM_AUDIO_KEY) === "true",
   };
 }
 
@@ -182,6 +204,9 @@ export function saveExportSettings(settings: ExportSettings): void {
     localStorage.setItem(WIDGET_KEY, String(settings.widget));
     localStorage.setItem(REC_FORMAT_KEY, settings.recFormat);
     localStorage.setItem(AUTOSAVE_KEY, String(settings.autoSave));
+    localStorage.setItem(INTERVAL_KEY, String(settings.intervalSeconds));
+    localStorage.setItem(MIC_KEY, settings.mic);
+    localStorage.setItem(SYSTEM_AUDIO_KEY, String(settings.systemAudio));
   } catch {
     /* storage unavailable — the preferences just aren't remembered */
   }
@@ -253,6 +278,14 @@ export interface SettingsOptions {
   getHotkeyStatus(): HotkeyStatus | null;
   /** Copy recording diagnostics (portal + per-take logs) to the clipboard. */
   copyDiagnostics?(): Promise<void>;
+  /** Microphone devices the backend can record from (Tauri stays in the shell). */
+  listAudioSources?(): Promise<AudioSource[]>;
+}
+
+/** One microphone the recorder can capture. */
+export interface AudioSource {
+  id: string;
+  name: string;
 }
 
 const icon = (body: string, size = 16): string =>
@@ -298,8 +331,12 @@ export class SettingsPanel {
   private changeBtn!: HTMLButtonElement;
   private resetBtn!: HTMLButtonElement;
   private timerPills: HTMLButtonElement[] = [];
+  private intervalSelect!: HTMLSelectElement;
   private formatSelect!: HTMLSelectElement;
   private recFormatSelect!: HTMLSelectElement;
+  private micSelect!: HTMLSelectElement;
+  private micNote!: HTMLElement;
+  private systemSwitch!: HTMLButtonElement;
   private qualityField!: HTMLElement;
   private qualityInput!: HTMLInputElement;
   private qualityOut!: HTMLOutputElement;
@@ -334,6 +371,8 @@ export class SettingsPanel {
     const root = this.ensure();
     if (!root.hidden) return;
     this.lastFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    // Microphones come and go between openings — re-read them each time.
+    void this.loadMicSources();
     this.refresh();
     root.hidden = false;
     // Force a style pass so the entrance transition runs from its start state.
@@ -380,7 +419,18 @@ export class SettingsPanel {
 
     this.formatSelect.value = settings.format;
     this.recFormatSelect.value = settings.recFormat;
+    this.intervalSelect.value = String(settings.intervalSeconds);
     this.paintQuality(settings.format, settings.quality);
+
+    // Never fight the caret while the caret sits in the mic select.
+    if (document.activeElement !== this.micSelect) {
+      this.micSelect.value = settings.mic;
+    }
+    this.systemSwitch.classList.toggle("is-on", settings.systemAudio);
+    this.systemSwitch.setAttribute("aria-checked", String(settings.systemAudio));
+    this.systemSwitch.title = settings.systemAudio
+      ? "The desktop's own sound is mixed into recordings"
+      : "Recordings capture no desktop sound";
 
     // Never fight the caret while the pattern is being typed.
     if (document.activeElement !== this.nameInput) {
@@ -480,6 +530,58 @@ export class SettingsPanel {
       ${advice}`;
   }
 
+  /**
+   * Ask the shell for the microphone devices and paint them into the select.
+   * Devices come and go, so this runs again every time the panel opens; a
+   * backend without `list_audio_sources` simply leaves the None-only list.
+   */
+  private async loadMicSources(): Promise<void> {
+    const list = this.opts.listAudioSources;
+    if (!list) {
+      this.paintMicSources([], "Microphone selection is not available in this build.");
+      return;
+    }
+    try {
+      const raw: unknown = await list();
+      const sources: AudioSource[] = [];
+      const seen = new Set<string>();
+      for (const entry of Array.isArray(raw) ? raw : []) {
+        const src = (entry ?? {}) as { id?: unknown; name?: unknown };
+        const id = typeof src.id === "string" ? src.id.trim() : "";
+        if (!id || seen.has(id)) continue;
+        seen.add(id);
+        const name = typeof src.name === "string" && src.name.trim() ? src.name.trim() : id;
+        sources.push({ id, name });
+      }
+      this.paintMicSources(sources, "");
+    } catch (e) {
+      this.paintMicSources(
+        [],
+        `Could not list microphones: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+  }
+
+  /** Rebuild the microphone options, keeping the stored choice selectable. */
+  private paintMicSources(sources: ReadonlyArray<AudioSource>, note: string): void {
+    const current = this.opts.getSettings().mic;
+    const options = [`<option value="">None</option>`].concat(
+      sources.map((src) => `<option value="${esc(src.id)}">${esc(src.name)}</option>`),
+    );
+    // A remembered device that is unplugged right now stays visible, so the
+    // panel never silently switches the user to another microphone.
+    if (current && !sources.some((src) => src.id === current)) {
+      options.push(`<option value="${esc(current)}">${esc(current)} — not connected</option>`);
+    }
+    this.micSelect.innerHTML = options.join("");
+    this.micSelect.value = current;
+    this.micNote.textContent =
+      note ||
+      (sources.length
+        ? `${sources.length} microphone${sources.length === 1 ? "" : "s"} found — sound is mixed in beside the video.`
+        : "No microphone found — the take records video only.");
+  }
+
   private paintQuality(format: ExportFormat, quality: number): void {
     const lossy = format !== "png";
     this.qualityField.hidden = !lossy;
@@ -562,6 +664,41 @@ export class SettingsPanel {
                 (seconds) =>
                   `<button type="button" role="radio" data-timer="${seconds}" aria-checked="${seconds === 0}">${seconds === 0 ? "Off" : `${seconds} s`}</button>`,
               ).join("")}
+            </div>
+            <div class="field">
+              <label class="field-label" for="settings-interval">Interval capture</label>
+              <div class="select-wrap">
+                <select id="settings-interval" class="field-select">
+                  ${INTERVAL_CHOICES.map(
+                    (seconds) =>
+                      `<option value="${seconds}"${seconds === DEFAULT_INTERVAL ? " selected" : ""}>every ${seconds === 300 ? "5 min" : `${seconds} s`}</option>`,
+                  ).join("")}
+                </select>
+                <span class="select-arrow" aria-hidden="true">${ICONS.caret}</span>
+              </div>
+              <p class="token-hint">How often Interval capture takes a shot. Capture → Interval starts the loop; Stop ends it.</p>
+            </div>
+          </section>
+
+          <section class="setting" data-section="recording">
+            <h3 class="setting-title">Recording audio</h3>
+            <p class="setting-help">What a screen recording picks up. Changes apply to the next take.</p>
+            <div class="field">
+              <label class="field-label" for="settings-mic">Microphone</label>
+              <div class="select-wrap">
+                <select id="settings-mic" class="field-select">
+                  <option value="">None</option>
+                </select>
+                <span class="select-arrow" aria-hidden="true">${ICONS.caret}</span>
+              </div>
+              <p class="token-hint" id="settings-mic-note" role="status" aria-live="polite">Loading microphones…</p>
+            </div>
+            <div class="setting-row">
+              <div class="setting-row-text">
+                <span class="setting-label" id="system-audio-label">System audio</span>
+                <span class="setting-sub">Mix the desktop's own sound — app audio, videos — into the take.</span>
+              </div>
+              <button type="button" class="switch" id="settings-system-audio" role="switch" aria-checked="false" aria-labelledby="system-audio-label"><span class="switch-knob" aria-hidden="true"></span></button>
             </div>
           </section>
 
@@ -683,8 +820,12 @@ export class SettingsPanel {
     this.diagFeedback = root.querySelector<HTMLElement>("#settings-diag-feedback")!;
     this.segments = Array.from(root.querySelectorAll<HTMLButtonElement>("[data-theme-choice]"));
     this.timerPills = Array.from(root.querySelectorAll<HTMLButtonElement>("[data-timer]"));
+    this.intervalSelect = root.querySelector<HTMLSelectElement>("#settings-interval")!;
     this.formatSelect = root.querySelector<HTMLSelectElement>("#settings-format")!;
     this.recFormatSelect = root.querySelector<HTMLSelectElement>("#settings-rec-format")!;
+    this.micSelect = root.querySelector<HTMLSelectElement>("#settings-mic")!;
+    this.micNote = root.querySelector<HTMLElement>("#settings-mic-note")!;
+    this.systemSwitch = root.querySelector<HTMLButtonElement>("#settings-system-audio")!;
     this.qualityField = root.querySelector<HTMLElement>("#settings-quality-field")!;
     this.qualityInput = root.querySelector<HTMLInputElement>("#settings-quality")!;
     this.qualityOut = root.querySelector<HTMLOutputElement>("#settings-quality-out")!;
@@ -741,6 +882,24 @@ export class SettingsPanel {
     });
 
     this.hotkeyRegisterBtn.addEventListener("click", () => void this.register());
+
+    this.intervalSelect.addEventListener("change", () => {
+      const parsed = Number(this.intervalSelect.value);
+      const value = INTERVAL_CHOICES.includes(parsed) ? parsed : DEFAULT_INTERVAL;
+      this.opts.updateSettings({ intervalSeconds: value });
+      this.refresh();
+    });
+
+    this.micSelect.addEventListener("change", () => {
+      this.opts.updateSettings({ mic: this.micSelect.value });
+      this.refresh();
+    });
+
+    this.systemSwitch.addEventListener("click", () => {
+      const next = !this.opts.getSettings().systemAudio;
+      this.opts.updateSettings({ systemAudio: next });
+      this.refresh();
+    });
 
     this.diagBtn.addEventListener("click", () => void this.copyDiagnostics());
 

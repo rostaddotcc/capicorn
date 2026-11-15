@@ -60,3 +60,26 @@ POST `multipart/form-data` (`file` field) → trimmed response body = the link.
 - `cargo test --lib` green, `tsc --noEmit` 0, `pnpm build` green.
 - AppImage + deb + Windows `.exe`/`.msi` from CI, release v0.25.0 with notes.
 - Verified in Chromium: interval card, magnify lens, audio settings rows, record menu.
+
+## Wave 25b — user follow-ups (after the three tracks land)
+
+### Open an image (use Capicorn as a quick editor)
+- File → **Open…** + `Ctrl+O`, using `tauri-plugin-dialog` (`open({ multiple:false,
+  filters:[{name:'Images', extensions:['png','jpg','jpeg','webp','gif','bmp','avif']}] })`)
+  → read the file → `editor.load(dataUrl)` → status "Opened <name>".
+- Drag-and-drop and `Ctrl+V` already load an image; make the Open path share the same
+  helper so file name, dirty state and recents behave identically.
+- Recent list: an opened file should not be listed as a "capture"; add it as an "Open" entry.
+
+### Shadow control, usable by hand
+Replace the numeric `X offset` / `Y offset` inputs with:
+- **Angle** dial/slider 0–360° (the direction the shadow falls)
+- **Distance** 0–60 px
+- **Blur** 0–60 px
+- **Opacity** 2–100 %
+- **Colour** swatch (existing)
+- a **live preview tile** (a rounded box on a checker tile) that draws the shadow exactly as
+  it will look, driven by the same values.
+
+`offsetX = cos(angle) * distance`, `offsetY = sin(angle) * distance` — the stored
+`ShadowStyle` keeps offsetX/offsetY, so existing images and presets stay valid.

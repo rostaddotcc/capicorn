@@ -1823,6 +1823,190 @@ kbd {
   width: 0;
 }
 
+/* --------------------------------------------- interval capture: live card */
+/* Interval capture shrinks the window to this card (set_hud_mode), so the loop
+   runs while the desktop stays usable. Same shape as the scrolling card, one
+   size smaller: neutral chrome, the accent only on the countdown and Stop. */
+
+.interval-card {
+  position: fixed;
+  top: 18px;
+  right: 18px;
+  z-index: 12000;
+  width: min(300px, calc(100vw - 24px));
+  display: grid;
+  gap: 8px;
+  padding: 11px 12px 10px;
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  backdrop-filter: blur(14px) saturate(1.2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 18px 44px -22px rgba(18, 14, 34, 0.55), 0 2px 6px -2px rgba(18, 14, 34, 0.18);
+  color: var(--fg);
+  font-size: 12px;
+  overflow: hidden;
+  animation: scroll-card-in 180ms var(--ease);
+}
+
+.interval-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 2.5px;
+  background: var(--accent);
+}
+
+.interval-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.interval-live {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--accent-solid);
+  box-shadow: 0 0 0 0 var(--accent-ring);
+  animation: scroll-live-pulse 1.8s ease-out infinite;
+}
+
+.interval-title {
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.interval-every {
+  margin-left: auto;
+  flex: none;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-subtle);
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+}
+
+.interval-live-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.interval-clock {
+  display: flex;
+  align-items: baseline;
+  gap: 2px;
+  min-width: 74px;
+}
+
+.interval-count {
+  font-size: 34px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent-strong);
+}
+
+.interval-clock-unit {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fg-subtle);
+}
+
+.interval-stats {
+  margin-left: auto;
+  display: grid;
+  gap: 3px;
+  text-align: right;
+}
+
+.interval-stat {
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: 5px;
+}
+
+.interval-num {
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+
+.interval-unit {
+  font-size: 9.5px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--fg-subtle);
+}
+
+.interval-warn {
+  margin: 0;
+  padding: 5px 7px;
+  border-radius: 7px;
+  font-size: 10.5px;
+  line-height: 1.35;
+  color: var(--warning);
+  background: color-mix(in srgb, var(--warning) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--warning) 26%, transparent);
+  overflow-wrap: anywhere;
+}
+
+.interval-warn[hidden] {
+  display: none;
+}
+
+.interval-check {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11px;
+  color: var(--fg-muted);
+  cursor: pointer;
+  user-select: none;
+}
+
+.interval-check input {
+  flex: none;
+  width: 13px;
+  height: 13px;
+  margin: 0;
+  accent-color: var(--accent-solid);
+  cursor: pointer;
+}
+
+.interval-check input:focus-visible {
+  outline: 2px solid var(--accent-ring);
+  outline-offset: 2px;
+}
+
+.interval-check:hover {
+  color: var(--fg);
+}
+
+.interval-stop {
+  width: 100%;
+  height: 28px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .interval-card {
+    animation: none;
+  }
+  .interval-live {
+    animation: none;
+  }
+}
+
 /* ------------------------------------------------------- settings controls */
 
 .setting-row {
@@ -4399,6 +4583,60 @@ kbd {
   cursor: default;
 }
 
+/* Pause / Resume sits beside Stop: quiet chrome until it is actually paused. */
+.rec-pause {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  margin-left: 2px;
+  padding: 0 8px;
+  border: 1px solid color-mix(in srgb, var(--rec) 28%, transparent);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--fg-muted);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition:
+    background-color 120ms var(--ease),
+    border-color 120ms var(--ease),
+    color 120ms var(--ease);
+}
+
+.rec-pause:hover {
+  background: var(--surface-soft);
+  color: var(--fg);
+}
+
+.rec-pause[aria-pressed="true"] {
+  background: color-mix(in srgb, var(--rec) 14%, transparent);
+  border-color: color-mix(in srgb, var(--rec) 46%, transparent);
+  color: var(--fg);
+}
+
+.rec-pause:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* A paused take keeps the pill, loses the pulse and greys its clock. */
+.rec-pill.is-paused {
+  background: var(--surface-soft);
+  border-color: var(--border);
+}
+
+.rec-pill.is-paused .rec-pulse {
+  background: var(--fg-subtle);
+  box-shadow: none;
+  animation: none;
+}
+
+.rec-pill.is-paused .rec-timer {
+  color: var(--fg-subtle);
+}
+
 /* ------------------------------------------- scrolling card owns the window */
 /* `set_scroll_mode` shrinks the main window to the card, so hide the app chrome
    and let the card fill the small window — Done must be clickable. */
@@ -4407,6 +4645,22 @@ body.scroll-hud #app {
 }
 
 body.scroll-hud .scroll-card {
+  top: 8px;
+  right: 8px;
+  left: 8px;
+  width: auto;
+  max-height: calc(100vh - 16px);
+  overflow: auto;
+}
+
+/* ------------------------------------------- interval card owns the window */
+/* Same deal as the scrolling card: `set_hud_mode` shrinks the window to the
+   card, so hide the chrome and let the card fill it — Stop must be clickable. */
+body.interval-hud #app {
+  display: none;
+}
+
+body.interval-hud .interval-card {
   top: 8px;
   right: 8px;
   left: 8px;

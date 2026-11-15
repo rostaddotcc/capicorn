@@ -42,6 +42,11 @@ jobs:
           APPIMAGE_EXTRACT_AND_RUN: "1"
           NO_STRIP: "1"
 
+      - name: Thin AppImage (system WebKitGTK, ~4 MB)
+        run: |
+          SRC=$(find src-tauri/target/release/bundle/appimage -maxdepth 1 -name 'Capicorn_*_amd64.AppImage' | head -1)
+          ./scripts/thin-appimage.sh "$SRC" src-tauri/target/release/bundle/appimage
+
       - uses: actions/upload-artifact@v4
         with:
           name: capicorn-linux

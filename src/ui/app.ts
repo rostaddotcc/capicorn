@@ -700,17 +700,19 @@ export function mountApp(root: HTMLElement): void {
 
   root.innerHTML = `
     <header class="topbar">
-      <div class="brand">
-        <span class="brand-mark" aria-hidden="true">✦</span>
-        <span class="brand-name">Capicorn</span>
-        <span class="version" id="version" hidden></span>
+      <div class="topbar-left">
+        <button type="button" class="icon-btn" id="settings-btn" title="Settings (Ctrl+,)" aria-label="Settings">${ICONS.settings}</button>
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true">✦</span>
+          <span class="brand-name">Capicorn</span>
+          <span class="version" id="version" hidden></span>
+        </div>
       </div>
       <div class="topbar-right">
         <span class="topbar-hint" id="hotkey-hint"><kbd>PrintScreen</kbd> full · <span class="key-pair"><kbd>Shift</kbd><kbd>PrintScreen</kbd></span> region</span>
         <div class="topbar-tools">
           <button type="button" class="icon-btn" id="theme-toggle" title="Switch to dark theme" aria-label="Switch to dark theme" aria-pressed="false">${currentTheme === "dark" ? ICONS.sun : ICONS.moon}</button>
           <button type="button" class="icon-btn" id="help-btn" title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts">${ICONS.help}</button>
-          <button type="button" class="icon-btn" id="settings-btn" title="Settings (Ctrl+,)" aria-label="Settings">${ICONS.settings}</button>
         </div>
         <div class="rec-group">
           <div class="rec-pill" id="rec-pill" hidden>

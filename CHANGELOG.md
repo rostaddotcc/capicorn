@@ -3,6 +3,9 @@
 All notable changes to Capicorn, newest first. Full release notes for every tag live on
 the [releases page](https://github.com/rostaddotcc/capicorn/releases).
 
+## v0.18.1
+- Recordings now appear in the Recent filmstrip (thumbnail via ffmpeg, film-icon fallback); clicking one opens the file with the OS default player.
+
 ## v0.18.0
 - Settings moved to the top-left of the title bar.
 - Thin AppImage (~3.9 MB) that uses the system's WebKitGTK instead of bundling the whole

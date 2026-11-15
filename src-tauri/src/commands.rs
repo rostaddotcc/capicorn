@@ -316,6 +316,76 @@ pub fn recording_diagnostics(app: tauri::AppHandle) -> String {
     out
 }
 
+/// Open a file (or folder) with the OS default handler — used by the recent
+/// filmstrip's video entries.
+#[tauri::command]
+pub fn open_path(path: String) -> Result<(), String> {
+    let p = std::path::PathBuf::from(&path);
+    if !p.exists() {
+        return Err(format!("{} does not exist", p.display()));
+    }
+    #[cfg(target_os = "linux")]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(&p)
+            .spawn()
+            .map_err(|e| format!("could not open {}: {e}", p.display()))?;
+    }
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("cmd")
+            .args(["/C", "start", "", &path])
+            .spawn()
+            .map_err(|e| format!("could not open {}: {e}", p.display()))?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(&p)
+            .spawn()
+            .map_err(|e| format!("could not open {}: {e}", p.display()))?;
+    }
+    Ok(())
+}
+
+/// One frame from a recording as a PNG data URL, for the recent filmstrip.
+#[tauri::command]
+pub fn recording_thumb(path: String) -> Result<String, String> {
+    use std::process::{Command, Stdio};
+
+    let p = std::path::PathBuf::from(&path);
+    if !p.exists() {
+        return Err(format!("{} does not exist", p.display()));
+    }
+    let out = Command::new("ffmpeg")
+        .args(["-hide_banner", "-loglevel", "error", "-y", "-i"])
+        .arg(&p)
+        .args([
+            "-frames:v",
+            "1",
+            "-vf",
+            "scale=320:-2",
+            "-f",
+            "image2pipe",
+            "-vcodec",
+            "png",
+            "-",
+        ])
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| format!("ffmpeg failed: {e}"))?;
+    if !out.status.success() || out.stdout.is_empty() {
+        return Err(format!(
+            "ffmpeg could not read {}: {}",
+            p.display(),
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
+    use base64::Engine as _;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&out.stdout);
+    Ok(format!("data:image/png;base64,{b64}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

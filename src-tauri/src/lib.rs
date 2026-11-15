@@ -45,6 +45,8 @@ pub fn run() {
             // Wave 11: Save As — native dialog, PNG/JPEG/WebP + quality
             commands::save_image_as,
             commands::recording_diagnostics,
+            commands::open_path,
+            commands::recording_thumb,
             export::save_image,
             windows::force_close,
             windows::set_dirty,

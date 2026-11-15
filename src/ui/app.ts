@@ -622,6 +622,10 @@ type RecentShot = {
   ts: number;
   format: ExportFormat;
   label: string;
+  /** "video" entries point at a recording file; "image" (default) is a capture. */
+  kind?: "image" | "video";
+  /** Absolute path of a recording (video entries only). */
+  path?: string;
 };
 
 const escapeHtml = (value: string): string =>
@@ -2218,8 +2222,12 @@ export function mountApp(root: HTMLElement): void {
       const path = await invoke<string>("stop_recording");
       const saved = typeof path === "string" ? path.trim() : "";
       endRecording();
-      if (saved) setStatus(`Recording saved: ${saved}`, "success");
-      else setStatus("Recording stopped, but no file was written.", "error");
+      if (saved) {
+        setStatus(`Recording saved: ${saved}`, "success");
+        void addRecentRecording(saved, recRegionUsed ? "Region recording" : "Recording");
+      } else {
+        setStatus("Recording stopped, but no file was written.", "error");
+      }
     } catch (e) {
       endRecording();
       setStatus(`Could not save the recording: ${errText(e)}`, "error");
@@ -3413,6 +3421,31 @@ export function mountApp(root: HTMLElement): void {
     }
   }
 
+  /** Prepend a finished recording to the strip; thumbnail is best-effort. */
+  async function addRecentRecording(path: string, label: string): Promise<void> {
+    const clean = path.trim();
+    if (!clean) return;
+    let thumb = "";
+    try {
+      thumb = await invoke<string>("recording_thumb", { path: clean });
+    } catch {
+      /* no ffmpeg / unreadable file — the strip shows a film icon instead */
+    }
+    const entry: RecentShot = {
+      id: `rec-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      dataUrl: "",
+      thumb,
+      ts: Date.now(),
+      format: settings.format,
+      label,
+      kind: "video",
+      path: clean,
+    };
+    recent = [entry, ...recent].slice(0, RECENT_LIMIT);
+    renderFilm();
+    filmTrackEl.scrollLeft = 0;
+  }
+
   function renderFilm(): void {
     const hasAny = recent.length > 0;
     const shown = hasAny && filmOpen;
@@ -3430,18 +3463,25 @@ export function mountApp(root: HTMLElement): void {
     filmClearBtn.disabled = !hasAny;
     filmEmptyEl.hidden = hasAny;
     filmTrackEl.innerHTML = recent
-      .map(
-        (item) => `<button type="button" class="film-item${
+      .map((item) => {
+        const isVideo = item.kind === "video";
+        const ext = isVideo ? (item.path ?? "").split(".").pop()?.toUpperCase() || "VIDEO" : "";
+        const badge = isVideo ? ext : formatLabel(item.format);
+        const thumbHtml =
+          isVideo && !item.thumb
+            ? `<span class="film-thumb film-thumb-video">${ICONS.film}</span>`
+            : `<span class="film-thumb"><img src="${item.thumb}" alt="" loading="lazy" /></span>`;
+        return `<button type="button" class="film-item${
           item.id === loadedRecentId ? " is-active" : ""
-        }" data-id="${item.id}" role="option" aria-selected="${item.id === loadedRecentId}" title="${escapeHtml(
-          item.label,
-        )} · ${clockLabel(item.ts)} · ${formatLabel(item.format)}">
-          <span class="film-thumb"><img src="${item.thumb}" alt="" loading="lazy" /></span>
-          <span class="film-caption"><span class="film-badge">${formatLabel(item.format)}</span><span class="film-time">${clockLabel(
+        }" data-id="${item.id}" role="option" aria-selected="${
+          item.id === loadedRecentId
+        }" title="${escapeHtml(item.label)} · ${clockLabel(item.ts)} · ${badge}">
+          ${thumbHtml}
+          <span class="film-caption"><span class="film-badge">${badge}</span><span class="film-time">${clockLabel(
             item.ts,
           )}</span></span>
-        </button>`,
-      )
+        </button>`;
+      })
       .join("");
   }
 
@@ -3454,6 +3494,15 @@ export function mountApp(root: HTMLElement): void {
   async function loadRecent(id: string): Promise<void> {
     const item = recent.find((r) => r.id === id);
     if (!item) return;
+    if (item.kind === "video" && item.path) {
+      try {
+        await invoke("open_path", { path: item.path });
+        setStatus(`Opened recording: ${item.path}`, "success");
+      } catch (e) {
+        setStatus(`Could not open the recording: ${errText(e)}`, "error");
+      }
+      return;
+    }
     if (hasImage && isDirty() && !window.confirm("Load this capture? Unsaved annotations will be lost.")) {
       return;
     }
@@ -4168,8 +4217,12 @@ export function mountApp(root: HTMLElement): void {
       setStatus("Recording — click Stop when you're done.", "success");
     } else if (!live && recording && !recStopping) {
       endRecording();
-      if (path) setStatus(`Recording saved: ${path}`, "success");
-      else setStatus("Recording stopped.");
+      if (path) {
+        setStatus(`Recording saved: ${path}`, "success");
+        void addRecentRecording(path, recRegionUsed ? "Region recording" : "Recording");
+      } else {
+        setStatus("Recording stopped.");
+      }
     }
   }).catch(() => {
     /* older backend without the recorder */

@@ -3112,6 +3112,13 @@ kbd {
   object-fit: cover;
 }
 
+.film-thumb-video {
+  display: grid;
+  place-items: center;
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+}
+
 .film-caption {
   display: flex;
   align-items: center;

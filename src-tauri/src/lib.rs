@@ -40,6 +40,7 @@ pub fn run() {
             commands::capture_monitor,
             commands::save_png,
             commands::copy_png,
+            commands::copy_text,
             commands::get_version,
             commands::set_fullscreen,
             commands::default_save_dir,

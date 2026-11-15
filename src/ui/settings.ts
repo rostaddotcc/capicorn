@@ -51,6 +51,10 @@ export const AUTOSAVE_KEY = "capicorn:autosave";
 export const INTERVAL_KEY = "capicorn:interval";
 export const MIC_KEY = "capicorn:mic";
 export const SYSTEM_AUDIO_KEY = "capicorn:system-audio";
+export const WATERMARK_TEXT_KEY = "capicorn:watermark-text";
+export const WATERMARK_OPACITY_KEY = "capicorn:watermark-opacity";
+export const WATERMARK_CORNER_KEY = "capicorn:watermark-corner";
+export const UPLOAD_ENDPOINT_KEY = "capicorn:upload-endpoint";
 
 export const DEFAULT_FORMAT: ExportFormat = "png";
 export const DEFAULT_REC_FORMAT: RecFormat = "mp4";
@@ -65,6 +69,13 @@ export const DEFAULT_INTERVAL = 30;
 export const DEFAULT_MIC = "";
 /** Whether the desktop's own sound is mixed into a take. */
 export const DEFAULT_SYSTEM_AUDIO = false;
+/** Text burned into exports; empty means no watermark. */
+export const DEFAULT_WATERMARK_TEXT = "";
+/** Watermark visibility, in percent. */
+export const DEFAULT_WATERMARK_OPACITY = 45;
+/** Corner the watermark sits in. */
+export const DEFAULT_WATERMARK_CORNER = "bottom-right";
+export const WATERMARK_CORNERS = ["top-left", "top-right", "bottom-left", "bottom-right"] as const;
 /** Delays offered in Settings → Capture. */
 export const TIMER_CHOICES: ReadonlyArray<number> = [0, 3, 5, 10];
 /** Shot intervals offered in Settings → Capture → Interval capture. */
@@ -112,6 +123,14 @@ export interface ExportSettings {
   mic: string;
   /** Mix the desktop's own sound into recordings. */
   systemAudio: boolean;
+  /** Text burned into exports; empty disables the watermark. */
+  watermarkText: string;
+  /** 2–100 % visibility of that text. */
+  watermarkOpacity: number;
+  /** Which corner it sits in. */
+  watermarkCorner: string;
+  /** POST target for File → Upload…; empty hides the action. */
+  uploadEndpoint: string;
 }
 
 const store = (key: string): string | null => {
@@ -187,6 +206,14 @@ export function readExportSettings(): ExportSettings {
     intervalSeconds: INTERVAL_CHOICES.includes(rawInterval) ? rawInterval : DEFAULT_INTERVAL,
     mic: (store(MIC_KEY) ?? DEFAULT_MIC).trim(),
     systemAudio: store(SYSTEM_AUDIO_KEY) === "true",
+    watermarkText: (store(WATERMARK_TEXT_KEY) ?? DEFAULT_WATERMARK_TEXT).slice(0, 120),
+    watermarkOpacity: clampInt(store(WATERMARK_OPACITY_KEY), DEFAULT_WATERMARK_OPACITY, 2, 100),
+    watermarkCorner: (WATERMARK_CORNERS as ReadonlyArray<string>).includes(
+      store(WATERMARK_CORNER_KEY) ?? "",
+    )
+      ? (store(WATERMARK_CORNER_KEY) as string)
+      : DEFAULT_WATERMARK_CORNER,
+    uploadEndpoint: (store(UPLOAD_ENDPOINT_KEY) ?? "").trim(),
   };
 }
 
@@ -207,6 +234,10 @@ export function saveExportSettings(settings: ExportSettings): void {
     localStorage.setItem(INTERVAL_KEY, String(settings.intervalSeconds));
     localStorage.setItem(MIC_KEY, settings.mic);
     localStorage.setItem(SYSTEM_AUDIO_KEY, String(settings.systemAudio));
+    localStorage.setItem(WATERMARK_TEXT_KEY, settings.watermarkText);
+    localStorage.setItem(WATERMARK_OPACITY_KEY, String(settings.watermarkOpacity));
+    localStorage.setItem(WATERMARK_CORNER_KEY, settings.watermarkCorner);
+    localStorage.setItem(UPLOAD_ENDPOINT_KEY, settings.uploadEndpoint);
   } catch {
     /* storage unavailable — the preferences just aren't remembered */
   }
@@ -337,6 +368,12 @@ export class SettingsPanel {
   private micSelect!: HTMLSelectElement;
   private micNote!: HTMLElement;
   private systemSwitch!: HTMLButtonElement;
+  private watermarkInput!: HTMLInputElement;
+  private watermarkStyleField!: HTMLElement;
+  private watermarkOpacityInput!: HTMLInputElement;
+  private watermarkOpacityOut!: HTMLOutputElement;
+  private watermarkCornerSelect!: HTMLSelectElement;
+  private uploadInput!: HTMLInputElement;
   private qualityField!: HTMLElement;
   private qualityInput!: HTMLInputElement;
   private qualityOut!: HTMLOutputElement;
@@ -431,6 +468,19 @@ export class SettingsPanel {
     this.systemSwitch.title = settings.systemAudio
       ? "The desktop's own sound is mixed into recordings"
       : "Recordings capture no desktop sound";
+
+    // Watermark: the style controls only matter once there is text.
+    if (document.activeElement !== this.watermarkInput) {
+      this.watermarkInput.value = settings.watermarkText;
+    }
+    this.watermarkStyleField.hidden = settings.watermarkText.trim() === "";
+    this.watermarkOpacityInput.value = String(settings.watermarkOpacity);
+    this.watermarkOpacityOut.textContent = String(settings.watermarkOpacity);
+    this.watermarkOpacityInput.style.setProperty("--fill", `${settings.watermarkOpacity}%`);
+    this.watermarkCornerSelect.value = settings.watermarkCorner;
+    if (document.activeElement !== this.uploadInput) {
+      this.uploadInput.value = settings.uploadEndpoint;
+    }
 
     // Never fight the caret while the pattern is being typed.
     if (document.activeElement !== this.nameInput) {
@@ -784,6 +834,29 @@ export class SettingsPanel {
               <p class="token-hint" id="settings-tokens"><code>{date}</code> 2026-11-14 · <code>{time}</code> 19-45-12 · <code>{datetime}</code> both</p>
               <p class="preview-line" id="settings-preview">Preview: <code class="preview-name">${DEFAULT_PATTERN}.png</code></p>
             </div>
+            <div class="field">
+              <label class="field-label" for="settings-watermark">Watermark</label>
+              <input type="text" class="field-input" id="settings-watermark" value="" placeholder="e.g. @rostad — leave empty for none" spellcheck="false" autocomplete="off" />
+              <p class="token-hint">Burned into exports only. The editor and your screenshots stay clean.</p>
+            </div>
+            <div class="field" id="settings-watermark-style" hidden>
+              <label class="field-label" for="settings-watermark-opacity">Watermark opacity <output class="field-value" id="settings-watermark-opacity-out" for="settings-watermark-opacity">45</output></label>
+              <input type="range" class="slider" id="settings-watermark-opacity" min="2" max="100" step="1" value="45" aria-label="Watermark opacity" />
+              <div class="select-wrap">
+                <select id="settings-watermark-corner" class="field-select" aria-label="Watermark corner">
+                  <option value="bottom-right">Bottom right</option>
+                  <option value="bottom-left">Bottom left</option>
+                  <option value="top-right">Top right</option>
+                  <option value="top-left">Top left</option>
+                </select>
+                <span class="select-arrow" aria-hidden="true">${ICONS.caret}</span>
+              </div>
+            </div>
+            <div class="field">
+              <label class="field-label" for="settings-upload">Upload endpoint</label>
+              <input type="url" class="field-input" id="settings-upload" value="" placeholder="https://your-server.example/upload" spellcheck="false" autocomplete="off" />
+              <p class="token-hint">File → Upload… POSTs the PNG here and copies the link the server answers with. Empty hides the action.</p>
+            </div>
           </section>
 
           <section class="setting" data-section="troubleshooting">
@@ -826,6 +899,12 @@ export class SettingsPanel {
     this.micSelect = root.querySelector<HTMLSelectElement>("#settings-mic")!;
     this.micNote = root.querySelector<HTMLElement>("#settings-mic-note")!;
     this.systemSwitch = root.querySelector<HTMLButtonElement>("#settings-system-audio")!;
+    this.watermarkInput = root.querySelector<HTMLInputElement>("#settings-watermark")!;
+    this.watermarkStyleField = root.querySelector<HTMLElement>("#settings-watermark-style")!;
+    this.watermarkOpacityInput = root.querySelector<HTMLInputElement>("#settings-watermark-opacity")!;
+    this.watermarkOpacityOut = root.querySelector<HTMLOutputElement>("#settings-watermark-opacity-out")!;
+    this.watermarkCornerSelect = root.querySelector<HTMLSelectElement>("#settings-watermark-corner")!;
+    this.uploadInput = root.querySelector<HTMLInputElement>("#settings-upload")!;
     this.qualityField = root.querySelector<HTMLElement>("#settings-quality-field")!;
     this.qualityInput = root.querySelector<HTMLInputElement>("#settings-quality")!;
     this.qualityOut = root.querySelector<HTMLOutputElement>("#settings-quality-out")!;
@@ -950,6 +1029,40 @@ export class SettingsPanel {
     this.recFormatSelect.addEventListener("change", () => {
       const value = this.recFormatSelect.value;
       this.opts.updateSettings({ recFormat: isRecFormat(value) ? value : DEFAULT_REC_FORMAT });
+    });
+
+    this.watermarkInput.addEventListener("input", () => {
+      this.opts.updateSettings({ watermarkText: this.watermarkInput.value }, { silent: true });
+      this.watermarkStyleField.hidden = this.watermarkInput.value.trim() === "";
+    });
+    this.watermarkInput.addEventListener("blur", () => {
+      this.opts.updateSettings({ watermarkText: this.watermarkInput.value.trim() });
+      this.refresh();
+    });
+    this.watermarkOpacityInput.addEventListener("input", () => {
+      const value = clampInt(this.watermarkOpacityInput.value, DEFAULT_WATERMARK_OPACITY, 2, 100);
+      this.opts.updateSettings({ watermarkOpacity: value }, { silent: true });
+      this.watermarkOpacityOut.textContent = String(value);
+    });
+    this.watermarkOpacityInput.addEventListener("change", () => {
+      this.opts.updateSettings({
+        watermarkOpacity: clampInt(
+          this.watermarkOpacityInput.value,
+          DEFAULT_WATERMARK_OPACITY,
+          2,
+          100,
+        ),
+      });
+    });
+    this.watermarkCornerSelect.addEventListener("change", () => {
+      this.opts.updateSettings({ watermarkCorner: this.watermarkCornerSelect.value });
+    });
+    this.uploadInput.addEventListener("input", () => {
+      this.opts.updateSettings({ uploadEndpoint: this.uploadInput.value.trim() }, { silent: true });
+    });
+    this.uploadInput.addEventListener("blur", () => {
+      this.opts.updateSettings({ uploadEndpoint: this.uploadInput.value.trim() });
+      this.refresh();
     });
     this.qualityInput.addEventListener("input", () => {
       const quality = clampInt(this.qualityInput.value, DEFAULT_QUALITY, 1, 100);

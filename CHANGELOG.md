@@ -3,6 +3,10 @@
 All notable changes to Capicorn, newest first. Full release notes for every tag live on
 the [releases page](https://github.com/rostaddotcc/capicorn/releases).
 
+## v0.27.0
+- **Watermark.** Burn a text mark into exports — Settings → Export sets the text, opacity and corner. It never touches the editor or the live capture, and the size scales with the image so a 4K shot stays readable.
+- **Upload.** File → Upload… POSTs the flattened PNG to *your* endpoint (Settings → Export) as `multipart/form-data` and copies the link the server answers with. No provider hardcoded, no credentials shipped — point it at your own handler.
+
 ## v0.26.0
 - **Open images from disk.** File → Open… (`Ctrl+O`) with an image filter; everything is normalised to PNG, lands in the editor and appears in Recent as "Open". Drag-and-drop and `Ctrl+V` keep working.
 - **Shadow controls you can feel.** The X/Y offset steppers are gone. **Direction** (0–360°), **distance**, **blur** and **opacity** sliders drive the shadow, with the sample tile showing how it falls. Offsets are derived from angle × distance, so existing presets keep their shadows.

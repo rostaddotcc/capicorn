@@ -751,6 +751,7 @@ export function mountApp(root: HTMLElement): void {
             <button type="button" class="menu-item" data-file="open" title="Open an image from disk and annotate it"><span class="menu-icon">${ICONS.openFile}</span><span class="menu-label">Open…</span><span class="menu-check"></span><kbd class="menu-key">Ctrl+O</kbd></button>
             <button type="button" class="menu-item" data-file="save-as" title="Choose a name, folder and format"><span class="menu-icon">${ICONS.saveAs}</span><span class="menu-label">Save As…</span><span class="menu-check"></span><kbd class="menu-key">Ctrl+Shift+S</kbd></button>
             <button type="button" class="menu-item" data-file="save" title="Save a copy at the default format"><span class="menu-icon">${ICONS.save}</span><span class="menu-label">Save</span><span class="menu-check"></span><kbd class="menu-key">Ctrl+S</kbd></button>
+            <button type="button" class="menu-item" data-file="upload" title="Upload to your endpoint and copy the link"><span class="menu-icon">${ICONS.openFile}</span><span class="menu-label">Upload…</span><span class="menu-check"></span><kbd class="menu-key"></kbd></button>
             <button type="button" class="menu-item" data-file="copy" title="Copy the image to the clipboard"><span class="menu-icon">${ICONS.copy}</span><span class="menu-label">Copy image</span><span class="menu-check"></span><kbd class="menu-key">Ctrl+C</kbd></button>
             <div class="menu-sep" role="separator" aria-hidden="true"></div>
             <button type="button" class="menu-item" data-file="settings" title="All settings"><span class="menu-icon">${ICONS.settings}</span><span class="menu-label">Settings…</span><span class="menu-check"></span><kbd class="menu-key">Ctrl+,</kbd></button>
@@ -1534,6 +1535,13 @@ export function mountApp(root: HTMLElement): void {
 
     settings = { ...settings, ...patch };
     saveExportSettings(settings);
+    if (
+      patch.watermarkText !== undefined ||
+      patch.watermarkOpacity !== undefined ||
+      patch.watermarkCorner !== undefined
+    ) {
+      applyWatermark();
+    }
     if (!opts.silent) {
       if (patch.timer !== undefined) {
         setStatus(
@@ -4187,6 +4195,49 @@ export function mountApp(root: HTMLElement): void {
 
   /* ---------------------------------------------------------------- file menu */
   const fileBtn = $<HTMLButtonElement>("#file-btn");
+  /** Mirror the watermark settings into the editor (they only affect exports). */
+  function applyWatermark(): void {
+    const api = editor as unknown as { setWatermark?: (options: unknown) => void };
+    try {
+      api.setWatermark?.({
+        text: settings.watermarkText,
+        opacity: settings.watermarkOpacity / 100,
+        corner: settings.watermarkCorner,
+      });
+    } catch (e) {
+      setStatus(`Watermark failed: ${errText(e)}`, "error");
+    }
+  }
+
+  /** File → Upload… — POST the flattened image and copy the returned link. */
+  async function uploadImage(): Promise<void> {
+    if (!hasImage) {
+      setStatus("Nothing to upload — capture or open an image first.", "error");
+      return;
+    }
+    const endpoint = settings.uploadEndpoint.trim();
+    if (!endpoint) {
+      setStatus("Set an upload endpoint in Settings → Export first.", "error");
+      panel?.open();
+      return;
+    }
+    try {
+      setStatus("Uploading…");
+      const link = await invoke<string>("upload_image", {
+        dataUrl: editor.flatten(),
+        endpoint,
+      });
+      try {
+        await invoke("copy_text", { text: link });
+        setStatus(`Uploaded — link copied: ${link}`, "success");
+      } catch {
+        setStatus(`Uploaded: ${link}`, "success");
+      }
+    } catch (e) {
+      setStatus(`Upload failed: ${errText(e)}`, "error");
+    }
+  }
+
   const fileMenuEl = $<HTMLDivElement>("#file-menu");
   const fileWrapEl = fileMenuEl.parentElement as HTMLElement;
   const fileMenu = createMenu(fileWrapEl, fileMenuEl, fileBtn);
@@ -4225,6 +4276,9 @@ export function mountApp(root: HTMLElement): void {
           break;
         case "copy":
           void copyPng();
+          break;
+        case "upload":
+          void uploadImage();
           break;
         case "settings":
           panel?.open();
@@ -4787,6 +4841,7 @@ export function mountApp(root: HTMLElement): void {
     } catch {
       appVersion = "";
     }
+    applyWatermark();
     await ensureSaveDir();
   })();
 }

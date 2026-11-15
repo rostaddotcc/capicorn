@@ -291,6 +291,13 @@ pub async fn copy_png(data_url: String) -> Result<(), String> {
     crate::clipboard::copy_png_data_url(&data_url).map_err(|e| e.to_string())
 }
 
+/// Copy plain text (an upload link) to the clipboard.
+#[tauri::command]
+pub fn copy_text(text: String) -> Result<(), String> {
+    let mut clipboard = arboard::Clipboard::new().map_err(|e| e.to_string())?;
+    clipboard.set_text(text).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub fn get_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()

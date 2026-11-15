@@ -43,6 +43,12 @@ import {
   isMagnifyRegion,
   isSpotlightRegion,
 } from "./tools";
+import {
+  DEFAULT_WATERMARK,
+  drawWatermark,
+  normalizeWatermark,
+  type WatermarkOptions,
+} from "./watermark";
 
 export type { BlurMode } from "./blur";
 export type { ShadowStyle } from "./tools";
@@ -289,6 +295,8 @@ export class Editor {
   private regionThickness = DEFAULT_REGION_THICKNESS;
   /** Magnification for NEW magnify lenses. */
   private magnifyZoom = MAGNIFY_ZOOM;
+  /** Optional watermark burned into exports only (never the live canvas). */
+  private watermark: WatermarkOptions = { ...DEFAULT_WATERMARK };
   /** Drop shadow applied to NEW arrow/rect/text/callout/step annotations. */
   private shadow: ShadowStyle = { ...DEFAULT_SHADOW };
 
@@ -467,6 +475,12 @@ export class Editor {
     context.fillRect(0, 0, output.width, output.height);
     context.drawImage(imageLayer, 0, 0);
     context.drawImage(inkLayer, 0, 0);
+    // Watermark last: above every annotation, and in exports only.
+    drawWatermark(context, output.width, output.height, {
+      ...this.watermark,
+      // Scale with the export so a 4K capture gets a readable mark too.
+      size: Math.round(Math.min(160, Math.max(16, output.height / 36))),
+    });
     return output.toDataURL("image/png");
   }
 
@@ -593,6 +607,16 @@ export class Editor {
    * 0..60, offsets -50..50, non-empty colour) so junk from a stored preset
    * cannot poison the canvas. Existing annotations keep their own shadow.
    */
+  /** Set the export watermark; an empty `text` disables it. */
+  setWatermark(options: Partial<WatermarkOptions>): void {
+    this.watermark = normalizeWatermark({ ...this.watermark, ...options });
+  }
+
+  /** Current export watermark (the shell mirrors it in Settings). */
+  getWatermark(): WatermarkOptions {
+    return { ...this.watermark };
+  }
+
   setShadow(patch: Partial<ShadowStyle>): void {
     if (!patch || typeof patch !== "object") return;
     const next: ShadowStyle = { ...this.shadow };

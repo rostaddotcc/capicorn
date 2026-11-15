@@ -3,6 +3,13 @@
 All notable changes to Capicorn, newest first. Full release notes for every tag live on
 the [releases page](https://github.com/rostaddotcc/capicorn/releases).
 
+## v0.25.0
+- **Audio in recordings.** Pick a microphone and/or capture system audio (Linux: PulseAudio devices via `pactl`; Windows: `dshow`); the sources are mixed with `amix` into AAC. GIF stays silent.
+- **Interval capture.** Capture → Interval takes a screenshot every 5 s / 10 s / 30 s / 60 s / 5 min in a small always-on-top card, saves every shot with a sequence number and can turn the whole set into an **MP4 timelapse** in one click.
+- **Pause / resume** a recording from the pill; the elapsed clock freezes with it.
+- **Record a window** — a third Record row restricts the portal picker to windows.
+- **Magnify is back, and real.** Drag a lens and the area under it is enlarged live by 1.5–10× (the size slider becomes the zoom); an `N×` badge shows the factor. Exports match the canvas.
+
 ## v0.24.0
 - **The unicorn head is now the File menu** — it replaces the word "File" and the topbar brand text (which only took space). Clicking it opens save/settings/widget/About.
 - **Settings icon removed** from the topbar; Settings… stays in the File menu (Ctrl+,).

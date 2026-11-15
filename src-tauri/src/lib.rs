@@ -10,7 +10,9 @@ mod ocr;
 mod portal_capture;
 mod recording;
 mod scrolling;
+mod timelapse;
 mod tray;
+mod upload;
 mod windows;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -64,7 +66,7 @@ pub fn run() {
             hotkeys::register_hotkeys,
             hotkeys::get_hotkey_status,
             hotkeys::unregister_hotkeys,
-            // Wave 7: grab text (tesseract) + pin a screenshot on top
+            // Wave 7: grab text (tesseract)
             ocr::ocr_image,
             ocr::ocr_available,
             ocr::ocr_languages,
@@ -72,6 +74,15 @@ pub fn run() {
             recording::start_recording,
             recording::stop_recording,
             recording::is_recording,
+            // Wave 25: audio devices, pause/resume
+            recording::list_audio_sources,
+            recording::pause_recording,
+            recording::resume_recording,
+            // Wave 25: interval capture -> timelapse
+            timelapse::make_timelapse,
+            // Wave 25: generic upload + opening the returned link
+            upload::upload_image,
+            upload::open_url,
             // Wave 9: scrolling capture (manual-scroll stitch)
             scrolling::scrolling_start,
             scrolling::scrolling_done,

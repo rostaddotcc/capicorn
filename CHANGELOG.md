@@ -3,6 +3,10 @@
 All notable changes to Capicorn, newest first. Full release notes for every tag live on
 the [releases page](https://github.com/rostaddotcc/capicorn/releases).
 
+## v0.17.2
+- Screen recording: `error alloc buffers: Invalid argument` — drop the explicit
+  `SPA_PARAM_Buffers` pool (KWin rejected it); `MAP_BUFFERS` producer defaults are correct.
+
 ## v0.17.1
 - Screen recording fix: `no target node available` — drop the `target.object` stream
   property (it pre-resolved the target before the portal node was in the registry) and wait

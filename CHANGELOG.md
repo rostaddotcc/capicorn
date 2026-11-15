@@ -3,6 +3,12 @@
 All notable changes to Capicorn, newest first. Full release notes for every tag live on
 the [releases page](https://github.com/rostaddotcc/capicorn/releases).
 
+## v0.21.0
+- Removed the standalone **Record** button — recording lives in the Capture menu; the running take's pill gains a **Stop** button.
+- Blur/pixelate/blackout now preview **transparently** while dragging and apply the **real** effect the moment the box is released (no more odd colour, no click-elsewhere needed).
+- New **unicorn** logo + app icon (ArtCraft-style clean geometric mark).
+- Windows builds now produce an **.msi** as well as the NSIS .exe.
+
 ## v0.20.0
 - New **File** menu (top-left): Save As…, Save, Copy image, Settings…, and a **Floating widget** toggle — the widget is easy to find again.
 - **Record modes live in the Capture menu** (Record full screen / Record region); the separate Record dropdown is gone, so there is one mode menu.

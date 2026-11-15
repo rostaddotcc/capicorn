@@ -627,7 +627,6 @@ export class Editor {
       region.set({ fill: preview.fill, stroke: preview.stroke });
       region.dirty = true;
     }
-    this.refreshBlurPreviews();
     this.commit();
     this.canvas.requestRenderAll();
     return true;
@@ -1118,7 +1117,6 @@ export class Editor {
   };
 
   private readonly onObjectModified = (): void => {
-    this.refreshBlurPreviews();
     this.commit();
   };
 
@@ -1209,7 +1207,6 @@ export class Editor {
   private addObject(object: fabric.FabricObject): void {
     this.canvas.add(object);
     this.applyInteractivity(object);
-    if (isBlurRegion(object)) this.refreshBlurPreviews();
   }
 
   private removeObject(object: fabric.FabricObject): void {
@@ -1608,6 +1605,10 @@ export class Editor {
 
   private commit(): void {
     if (this.destroyed || this.restoring) return;
+    // Rebuild the live blur snapshots now the action is finalised: a blur box
+    // drawn this drag only has a real size once the drag ends, so the snapshot
+    // must be taken here rather than when the (1×1) region was first added.
+    this.refreshBlurPreviews();
     const json = this.canvas.toObject() as Record<string, unknown>;
     const crop = this.cropBox ? { ...this.cropBox } : null;
     const natural = { ...this.natural };

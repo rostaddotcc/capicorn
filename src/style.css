@@ -271,6 +271,12 @@ kbd {
   box-shadow: inset 0 0 0 1px rgba(139, 124, 246, 0.22);
 }
 
+.brand-mark svg {
+  display: block;
+  width: 17px;
+  height: 17px;
+}
+
 .brand-name {
   font-size: 15px;
   font-weight: 700;
@@ -4363,4 +4369,32 @@ kbd {
 
 .menu-icon-rec {
   color: var(--rec);
+}
+
+/* Stop control inside the recording pill (the standalone Record button is gone). */
+.rec-stop {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  margin-left: 2px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--rec);
+  color: #fff;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition: background-color 120ms var(--ease), opacity 120ms var(--ease);
+}
+
+.rec-stop:hover {
+  background: var(--rec-hover);
+}
+
+.rec-stop:disabled {
+  opacity: 0.6;
+  cursor: default;
 }

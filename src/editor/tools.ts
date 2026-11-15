@@ -474,10 +474,11 @@ export const blurRegionPreview = (mode: BlurMode): { fill: string; stroke: strin
     case "blackout":
       return { fill: "rgba(17, 24, 39, 0.88)", stroke: "rgba(17, 24, 39, 0.95)" };
     case "pixelate":
-      return { fill: "rgba(17, 24, 39, 0.34)", stroke: "rgba(255, 255, 255, 0.85)" };
     case "gaussian":
     default:
-      return { fill: "rgba(120, 150, 255, 0.22)", stroke: "rgba(255, 255, 255, 0.9)" };
+      // Transparent while dragging — the real blur replaces it the moment the
+      // box is released, so a solid stand-in would only read as a weird colour.
+      return { fill: "transparent", stroke: "rgba(255, 255, 255, 0.85)" };
   }
 };
 

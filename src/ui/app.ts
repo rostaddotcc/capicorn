@@ -721,7 +721,7 @@ export function mountApp(root: HTMLElement): void {
         </div>
         <button type="button" class="icon-btn" id="settings-btn" title="Settings (Ctrl+,)" aria-label="Settings">${ICONS.settings}</button>
         <div class="brand">
-          <span class="brand-mark" aria-hidden="true">✦</span>
+          <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 32 32" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M17.6 9.3 C 22.2 9.4 26 11.9 27.4 15.6 C 28 17.4 28.1 19.1 27.4 20.4 C 26.6 21.9 24.9 22.5 23.2 21.9 C 21.6 22.5 20.4 23.9 19.8 25.9 L 19.3 28.7 L 10.5 28.7 C 10.3 24.5 10.2 20.3 11.4 16.3 C 12.3 13.3 14.5 10.7 17.6 9.3 Z M 22.5 16.1 a 1.1 1.1 0 1 1 -2.2 0 a 1.1 1.1 0 1 1 2.2 0 Z" /><path d="M13.4 10.2 C 12.7 8.1 12.4 6.2 12.7 4.9 C 14.1 6.5 15.6 8.0 16.7 9.2 Z" /><path d="M17.9 9.5 L22.4 1.9 L20.1 10.4 Z" /></svg></span>
           <span class="brand-name">Capicorn</span>
           <span class="version" id="version" hidden></span>
         </div>
@@ -738,13 +738,7 @@ export function mountApp(root: HTMLElement): void {
             <span class="rec-scope" id="rec-scope" hidden>Region</span>
             <span class="rec-timer" id="rec-timer" role="timer" aria-label="Recording time">00:00</span>
             <span class="rec-format" id="rec-format">MP4</span>
-          </div>
-          <div class="rec-split" id="record-split">
-            <button type="button" class="rec-btn split-main" id="record" aria-pressed="false" title="Record the screen (opens the system screen picker)" aria-label="Record screen">
-              <span class="rec-glyph" id="rec-glyph" aria-hidden="true">${ICONS.record}</span>
-              <span class="rec-label" id="rec-label">Record</span>
-              <span class="rec-mode" id="rec-mode-label">Full</span>
-            </button>
+            <button type="button" class="rec-stop" id="rec-stop" title="Stop the recording and save it">Stop</button>
           </div>
         </div>
         <div class="split-btn" id="capture-split">
@@ -1152,15 +1146,11 @@ export function mountApp(root: HTMLElement): void {
   const splitEl = $<HTMLDivElement>("#capture-split");
   const themeBtn = $<HTMLButtonElement>("#theme-toggle");
   const settingsBtn = $<HTMLButtonElement>("#settings-btn");
-  const recordBtn = $<HTMLButtonElement>("#record");
-  const recordSplitEl = $<HTMLDivElement>("#record-split");
-  const recModeLabelEl = $<HTMLSpanElement>("#rec-mode-label");
   const recScopeEl = $<HTMLSpanElement>("#rec-scope");
-  const recGlyphEl = $<HTMLSpanElement>("#rec-glyph");
-  const recLabelEl = $<HTMLSpanElement>("#rec-label");
   const recPillEl = $<HTMLDivElement>("#rec-pill");
   const recTimerEl = $<HTMLSpanElement>("#rec-timer");
   const recFormatEl = $<HTMLSpanElement>("#rec-format");
+  const recStopBtn = $<HTMLButtonElement>("#rec-stop");
   const undoBtn = $<HTMLButtonElement>("#undo");
   const redoBtn = $<HTMLButtonElement>("#redo");
   const copyBtn = $<HTMLButtonElement>("#copy");
@@ -1997,14 +1987,10 @@ export function mountApp(root: HTMLElement): void {
   function setRecMode(next: RecMode, announce = false): void {
     recMode = next;
     writeStore(REC_MODE_KEY, next);
-    const region = next === "region";
-    recModeLabelEl.textContent = region ? "Region" : "Full";
-    recordBtn.title = recordIdleTitle();
-    recordBtn.setAttribute("aria-label", region ? "Record a screen region" : "Record screen");
     if (announce) {
       setStatus(
-        region
-          ? "Recording mode: region — press Record, then drag the area to record."
+        next === "region"
+          ? "Recording mode: region — drag the area to record."
           : "Recording mode: full screen — the system picker asks which screen to record.",
       );
     }
@@ -2014,7 +2000,6 @@ export function mountApp(root: HTMLElement): void {
     busy = value;
     captureBtn.disabled = value;
     caretBtn.disabled = value;
-    recordBtn.disabled = value || recStarting;
     captureBtn.classList.toggle("is-busy", value);
     splitEl.classList.toggle("is-busy", value);
     if (value) setMenuOpen(false);
@@ -2035,25 +2020,8 @@ export function mountApp(root: HTMLElement): void {
     recTimerEl.textContent = elapsedLabel(Date.now() - recStartedAt);
   }
 
-  /** Idle title for the primary Record button — reflects the persisted mode. */
-  const recordIdleTitle = (): string =>
-    recMode === "region"
-      ? "Record a screen region — drag the area to record"
-      : "Record the screen (opens the system screen picker)";
-
-  /** One place that paints Rec → Stop, the pill and the disabled capture controls. */
+  /** Show/hide the recording pill and lock the capture controls while a take runs. */
   function paintRecording(active: boolean): void {
-    recordBtn.classList.toggle("is-recording", active);
-    recordSplitEl.classList.toggle("is-recording", active);
-    recordBtn.setAttribute("aria-pressed", String(active));
-    recordBtn.title = active ? "Stop the recording and save it" : recordIdleTitle();
-    recordBtn.setAttribute(
-      "aria-label",
-      active ? "Stop recording" : recMode === "region" ? "Record a screen region" : "Record screen",
-    );
-    recLabelEl.textContent = active ? "Stop" : "Record";
-    recGlyphEl.innerHTML = active ? ICONS.stop : ICONS.record;
-    recModeLabelEl.hidden = active;
     recPillEl.hidden = !active;
     recScopeEl.hidden = !(active && recRegionUsed !== null);
     recScopeEl.textContent = "Region";
@@ -2131,9 +2099,6 @@ export function mountApp(root: HTMLElement): void {
     }
     recStarting = true;
     recFormatUsed = settings.recFormat;
-    recordBtn.disabled = true;
-    recordSplitEl.classList.add("is-busy");
-    recordBtn.classList.add("is-busy");
     recFormatEl.textContent = recFormatLabel(recFormatUsed);
     try {
       let region: Box | null = null;
@@ -2202,16 +2167,13 @@ export function mountApp(root: HTMLElement): void {
       endRecording();
     } finally {
       recStarting = false;
-      recordBtn.disabled = false;
-      recordSplitEl.classList.remove("is-busy");
-      recordBtn.classList.remove("is-busy");
     }
   }
 
   async function stopRecording(): Promise<void> {
     if (!recording || recStopping) return;
     recStopping = true;
-    recordBtn.disabled = true;
+    recStopBtn.disabled = true;
     setStatus("Finishing the recording…");
     try {
       const path = await invoke<string>("stop_recording");
@@ -2228,7 +2190,7 @@ export function mountApp(root: HTMLElement): void {
       setStatus(`Could not save the recording: ${errText(e)}`, "error");
     } finally {
       recStopping = false;
-      recordBtn.disabled = false;
+      recStopBtn.disabled = false;
     }
   }
 
@@ -3865,7 +3827,7 @@ export function mountApp(root: HTMLElement): void {
   settingsBtn.addEventListener("click", () => panel?.open());
 
   captureBtn.addEventListener("click", () => void runCapture());
-  recordBtn.addEventListener("click", () => void (recording ? stopRecording() : startRecording()));
+  recStopBtn.addEventListener("click", () => void stopRecording());
   caretBtn.addEventListener("click", () => setMenuOpen(!captureMenu.isOpen()));
 
   /* ---------------------------------------------------------------- file menu */

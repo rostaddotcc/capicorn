@@ -185,6 +185,30 @@ export interface TextStyle {
   fontStyle: "normal" | "italic";
 }
 
+/** Drop shadow applied to NEW arrow/rect/text/callout/step annotations. */
+export interface ShadowStyle {
+  enabled: boolean;
+  color: string;
+  /** Blur radius, 0..60 px. */
+  blur: number;
+  /** Horizontal offset, -50..50 px. */
+  offsetX: number;
+  /** Vertical offset, -50..50 px. */
+  offsetY: number;
+}
+
+/** `fabric.Shadow` for the active style, or null when shadows are off. */
+export const shadowOf = (host: ToolHost): fabric.Shadow | null => {
+  const shadow = host.shadow();
+  if (!shadow || !shadow.enabled) return null;
+  return new fabric.Shadow({
+    color: shadow.color,
+    blur: shadow.blur,
+    offsetX: shadow.offsetX,
+    offsetY: shadow.offsetY,
+  });
+};
+
 /** The slice of Editor a tool is allowed to touch. */
 export interface ToolHost {
   readonly canvas: fabric.Canvas;
@@ -218,6 +242,8 @@ export interface ToolHost {
   regionThickness(): number;
   /** Magnification for a new lens. */
   magnifyZoom(): number;
+  /** Drop shadow applied to NEW arrow/rect/text/callout/step annotations. */
+  shadow(): ShadowStyle;
 }
 
 export interface Tool {
@@ -368,6 +394,7 @@ class RectTool extends DragTool {
       stroke: this.host.color(),
       strokeWidth: this.host.strokeWidth(),
       strokeUniform: true,
+      shadow: shadowOf(this.host) ?? undefined,
       selectable: false,
       evented: false,
       objectCaching: false,
@@ -649,6 +676,7 @@ class ArrowTool extends DragTool {
       fill: this.host.color(),
       stroke: "transparent",
       strokeWidth: 0,
+      shadow: shadowOf(this.host) ?? undefined,
       selectable: false,
       evented: false,
       objectCaching: false,
@@ -710,6 +738,7 @@ class TextTool implements Tool {
       borderColor: ink,
       editingBorderColor: ink,
       cursorColor: ink,
+      shadow: shadowOf(this.host) ?? undefined,
       selectable: false,
       evented: false,
     });
@@ -824,6 +853,7 @@ class StepTool implements Tool {
       top: point.y,
       originX: "center",
       originY: "center",
+      shadow: shadowOf(this.host) ?? undefined,
       selectable: false,
       evented: false,
       objectCaching: false,
@@ -996,6 +1026,7 @@ class CalloutTool extends DragTool {
       subTargetCheck: true,
       interactive: true,
       objectCaching: false,
+      shadow: shadowOf(this.host) ?? undefined,
       selectable: false,
       evented: false,
       hoverCursor: "move",

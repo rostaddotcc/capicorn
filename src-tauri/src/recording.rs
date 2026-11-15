@@ -735,24 +735,37 @@ mod imp {
     /// Create the session, ask the user which monitor, wait for approval, and open
     /// the PipeWire remote. The returned session must outlive the capture.
     async fn open_portal() -> Result<PortalCapture, String> {
-        let proxy = portal_call(PORTAL_CALL_TIMEOUT, "ScreenCast portal", Screencast::new()).await?;
+        portal_log("open_portal: creating ScreenCast proxy");
+        let proxy = portal_call(PORTAL_CALL_TIMEOUT, "ScreenCast portal", Screencast::new())
+            .await
+            .map_err(|e| {
+                portal_log(&format!("ScreenCast proxy failed: {e}"));
+                e
+            })?;
 
+        portal_log("open_portal: creating session");
         let session = portal_call(
             PORTAL_CALL_TIMEOUT,
             "CreateSession",
             proxy.create_session(Default::default()),
         )
-        .await?;
+        .await
+        .map_err(|e| {
+            portal_log(&format!("CreateSession failed: {e}"));
+            e
+        })?;
 
-        // `select_sources` hands back an empty `Request`; ashpd's own example drops
-        // it (the portal answers on its well-known name). Do NOT `.response()` it.
+        // Offer both monitors and windows so the KDE picker's screen/window choice
+        // both work. Keep the SelectSources request alive until the cast starts —
+        // dropping it early can race the portal's selection on KDE.
+        portal_log("open_portal: select_sources (MONITOR|WINDOW)");
         let _selection = portal_call(
             PORTAL_CALL_TIMEOUT,
             "SelectSources",
             proxy.select_sources(
                 &session,
                 SelectSourcesOptions::default()
-                    .set_sources(SourceType::MONITOR)
+                    .set_sources(SourceType::MONITOR | SourceType::WINDOW)
                     // The cursor is baked into the frame: right for mp4 and gif.
                     .set_cursor_mode(CursorMode::EMBEDDED)
                     .set_multiple(false)
@@ -760,16 +773,24 @@ mod imp {
                     .set_persist_mode(PersistMode::DoNot),
             ),
         )
-        .await?;
-        drop(_selection);
+        .await
+        .map_err(|e| {
+            portal_log(&format!("SelectSources failed: {e}"));
+            e
+        })?;
 
         // `start` opens the picker; it only resolves once the user clicks Share.
+        portal_log("open_portal: start() — opening the picker");
         let request = portal_call(
             PORTAL_CALL_TIMEOUT,
             "Start screen cast",
             proxy.start(&session, None, Default::default()),
         )
-        .await?;
+        .await
+        .map_err(|e| {
+            portal_log(&format!("start() failed: {e}"));
+            e
+        })?;
 
         let streams = match tokio::time::timeout(Duration::from_secs(PICKER_TIMEOUT), async {
             request.response()
@@ -777,33 +798,47 @@ mod imp {
         .await
         {
             Err(_) => {
-                return Err(format!(
+                let m = format!(
                     "the screen-share dialog was not answered within {PICKER_TIMEOUT}s \
                      (a locked screen blocks it) — unlock and try again"
-                ))
+                );
+                portal_log(&format!("picker timeout: {m}"));
+                return Err(m);
             }
-            Ok(Err(err)) => return Err(format!("screen sharing was refused: {err}")),
+            Ok(Err(err)) => {
+                portal_log(&format!("picker response error: {err}"));
+                return Err(format!("screen sharing was refused: {err}"));
+            }
             Ok(Ok(streams)) => streams,
         };
 
+        portal_log(&format!("picker answered: {} stream(s)", streams.streams().len()));
         let stream = streams
             .streams()
             .first()
             .ok_or_else(|| {
-                "the portal returned no streams (this compositor may not support monitor capture)"
-                    .to_string()
+                let m = "the portal returned no streams (this compositor may not support monitor capture)"
+                    .to_string();
+                portal_log(&m);
+                m
             })?;
         let node = stream.pipe_wire_node_id();
         // The negotiated format can differ from this; it is only a hint for the
         // initial enumeration, and `param_changed` has the truth.
         let size = stream.size().unwrap_or((1920, 1080));
+        portal_log(&format!("stream node={node} size={}x{}", size.0, size.1));
 
         let fd = portal_call(
             PORTAL_CALL_TIMEOUT,
             "OpenPipeWireRemote",
             proxy.open_pipe_wire_remote(&session, Default::default()),
         )
-        .await?;
+        .await
+        .map_err(|e| {
+            portal_log(&format!("OpenPipeWireRemote failed: {e}"));
+            e
+        })?;
+        portal_log("open_portal: PipeWire remote opened — starting capture");
 
         Ok(PortalCapture {
             fd,
@@ -843,6 +878,26 @@ mod imp {
     fn rec_log(path: &Path, msg: &str) {
         use std::io::Write;
         if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+            let ts = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis())
+                .unwrap_or(0);
+            let _ = writeln!(f, "[{ts}] {msg}");
+        }
+    }
+
+    /// Diagnostic log for the portal half (before any capture exists), so a
+    /// "picker answered but nothing recorded" failure can be pinpointed. Lives
+    /// at ~/.cache/capicorn-portal.log.
+    fn portal_log(msg: &str) {
+        use std::io::Write;
+        let path = std::env::var("HOME")
+            .map(|h| PathBuf::from(h).join(".cache").join("capicorn-portal.log"))
+            .unwrap_or_else(|_| std::env::temp_dir().join("capicorn-portal.log"));
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
             let ts = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_millis())

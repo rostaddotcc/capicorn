@@ -186,8 +186,23 @@ pub fn get_minimize_to_tray(flags: State<'_, AppFlags>) -> bool {
 
 /// Label of the widget webview window.
 pub const WIDGET_LABEL: &str = "widget";
+
+/// Size of the widget in its two visual states, in logical pixels. These must
+/// stay in step with `src/widget.css`:
+///
+/// | state    | window | drawn surface           |
+/// |----------|--------|-------------------------|
+/// | folded   | 56x54  | 44x44 tab ("flärp")     |
+/// | expanded | 252x60 | 240x50 capture pill     |
+///
+/// The window genuinely changes size (see [`widget_apply_size`]) rather than
+/// keeping one large transparent surface: on Wayland a surface's input region
+/// is the whole surface, so a permanently large window would swallow desktop
+/// clicks around a collapsed tab.
 const WIDGET_WIDTH: f64 = 252.0;
 const WIDGET_HEIGHT: f64 = 60.0;
+const WIDGET_TAB_WIDTH: f64 = 56.0;
+const WIDGET_TAB_HEIGHT: f64 = 54.0;
 
 fn widget_window(app: &AppHandle) -> Option<WebviewWindow> {
     app.get_webview_window(WIDGET_LABEL)
@@ -202,11 +217,16 @@ fn build_widget(app: &AppHandle) -> Result<WebviewWindow, String> {
         WebviewUrl::App("widget.html".into()),
     )
     .title("Capicorn")
-    .inner_size(WIDGET_WIDTH, WIDGET_HEIGHT)
+    // Starts folded: an idle widget is a small tab, never a parked pill.
+    .inner_size(WIDGET_TAB_WIDTH, WIDGET_TAB_HEIGHT)
     .decorations(false)
     .transparent(true)
     .shadow(false)
-    .resizable(false)
+    // Resizable on purpose: GTK clamps `gtk_window_resize` to the window's
+    // geometry hints, and `resizable(false)` pins those hints to the current
+    // size — a fixed-size widget can never grow into the pill. There is no
+    // titlebar and no resize border, so nothing can be resized by hand.
+    .resizable(true)
     .skip_taskbar(true)
     .visible(true)
     .focused(true);
@@ -221,26 +241,50 @@ fn build_widget(app: &AppHandle) -> Result<WebviewWindow, String> {
     if let Err(err) = window.set_always_on_top(true) {
         eprintln!("capicorn: widget always-on-top not supported here ({err}); normal stacking applies");
     }
-    place_top_right(&window);
+    place_top_right(&window, WIDGET_TAB_WIDTH);
     Ok(window)
 }
 
-/// Ask the compositor to park the widget in the top-right corner. Under Wayland
-/// this is a no-op (positioning is the compositor's job) and the error is
-/// ignored on purpose.
-fn place_top_right<R: Runtime>(window: &WebviewWindow<R>) {
+/// Ask the compositor to park the widget in the top-right corner, keeping its
+/// right edge fixed whichever state it is in.
+///
+/// Under Wayland this is a no-op (positioning is the compositor's job) and the
+/// error is ignored on purpose: the window then keeps its top-left corner and
+/// grows rightwards when it expands.
+fn place_top_right<R: Runtime>(window: &WebviewWindow<R>, logical_width: f64) {
     let Ok(Some(monitor)) = window.current_monitor() else {
         return;
     };
     let scale = monitor.scale_factor();
     let size = monitor.size();
     let origin = monitor.position();
-    let x = origin.x + size.width as i32 - (WIDGET_WIDTH * scale) as i32 - (16.0 * scale) as i32;
+    let x = origin.x + size.width as i32 - (logical_width * scale) as i32 - (16.0 * scale) as i32;
     let y = origin.y + (32.0 * scale) as i32;
     let _ = window.set_position(tauri::PhysicalPosition::new(x, y));
 }
 
+/// Resize the widget for one visual state (see [`WIDGET_TAB_WIDTH`]).
+///
+/// `set_size` is the only supported size path on Wayland; under X11 it also
+/// re-anchors the window so the pill grows leftwards from the tab's right edge
+/// instead of walking off the monitor.
+fn widget_apply_size<R: Runtime>(window: &WebviewWindow<R>, expanded: bool) -> Result<(), String> {
+    let (width, height) = if expanded {
+        (WIDGET_WIDTH, WIDGET_HEIGHT)
+    } else {
+        (WIDGET_TAB_WIDTH, WIDGET_TAB_HEIGHT)
+    };
+    window
+        .set_size(tauri::LogicalSize::new(width, height))
+        .map_err(|err| format!("could not resize the widget: {err}"))?;
+    place_top_right(window, width);
+    Ok(())
+}
+
 fn show_widget<R: Runtime>(window: &WebviewWindow<R>) -> Result<(), String> {
+    // Always come back folded: `widget_capture` hides the widget mid-pill, and
+    // it has to reappear as a tab rather than a pill parked over the desktop.
+    let _ = widget_apply_size(window, false);
     window
         .show()
         .map_err(|err| format!("could not show the widget: {err}"))?;
@@ -295,12 +339,65 @@ pub fn toggle_widget(app: AppHandle) -> Result<bool, String> {
     }
 }
 
+/// The widget's single channel to the backend.
+///
+/// `mode` is one of:
+///   * `"full"` / `"region"` — start a capture in the main window;
+///   * `"move"`              — native interactive window move (the drag);
+///   * `"expand"` / `"collapse"` — resize between the pill and the edge tab.
+///
+/// Why window plumbing rides on a "capture" command: the `default` capability
+/// is scoped to `windows: ["main"]`, so every `plugin:window|*` command is
+/// rejected from the widget webview with "not allowed by ACL". That is the real
+/// reason the widget never moved — `getCurrentWindow().startDragging()` *and*
+/// `data-tauri-drag-region` both invoke `plugin:window|start_dragging`, which
+/// this window may not call. Application commands are not ACL-gated, so the
+/// widget asks here and Rust performs the very same native calls
+/// (`start_dragging`, `set_size`) with no permission in the way.
+#[tauri::command]
+pub fn widget_capture(app: AppHandle, mode: String) -> Result<(), String> {
+    match mode.as_str() {
+        "move" => widget_drag(&app),
+        "expand" => widget_resize(&app, true),
+        "collapse" => widget_resize(&app, false),
+        "full" | "region" => capture_from_widget(&app, &mode),
+        other => Err(format!("unknown widget mode: {other}")),
+    }
+}
+
+/// Start a compositor-driven move. This maps to `xdg_toplevel.move` on Wayland
+/// with the serial of the press that is still current; a manual `set_position`
+/// would simply be ignored there.
+fn widget_drag(app: &AppHandle) -> Result<(), String> {
+    let Some(window) = widget_window(app) else {
+        return Ok(());
+    };
+    window
+        .start_dragging()
+        .map_err(|err| format!("could not start the widget drag: {err}"))
+}
+
+/// Resize the widget to one of its two visual states. Failures are logged and
+/// swallowed: a compositor that refuses the resize must not break the widget's
+/// capture buttons.
+fn widget_resize(app: &AppHandle, expanded: bool) -> Result<(), String> {
+    let Some(window) = widget_window(app) else {
+        return Ok(());
+    };
+    if let Err(err) = widget_apply_size(&window, expanded) {
+        eprintln!(
+            "capicorn: widget resize to {} refused ({err}); keeping the current size",
+            if expanded { "the pill" } else { "the tab" }
+        );
+    }
+    Ok(())
+}
+
 /// "Capture" pressed inside the widget: hand the mode to the main window, hide
 /// the widget (so it never ends up in the screenshot) and bring the main window
 /// forward.
-#[tauri::command]
-pub fn widget_capture(app: AppHandle, mode: String) -> Result<(), String> {
-    if let Some(window) = widget_window(&app) {
+fn capture_from_widget(app: &AppHandle, mode: &str) -> Result<(), String> {
+    if let Some(window) = widget_window(app) {
         let _ = window.hide();
     }
     app.emit_to(
@@ -547,6 +644,22 @@ mod tests {
         assert!(flags.dirty());
         assert!(flags.minimize_to_tray());
         assert!(flags.force_quit());
+    }
+
+    #[test]
+    fn widget_folds_tighter_than_it_expands() {
+        // Collapsed must be strictly smaller than expanded, or the window resize
+        // would be a no-op and the widget would keep blocking desktop clicks
+        // around the tab.
+        assert!(WIDGET_TAB_WIDTH < WIDGET_WIDTH);
+        assert!(WIDGET_TAB_HEIGHT < WIDGET_HEIGHT);
+
+        // Content boxes must match src/widget.css exactly:
+        //   window − (6px + 6px horizontal, 5px + 5px vertical padding)
+        assert_eq!(WIDGET_TAB_WIDTH - 12.0, 44.0, "tab width");
+        assert_eq!(WIDGET_TAB_HEIGHT - 10.0, 44.0, "tab height");
+        assert_eq!(WIDGET_WIDTH - 12.0, 240.0, "pill width");
+        assert_eq!(WIDGET_HEIGHT - 10.0, 50.0, "pill height");
     }
 
     #[test]

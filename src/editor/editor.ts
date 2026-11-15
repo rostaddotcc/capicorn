@@ -31,6 +31,7 @@ import {
   type Box,
   type ImageInfo,
   type Point,
+  type ShadowStyle,
   type TextStyle,
   type Tool,
   type ToolHost,
@@ -44,6 +45,7 @@ import {
 } from "./tools";
 
 export type { BlurMode } from "./blur";
+export type { ShadowStyle } from "./tools";
 
 export type ToolId =
   | "select"
@@ -98,6 +100,8 @@ export interface EditorStyle {
   blurMode: BlurMode;
   /** Gaussian radius / pixelate block size, 2..60 scene px. */
   blurRadius: number;
+  /** Drop shadow for NEW arrow/rect/text/callout/step annotations. */
+  shadow: ShadowStyle;
 }
 
 const MAX_HISTORY = 80;
@@ -131,6 +135,37 @@ const MAX_CALLOUT_FONT_SIZE = 120;
 const DEFAULT_REGION_THICKNESS = 2;
 const MIN_REGION_THICKNESS = 1;
 const MAX_REGION_THICKNESS = 60;
+/** Drop-shadow limits (blur radius and offsets, scene px). */
+const MAX_SHADOW_BLUR = 60;
+const MAX_SHADOW_OFFSET = 50;
+const DEFAULT_SHADOW: ShadowStyle = {
+  enabled: false,
+  color: "rgba(0,0,0,0.45)",
+  blur: 8,
+  offsetX: 0,
+  offsetY: 4,
+};
+
+/** Same colour at a lower alpha — used for the brush footprint's fill. */
+const tint = (color: string, alpha: number): string => {
+  const value = color.trim();
+  const short = /^#([0-9a-f])([0-9a-f])([0-9a-f])$/i.exec(value);
+  if (short) {
+    const channels = [short[1], short[2], short[3]].map((part) => parseInt(part + part, 16));
+    return `rgba(${channels[0]}, ${channels[1]}, ${channels[2]}, ${alpha})`;
+  }
+  const long = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(value);
+  if (long) {
+    const channels = [long[1], long[2], long[3]].map((part) => parseInt(part, 16));
+    return `rgba(${channels[0]}, ${channels[1]}, ${channels[2]}, ${alpha})`;
+  }
+  const rgb = /^rgba?\(([^)]+)\)$/i.exec(value);
+  if (rgb) {
+    const parts = rgb[1].split(/[,\s/]+/).filter(Boolean);
+    if (parts.length >= 3) return `rgba(${parts[0]}, ${parts[1]}, ${parts[2]}, ${alpha})`;
+  }
+  return `rgba(255, 255, 255, ${alpha})`;
+};
 
 /** Range a tool's size slider spans; `step` is the increment the UI steps by. */
 export interface ToolSizeRange {
@@ -249,6 +284,16 @@ export class Editor {
   private regionThickness = DEFAULT_REGION_THICKNESS;
   /** Magnification for NEW lenses. */
   private magnifyZoom = MAGNIFY_ZOOM;
+  /** Drop shadow applied to NEW arrow/rect/text/callout/step annotations. */
+  private shadow: ShadowStyle = { ...DEFAULT_SHADOW };
+
+  /**
+   * Brush footprint preview: an editor-only decoration (never exported, never
+   * in history) that follows the pointer so the stroke size is visible before
+   * a single pixel is drawn.
+   */
+  private brushCursor: fabric.Circle | null = null;
+  private brushCursorVisible = false;
 
   private history: HistoryEntry[] = [];
   private cursor = -1;
@@ -293,12 +338,18 @@ export class Editor {
       calloutFontSize: () => this.calloutFontSize,
       regionThickness: () => this.regionThickness,
       magnifyZoom: () => this.magnifyZoom,
+      shadow: () => this.getShadow(),
     };
 
     this.canvas.on("mouse:down", this.onMouseDown);
     this.canvas.on("mouse:move", this.onMouseMove);
     this.canvas.on("mouse:up", this.onMouseUp);
+    this.canvas.on("mouse:out", this.onMouseOut);
     this.canvas.on("object:modified", this.onObjectModified);
+
+    // Fabric's own mouse:out is unreliable across the pointer leaving the
+    // element, so the brush preview is also hidden on a native pointerleave.
+    this.canvas.upperCanvasEl?.addEventListener("pointerleave", this.onPointerLeave);
 
     window.addEventListener("keydown", this.onKeyDown, true);
     window.addEventListener("pointerdown", this.onPointerDownCapture, true);
@@ -416,6 +467,8 @@ export class Editor {
     const previous = this.tools.get(this.tool);
     if (previous && this.tool !== tool) previous.deactivate();
     this.tool = tool;
+    // The brush footprint belongs to the brush tool only.
+    if (tool !== "brush") this.hideBrushCursor();
     const next = this.currentTool();
     next.activate();
     this.applyInteractivity();
@@ -442,6 +495,9 @@ export class Editor {
     this.resizeObserver?.disconnect();
     window.removeEventListener("keydown", this.onKeyDown, true);
     window.removeEventListener("pointerdown", this.onPointerDownCapture, true);
+    this.canvas.upperCanvasEl?.removeEventListener("pointerleave", this.onPointerLeave);
+    this.brushCursor = null;
+    this.brushCursorVisible = false;
     for (const tool of this.tools.values()) tool.deactivate();
     this.tools.clear();
     this.chrome.clear();
@@ -469,6 +525,7 @@ export class Editor {
     const next = color.trim();
     if (!next) return;
     this.inkColor = next;
+    if (this.tool === "brush") this.syncBrushCursor();
     this.notify();
   }
 
@@ -519,6 +576,42 @@ export class Editor {
     return this.blurRadius;
   }
 
+  /* --------------------------------------------------------------- shadows */
+
+  /**
+   * Drop shadow for NEW arrow/rect/text/callout/step annotations. Partial
+   * patches are merged into the live style; every field is validated (blur
+   * 0..60, offsets -50..50, non-empty colour) so junk from a stored preset
+   * cannot poison the canvas. Existing annotations keep their own shadow.
+   */
+  setShadow(patch: Partial<ShadowStyle>): void {
+    if (!patch || typeof patch !== "object") return;
+    const next: ShadowStyle = { ...this.shadow };
+
+    if (typeof patch.enabled === "boolean") next.enabled = patch.enabled;
+    if (typeof patch.color === "string" && patch.color.trim()) {
+      next.color = patch.color.trim();
+    }
+    if (typeof patch.blur === "number" && Number.isFinite(patch.blur)) {
+      next.blur = Math.min(Math.max(Math.round(patch.blur), 0), MAX_SHADOW_BLUR);
+    }
+    if (typeof patch.offsetX === "number" && Number.isFinite(patch.offsetX)) {
+      next.offsetX = Math.min(Math.max(Math.round(patch.offsetX), -MAX_SHADOW_OFFSET), MAX_SHADOW_OFFSET);
+    }
+    if (typeof patch.offsetY === "number" && Number.isFinite(patch.offsetY)) {
+      next.offsetY = Math.min(Math.max(Math.round(patch.offsetY), -MAX_SHADOW_OFFSET), MAX_SHADOW_OFFSET);
+    }
+
+    if (JSON.stringify(next) === JSON.stringify(this.shadow)) return;
+    this.shadow = next;
+    this.notify();
+  }
+
+  /** A copy of the live shadow style (safe for a preset to hold on to). */
+  getShadow(): ShadowStyle {
+    return { ...this.shadow };
+  }
+
   /** Apply the current mode/radius to selected blur regions. True if any. */
   private retuneBlurSelection(): boolean {
     if (this.restoring) return false;
@@ -552,6 +645,7 @@ export class Editor {
       italic: this.textItalic,
       blurMode: this.blurMode,
       blurRadius: this.blurRadius,
+      shadow: this.getShadow(),
     };
   }
 
@@ -579,6 +673,7 @@ export class Editor {
     if (typeof style.italic === "boolean") this.setTextItalic(style.italic);
     if (style.blurMode) this.setBlurMode(style.blurMode);
     if (isNumber(style.blurRadius)) this.setBlurRadius(style.blurRadius);
+    if (style.shadow && typeof style.shadow === "object") this.setShadow(style.shadow);
 
     // The setters above already notify; this covers the no-op-but-changed case
     // (e.g. a preset that only matched already-active values) exactly once.
@@ -681,6 +776,7 @@ export class Editor {
     switch (this.tool) {
       case "brush":
         this.brushWidth = Math.round(value);
+        this.syncBrushCursor();
         break;
       case "step":
         this.stepSize = Math.round(value);
@@ -970,6 +1066,7 @@ export class Editor {
   private readonly onMouseMove = (event: fabric.TPointerEventInfo): void => {
     if (this.destroyed || this.restoring) return;
     const point = this.pointOf(event);
+    if (this.tool === "brush") this.moveBrushCursor(point);
     if (this.textDrag) {
       this.moveTextDrag(point);
       return;
@@ -990,6 +1087,14 @@ export class Editor {
 
   private readonly onObjectModified = (): void => {
     this.commit();
+  };
+
+  private readonly onMouseOut = (): void => {
+    this.hideBrushCursor();
+  };
+
+  private readonly onPointerLeave = (): void => {
+    this.hideBrushCursor();
   };
 
   private readonly onKeyDown = (event: KeyboardEvent): void => {
@@ -1145,6 +1250,86 @@ export class Editor {
     }
 
     if (!selecting) this.canvas.discardActiveObject();
+    this.canvas.requestRenderAll();
+  }
+
+  /* ------------------------------------------------------ brush footprint */
+
+  /**
+   * The brush preview circle: editor-only chrome like the crop shading —
+   * unselectable, never a pointer target, excluded from export and from history
+   * (fabric's serializer skips excludeFromExport objects). Its diameter is the
+   * live brush width in scene px, i.e. exactly the footprint of the next stroke.
+   */
+  private brushCursorObject(): fabric.Circle {
+    const existing = this.brushCursor;
+    if (existing) return existing;
+    const cursor = new fabric.Circle({
+      left: 0,
+      top: 0,
+      radius: Math.max(1, this.brushWidth) / 2,
+      originX: "center",
+      originY: "center",
+      fill: tint(this.inkColor, 0.18),
+      stroke: this.inkColor,
+      strokeWidth: 1,
+      strokeUniform: true,
+      selectable: false,
+      evented: false,
+      hasControls: false,
+      hasBorders: false,
+      excludeFromExport: true,
+      objectCaching: false,
+      hoverCursor: "crosshair",
+    });
+    this.brushCursor = cursor;
+    return cursor;
+  }
+
+  /** Re-apply brush width + ink colour to the preview. */
+  private retuneBrushCursor(cursor: fabric.Circle): void {
+    cursor.set({
+      radius: Math.max(1, this.brushWidth) / 2,
+      fill: tint(this.inkColor, 0.18),
+      stroke: this.inkColor,
+    });
+    cursor.setCoords();
+  }
+
+  /** Park the preview on a scene point, above everything else. */
+  private moveBrushCursor(point: Point): void {
+    if (this.tool !== "brush") return;
+    const canvas = this.canvas;
+    const cursor = this.brushCursorObject();
+    this.retuneBrushCursor(cursor);
+    cursor.set({ left: point.x, top: point.y });
+    cursor.setCoords();
+    if (!canvas.getObjects().includes(cursor)) canvas.add(cursor);
+    canvas.bringObjectToFront(cursor);
+    this.brushCursorVisible = true;
+    canvas.requestRenderAll();
+  }
+
+  /** Take the preview off the canvas (pointer left / tool changed). */
+  private hideBrushCursor(): void {
+    this.brushCursorVisible = false;
+    const cursor = this.brushCursor;
+    if (!cursor) return;
+    if (this.canvas.getObjects().includes(cursor)) this.canvas.remove(cursor);
+    this.canvas.requestRenderAll();
+  }
+
+  /** Keep the preview alive across undo/redo, and drop it when not brushing. */
+  private syncBrushCursor(): void {
+    if (this.tool !== "brush") {
+      this.hideBrushCursor();
+      return;
+    }
+    if (!this.brushCursorVisible) return;
+    const cursor = this.brushCursorObject();
+    this.retuneBrushCursor(cursor);
+    if (!this.canvas.getObjects().includes(cursor)) this.canvas.add(cursor);
+    this.canvas.bringObjectToFront(cursor);
     this.canvas.requestRenderAll();
   }
 
@@ -1432,6 +1617,9 @@ export class Editor {
     this.cropBox = crop ? this.clampToImage(crop) : null;
     this.applyInteractivity();
     this.renderCropOverlay();
+    // loadFromJSON emptied the canvas: bring the brush footprint back if the
+    // brush is mid-hover.
+    this.syncBrushCursor();
     canvas.requestRenderAll();
     this.restoring = false;
     this.notify();

@@ -1,7 +1,13 @@
-/* Capicorn — floating quick-access widget.
-   A single compact glassy pill in a transparent, frameless window. Only the
-   pill is visible (the window itself is transparent); the whole pill surface
-   drags the window, the buttons stay clickable. No page chrome, no scrollbars. */
+/* Capicorn — floating quick-capture widget.
+   Two visual states inside one transparent, frameless window:
+
+     collapsed  → a 44x44 glass "flärp" parked at the window's left edge
+     expanded   → the 240x50 capture pill (grip + Full + Region + fold + close)
+
+   The WINDOW size changes with the state (56x54 ↔ 252x60, driven from Rust;
+   see `windows.rs`), so nothing invisible ever blocks the desktop behind it.
+   Both the tab and the pill are drag surfaces (`data-tauri-drag-region`,
+   applied in `widget-main.ts`); buttons sit on top as ordinary controls. */
 
 :root {
   --accent: #8b7cf6;
@@ -13,6 +19,7 @@
   --surface-edge: rgba(255, 255, 255, 0.14);
   --stroke: rgba(255, 255, 255, 0.10);
   --shade: 0 12px 30px rgba(5, 3, 16, 0.55), 0 3px 8px rgba(5, 3, 16, 0.45);
+  --shade-tab: 0 6px 16px rgba(5, 3, 16, 0.48), 0 2px 5px rgba(5, 3, 16, 0.38);
   --text: #f1eefb;
   --muted: #aaa5c2;
   --hover: rgba(255, 255, 255, 0.08);
@@ -21,10 +28,11 @@
 }
 
 :root[data-theme="light"] {
-  --surface: linear-gradient(180deg, rgba(255, 255, 255, 0.90), rgba(244, 241, 252, 0.90));
+  --surface: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(244, 241, 252, 0.92));
   --surface-edge: rgba(255, 255, 255, 0.9);
   --stroke: rgba(30, 24, 60, 0.12);
   --shade: 0 12px 28px rgba(35, 26, 70, 0.20), 0 3px 7px rgba(35, 26, 70, 0.14);
+  --shade-tab: 0 6px 14px rgba(35, 26, 70, 0.18), 0 2px 4px rgba(35, 26, 70, 0.12);
   --text: #272138;
   --muted: #6f6889;
   --hover: rgba(30, 24, 60, 0.06);
@@ -45,25 +53,76 @@ html, body {
   user-select: none;
 }
 
-/* A little transparent breathing room so the pill's shadow is never clipped
-   by the window edge. The window is 252x60; the pill sits inside this padding. */
+/* The window is only a hair larger than the drawn surface; the padding is the
+   shadow's breathing room. Must match `WIDGET_*` in src-tauri/src/windows.rs:
+     collapsed 56x54 − (6px + 6px, 5px + 5px) = 44x44 tab
+     expanded 252x60 − (6px + 6px, 5px + 5px) = 240x50 pill */
 .widget-body {
-  display: flex;
-  align-items: center;
-  justify-content: center;
   padding: 5px 6px;
   font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
 }
 
-#widget { -webkit-font-smoothing: antialiased; }
+#widget {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* --------------------------------------------------------------- the tab */
+
+.w-tab {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 1px solid var(--stroke);
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: var(--shade-tab), inset 0 1px 0 var(--surface-edge);
+  color: var(--accent-bright);
+  cursor: grab;
+  backdrop-filter: blur(18px) saturate(150%);
+  -webkit-backdrop-filter: blur(18px) saturate(150%);
+  transition: transform 140ms ease, opacity 120ms ease,
+              border-color 160ms ease, box-shadow 160ms ease, color 160ms ease;
+}
+.w-tab:hover {
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  color: var(--text);
+  transform: translateY(-1px);
+}
+.w-tab:active { cursor: grabbing; transform: scale(0.97); }
+.w-tab:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px var(--accent-soft);
+}
+.w-tab svg { display: block; width: 22px; height: 22px; pointer-events: none; }
+
+/* The glyph must not be a hit target: the tab itself has to receive the
+   pointer so the native drag region (and the expand-on-hover) works. */
+.w-tab > * { pointer-events: none; }
+
+.w-widget[data-state="expanded"] .w-tab {
+  opacity: 0;
+  pointer-events: none;
+  transform: scale(0.92);
+}
 
 /* --------------------------------------------------------------- the pill */
 
 .w-bar {
+  position: absolute;
+  left: 0;
+  top: 0;
   display: flex;
   align-items: center;
   gap: 3px;
-  width: 100%;
+  width: 240px;
   height: 50px;
   padding: 0 6px;
   border: 1px solid var(--stroke);
@@ -71,9 +130,17 @@ html, body {
   background: var(--surface);
   box-shadow: var(--shade), inset 0 1px 0 var(--surface-edge);
   color: var(--text);
+  cursor: grab;
   backdrop-filter: blur(20px) saturate(150%);
   -webkit-backdrop-filter: blur(20px) saturate(150%);
-  cursor: default;
+  transition: opacity 130ms ease, transform 170ms cubic-bezier(0.2, 0.75, 0.3, 1);
+}
+.w-bar:active { cursor: grabbing; }
+
+.w-widget[data-state="collapsed"] .w-bar {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(3px) scale(0.96);
 }
 
 /* ------------------------------------------------------------ drag grip */
@@ -93,7 +160,6 @@ html, body {
   transition: opacity 140ms ease, background-color 140ms ease, color 140ms ease;
 }
 .w-grip:hover { opacity: 1; background: var(--hover); color: var(--text); }
-.w-grip:active { cursor: grabbing; }
 
 .w-grip__grid {
   display: grid;
@@ -121,7 +187,7 @@ html, body {
   gap: 3px;
   min-width: 0;
   height: 40px;
-  padding: 0 8px;
+  padding: 0 6px;
   border: 0;
   border-radius: 11px;
   background: transparent;
@@ -162,7 +228,7 @@ html, body {
 }
 .w-btn:not(.w-btn--ghost):hover::after { transform: translateX(-50%) scaleX(1); opacity: 0.9; }
 
-/* Close — icon-only ghost affordance. */
+/* Icon-only ghost affordances (fold back to the tab, close). */
 .w-btn--ghost {
   flex: 0 0 auto;
   width: 30px;
@@ -171,18 +237,25 @@ html, body {
   border-radius: 9px;
   color: var(--muted);
 }
-.w-btn--ghost:hover { background: var(--press); color: var(--danger); }
+.w-btn--ghost:hover { background: var(--press); color: var(--text); }
 .w-btn--ghost::after { display: none; }
+
+/* Fold: the pill retreats into its tab. Slightly narrower than close. */
+.w-btn--fold { width: 26px; color: var(--muted); }
+.w-btn--fold:hover { color: var(--accent-bright); }
+.w-btn--close:hover { color: var(--danger); }
 
 .w-sep {
   flex: 0 0 auto;
   width: 1px;
   height: 24px;
-  margin: 0 3px;
+  margin: 0 2px;
   border-radius: 1px;
   background: var(--stroke);
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .w-btn, .w-grip, .w-btn:not(.w-btn--ghost)::after { transition: none; }
+  .w-tab, .w-bar, .w-btn, .w-grip,
+  .w-btn:not(.w-btn--ghost)::after { transition: none; }
+  .w-tab:hover, .w-tab:active, .w-bar { transform: none; }
 }

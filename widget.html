@@ -6,7 +6,9 @@
     <title>Capicorn</title>
   </head>
   <body class="widget-body">
-    <!-- Floating quick-access widget: frameless, transparent, ~260x64. -->
+    <!-- Floating quick-access widget: frameless + transparent. The window
+         shrinks to 56x54 while folded and grows to 252x60 when the tab is
+         expanded; src/widget-main.ts builds both surfaces. -->
     <div id="widget"></div>
     <script type="module" src="/src/widget-main.ts"></script>
   </body>

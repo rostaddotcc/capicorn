@@ -58,6 +58,20 @@ const CAPTURE_HINT: Record<CaptureMode, string> = {
 const isCancelled = (message: string): boolean =>
   /cancel|dismiss|denied|deny|abort|nothing selected/i.test(message);
 
+/**
+ * A *recording* cancel is only a user dismissing the picker. Backend failures
+ * also mention cancel/abort ("pipeline aborted after cancellation") — those are
+ * real errors and must surface verbatim, so require the whole message to be a
+ * bare cancel signal rather than any message containing the word.
+ */
+const isRecordingCancel = (message: string): boolean => {
+  const text = message.trim().replace(/[.!]+$/, "").toLowerCase();
+  if (text === "" || text.length > 80) return false;
+  return /^(?:user\s+)?(?:cancel(?:l)?ed|cancel|abort(?:ed)?|dismiss(?:ed)?|nothing selected|no screen (?:was )?(?:picked|selected))(?:\s+by\s+user)?$/.test(
+    text,
+  );
+};
+
 /** Backend progress payload for a live manual-scroll stitch. */
 type ScrollingStatus = {
   frames?: number;
@@ -99,6 +113,18 @@ type BlurApi = {
 };
 
 /**
+ * Wave 13: drop-shadow for the tools that draw a shape (arrow, rect, text,
+ * callout, step). One flat snapshot, mirroring the editor's own ShadowStyle.
+ */
+type ShadowStyle = {
+  enabled: boolean;
+  color: string;
+  blur: number;
+  offsetX: number;
+  offsetY: number;
+};
+
+/**
  * Wave 7 style contract: one flat snapshot of everything the editor draws with,
  * so the shell can save it as a named preset. Methods stay optional, so the
  * shell also builds against an editor revision that has not shipped them yet.
@@ -112,10 +138,17 @@ type EditorStyle = {
   italic: boolean;
   blurMode: BlurMode;
   blurRadius: number;
+  shadow: ShadowStyle;
 };
 type StyleApi = {
   getStyle?(): Partial<EditorStyle>;
   applyStyle?(patch: Partial<EditorStyle>): void;
+};
+
+/** Shadow API landed by track E; optional so the shell also builds without it. */
+type ShadowApi = {
+  getShadow?(): Partial<ShadowStyle>;
+  setShadow?(patch: Partial<ShadowStyle>): void;
 };
 
 type ChangeDetail = { tool?: ToolId; canUndo?: boolean; canRedo?: boolean };
@@ -286,7 +319,7 @@ const STROKES: ReadonlyArray<{ id: string; width: number; label: string }> = [
   { id: "L", width: 5, label: "Thick stroke" },
 ];
 
-type PropGroup = "color" | "stroke" | "font" | "blur";
+type PropGroup = "color" | "stroke" | "font" | "blur" | "shadow";
 
 /**
  * Contextual properties rail: the one place a tool's settings live. Each tool
@@ -304,17 +337,20 @@ const PROPS: Record<string, { hint: string; groups: ReadonlyArray<PropGroup>; st
   },
   arrow: {
     hint: "Drag to draw an arrow. Width sets how heavy it looks.",
-    groups: ["color", "stroke"],
+    groups: ["color", "stroke", "shadow"],
   },
-  rect: { hint: "Drag to draw a box around something.", groups: ["color", "stroke"] },
+  rect: {
+    hint: "Drag to draw a box around something.",
+    groups: ["color", "stroke", "shadow"],
+  },
   step: {
     hint: "Click to drop the next numbered step — numbers stay in order.",
-    groups: ["color", "stroke"],
+    groups: ["color", "stroke", "shadow"],
     strokeLabel: "Ring width",
   },
   text: {
     hint: "Click where the text should start, then type.",
-    groups: ["color", "font"],
+    groups: ["color", "font", "shadow"],
   },
   bucket: {
     hint: "Click a closed area to flood-fill it with the current color.",
@@ -340,7 +376,7 @@ const PROPS: Record<string, { hint: string; groups: ReadonlyArray<PropGroup>; st
   },
   callout: {
     hint: "Click to place a speech bubble, then type the note.",
-    groups: ["color", "font", "stroke"],
+    groups: ["color", "font", "stroke", "shadow"],
     strokeLabel: "Outline",
   },
   magnify: {
@@ -369,6 +405,24 @@ const DEFAULT_BLUR_MODE: BlurMode = "gaussian";
 const DEFAULT_BLUR_RADIUS = 12;
 const MIN_BLUR_RADIUS = 2;
 const MAX_BLUR_RADIUS = 60;
+const SHADOW_KEY = "capicorn:shadow";
+const MIN_SHADOW_BLUR = 0;
+const MAX_SHADOW_BLUR = 60;
+const MIN_SHADOW_OFFSET = -50;
+const MAX_SHADOW_OFFSET = 50;
+
+/** Nib preview circle: the 48px box maps the brush range onto 2–44 px. */
+const BRUSH_PREVIEW_MIN = 2;
+const BRUSH_PREVIEW_MAX = 44;
+
+/** Matches the editor's own default shadow (track E contract). */
+const DEFAULT_SHADOW: ShadowStyle = {
+  enabled: false,
+  color: "rgba(0,0,0,0.45)",
+  blur: 8,
+  offsetX: 0,
+  offsetY: 4,
+};
 
 /** Text formatting slice of the Editor (landed by track E alongside this shell). */
 type TextApi = {
@@ -478,6 +532,69 @@ const readBlurRadius = (): number => {
   return Math.min(MAX_BLUR_RADIUS, Math.max(MIN_BLUR_RADIUS, Math.round(stored)));
 };
 
+/* ---------------------------------------------------------------- shadow */
+
+const clampNumber = (value: unknown, fallback: number, min: number, max: number): number =>
+  typeof value === "number" && Number.isFinite(value)
+    ? Math.min(max, Math.max(min, Math.round(value)))
+    : fallback;
+
+/** Colours we accept from storage: hex, rgb()/rgba() or a plain CSS name. */
+const isCssColor = (value: unknown): value is string =>
+  typeof value === "string" &&
+  value.trim() !== "" &&
+  /^(#[0-9a-f]{3,8}|rgba?\([\d\s.,%/]+\)|[a-z]{3,20})$/i.test(value.trim());
+
+/** Coerce anything shadow-shaped into a complete, in-range ShadowStyle. */
+const normalizeShadow = (value: unknown, base: ShadowStyle = DEFAULT_SHADOW): ShadowStyle => {
+  if (!value || typeof value !== "object") return { ...base };
+  const src = value as Record<string, unknown>;
+  return {
+    enabled: typeof src.enabled === "boolean" ? src.enabled : base.enabled,
+    color: isCssColor(src.color) ? src.color.trim() : base.color,
+    blur: clampNumber(src.blur, base.blur, MIN_SHADOW_BLUR, MAX_SHADOW_BLUR),
+    offsetX: clampNumber(src.offsetX, base.offsetX, MIN_SHADOW_OFFSET, MAX_SHADOW_OFFSET),
+    offsetY: clampNumber(src.offsetY, base.offsetY, MIN_SHADOW_OFFSET, MAX_SHADOW_OFFSET),
+  };
+};
+
+const readShadow = (): ShadowStyle => {
+  const raw = readStore(SHADOW_KEY);
+  if (raw === null || raw.trim() === "") return { ...DEFAULT_SHADOW };
+  try {
+    return normalizeShadow(JSON.parse(raw));
+  } catch {
+    return { ...DEFAULT_SHADOW };
+  }
+};
+
+/** Split a CSS colour into the hex a color input understands and its alpha. */
+const splitColorAlpha = (color: string): { hex: string; alpha: number } => {
+  const rgba = color.match(
+    /rgba?\(\s*([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)(?:[\s,/]+([\d.]+))?\s*\)/i,
+  );
+  if (rgba) {
+    const hex = `#${[rgba[1], rgba[2], rgba[3]]
+      .map((part) =>
+        Math.min(255, Math.max(0, Math.round(Number(part))))
+          .toString(16)
+          .padStart(2, "0"),
+      )
+      .join("")}`;
+    const alpha = rgba[4] === undefined ? 1 : Math.min(1, Math.max(0, Number(rgba[4])));
+    return { hex, alpha };
+  }
+  return { hex: /^#[0-9a-f]{6}$/i.test(color) ? color.toLowerCase() : "#000000", alpha: 1 };
+};
+
+/** Re-attach the alpha the shadow already carried to a freshly picked hex. */
+const withAlpha = (hex: string, alpha: number): string => {
+  if (alpha >= 0.999) return hex.toLowerCase();
+  const n = parseInt(hex.slice(1), 16);
+  const parts = [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  return `rgba(${parts[0]}, ${parts[1]}, ${parts[2]}, ${Math.round(alpha * 100) / 100})`;
+};
+
 /* ------------------------------------------------- new: presets / recents */
 
 const PRESETS_KEY = "capicorn:presets";
@@ -541,6 +658,9 @@ const sanitizeStyle = (value: unknown): Partial<EditorStyle> => {
   }
   if (typeof src.blurRadius === "number" && Number.isFinite(src.blurRadius)) {
     out.blurRadius = Math.min(MAX_BLUR_RADIUS, Math.max(MIN_BLUR_RADIUS, Math.round(src.blurRadius)));
+  }
+  if (src.shadow && typeof src.shadow === "object") {
+    out.shadow = normalizeShadow(src.shadow);
   }
   return out;
 };
@@ -751,7 +871,13 @@ export function mountApp(root: HTMLElement): void {
               <label class="prop-label" id="tool-size-label" for="tool-size">Size</label>
               <output class="prop-value" id="tool-size-out" for="tool-size">3 px</output>
             </div>
-            <input type="range" class="slider slider-size" id="tool-size" min="1" max="12" step="1" value="3" aria-labelledby="tool-size-label" />
+            <div class="size-row">
+              <input type="range" class="slider slider-size" id="tool-size" min="1" max="12" step="1" value="3" aria-labelledby="tool-size-label" />
+              <div class="brush-preview" id="brush-preview" hidden aria-hidden="true">
+                <span class="brush-preview-box"><span class="brush-preview-dot" id="brush-preview-dot"></span></span>
+                <span class="brush-preview-value" id="brush-preview-value">1 px</span>
+              </div>
+            </div>
             <p class="prop-note" id="tool-size-note"></p>
           </section>
 
@@ -803,6 +929,50 @@ export function mountApp(root: HTMLElement): void {
               <input type="range" class="slider slider-sm" id="blur-radius" min="2" max="60" step="1" value="${DEFAULT_BLUR_RADIUS}" aria-label="Blur intensity" />
             </div>
             <p class="prop-note" id="blur-hint">Drag over anything private.</p>
+          </section>
+
+          <section class="prop-group prop-shadow" data-group="shadow" id="shadow-group" hidden>
+            <div class="prop-head">
+              <h3 class="prop-label" id="shadow-label">Shadow</h3>
+              <button type="button" class="switch switch-sm" id="shadow-toggle" role="switch" aria-checked="false" aria-labelledby="shadow-label" title="Shadow off"><span class="switch-knob" aria-hidden="true"></span></button>
+            </div>
+            <div class="shadow-fields" id="shadow-fields" hidden>
+              <div class="shadow-sample">
+                <span class="shadow-sample-box"><span class="shadow-sample-fill" id="shadow-preview" aria-hidden="true"></span></span>
+                <span class="shadow-sample-text">Lifts the shape off the capture</span>
+              </div>
+              <div class="prop-head">
+                <label class="prop-label" for="shadow-blur">Blur</label>
+                <output class="prop-value" id="shadow-blur-out" for="shadow-blur">8</output>
+              </div>
+              <input type="range" class="slider slider-sm" id="shadow-blur" min="0" max="60" step="1" value="8" aria-label="Shadow blur" />
+              <div class="shadow-offsets">
+                <div class="shadow-field">
+                  <span class="prop-label" id="shadow-x-label">Offset X</span>
+                  <div class="size-stepper" role="group" aria-labelledby="shadow-x-label">
+                    <button type="button" class="step-btn" id="shadow-x-down" aria-label="Move the shadow left" title="Left">−</button>
+                    <input type="number" id="shadow-x" class="size-input" min="-50" max="50" step="1" value="0" aria-labelledby="shadow-x-label" />
+                    <button type="button" class="step-btn" id="shadow-x-up" aria-label="Move the shadow right" title="Right">+</button>
+                  </div>
+                </div>
+                <div class="shadow-field">
+                  <span class="prop-label" id="shadow-y-label">Offset Y</span>
+                  <div class="size-stepper" role="group" aria-labelledby="shadow-y-label">
+                    <button type="button" class="step-btn" id="shadow-y-down" aria-label="Move the shadow up" title="Up">−</button>
+                    <input type="number" id="shadow-y" class="size-input" min="-50" max="50" step="1" value="4" aria-labelledby="shadow-y-label" />
+                    <button type="button" class="step-btn" id="shadow-y-up" aria-label="Move the shadow down" title="Down">+</button>
+                  </div>
+                </div>
+              </div>
+              <div class="prop-head">
+                <label class="prop-label" for="shadow-color">Color</label>
+                <label class="color-custom prop-custom" title="Shadow color">
+                  <input type="color" id="shadow-color" value="#000000" aria-label="Shadow color" />
+                  <span class="color-custom-ring" aria-hidden="true"></span>
+                </label>
+              </div>
+            </div>
+            <p class="prop-note" id="shadow-note">Applies to new boxes, arrows and labels.</p>
           </section>
 
           <section class="prop-group prop-resize" data-group="resize" id="resize-group" hidden>
@@ -970,6 +1140,22 @@ export function mountApp(root: HTMLElement): void {
   const toolSizeLabel = $<HTMLLabelElement>("#tool-size-label");
   const toolSizeOut = $<HTMLOutputElement>("#tool-size-out");
   const toolSizeNote = $<HTMLParagraphElement>("#tool-size-note");
+  const brushPreview = $<HTMLDivElement>("#brush-preview");
+  const brushPreviewDot = $<HTMLSpanElement>("#brush-preview-dot");
+  const brushPreviewValue = $<HTMLSpanElement>("#brush-preview-value");
+  const shadowGroup = $<HTMLElement>("#shadow-group");
+  const shadowToggle = $<HTMLButtonElement>("#shadow-toggle");
+  const shadowFields = $<HTMLDivElement>("#shadow-fields");
+  const shadowBlurInput = $<HTMLInputElement>("#shadow-blur");
+  const shadowBlurOut = $<HTMLOutputElement>("#shadow-blur-out");
+  const shadowXInput = $<HTMLInputElement>("#shadow-x");
+  const shadowYInput = $<HTMLInputElement>("#shadow-y");
+  const shadowXDown = $<HTMLButtonElement>("#shadow-x-down");
+  const shadowXUp = $<HTMLButtonElement>("#shadow-x-up");
+  const shadowYDown = $<HTMLButtonElement>("#shadow-y-down");
+  const shadowYUp = $<HTMLButtonElement>("#shadow-y-up");
+  const shadowColorInput = $<HTMLInputElement>("#shadow-color");
+  const shadowPreview = $<HTMLSpanElement>("#shadow-preview");
   const resizeGroup = $<HTMLElement>("#resize-group");
   const imageSizeOut = $<HTMLOutputElement>("#image-size-out");
   const resizeOpenBtn = $<HTMLButtonElement>("#resize-open");
@@ -1925,10 +2111,10 @@ export function mountApp(root: HTMLElement): void {
         } catch (e) {
           const message = errText(e);
           setStatus(
-            isCancelled(message)
+            isRecordingCancel(message)
               ? "Region recording cancelled — nothing was recorded."
               : `Could not grab the screen for the region: ${message}`,
-            isCancelled(message) ? "info" : "error",
+            isRecordingCancel(message) ? "info" : "error",
           );
           return;
         }
@@ -1970,7 +2156,8 @@ export function mountApp(root: HTMLElement): void {
           "Recording cancelled — screen sharing wasn't allowed. Approve the system prompt and try again.",
           "error",
         );
-      } else if (/cancel|dismiss|abort|nothing selected/i.test(message)) {
+      } else if (isRecordingCancel(message)) {
+        // Only a bare user dismissal lands here; every other failure is shown.
         setStatus("Recording cancelled — no screen was picked.");
       } else {
         setStatus(`Could not start recording: ${message}`, "error");
@@ -2428,6 +2615,8 @@ export function mountApp(root: HTMLElement): void {
     customColorEl.closest(".color-custom")?.classList.toggle("is-active", !matched);
     customColorEl.value = normalized;
     if (colorValue) colorValue.textContent = normalized.toUpperCase();
+    // The nib preview is filled with the ink colour, so it follows every change.
+    paintBrushPreview(activeTool);
   }
 
   function applyColor(hex: string, announce = true): void {
@@ -2692,6 +2881,27 @@ export function mountApp(root: HTMLElement): void {
   };
 
   /**
+   * Paint the always-visible nib reference next to the brush slider: a circle
+   * whose diameter tracks the brush size (1 px → 2 px dot, 60 px → 44 px) in the
+   * current ink colour, so the size is legible without drawing a test stroke.
+   */
+  function paintBrushPreview(id: ShellToolId): void {
+    const show = id === "brush" && !!sizeRange;
+    brushPreview.hidden = !show;
+    if (!show || !sizeRange) return;
+    const raw = Number(toolSizeInput.value);
+    const value = Number.isFinite(raw) ? raw : sizeRange.min;
+    const span = sizeRange.max - sizeRange.min || 1;
+    const t = Math.min(1, Math.max(0, (value - sizeRange.min) / span));
+    const diameter = Math.round(BRUSH_PREVIEW_MIN + t * (BRUSH_PREVIEW_MAX - BRUSH_PREVIEW_MIN));
+    brushPreviewDot.style.width = `${diameter}px`;
+    brushPreviewDot.style.height = `${diameter}px`;
+    brushPreviewDot.style.background = inkColor;
+    brushPreviewValue.textContent = `${value} px`;
+    brushPreview.title = `Nib preview — ${value} px at 1:1`;
+  }
+
+  /**
    * Paint the generic size slider for the active tool. Visibility is decided by
    * the editor's own range, so a tool that has no size knob simply never shows
    * one — no duplicated per-tool wiring in the shell.
@@ -2702,7 +2912,10 @@ export function mountApp(root: HTMLElement): void {
     sizeRange = range && range.max > range.min ? range : null;
     toolSizeGroup.hidden = !sizeRange;
     toolSizeGroup.classList.toggle("is-hero", id === "text");
-    if (!sizeRange) return;
+    if (!sizeRange) {
+      brushPreview.hidden = true;
+      return;
+    }
 
     const label = SIZE_LABELS[id] ?? "Size";
     const unit = sizeUnit(id);
@@ -2728,6 +2941,7 @@ export function mountApp(root: HTMLElement): void {
     toolSizeInput.disabled = dimmed;
     toolSizeGroup.classList.toggle("is-muted", dimmed);
     paintSliderFill(toolSizeInput, sizeRange.min, sizeRange.max);
+    paintBrushPreview(id);
   }
 
   /** One slider writes through to whichever knob the active tool reads. */
@@ -2754,6 +2968,79 @@ export function mountApp(root: HTMLElement): void {
     if (announce) {
       setStatus(`${SIZE_LABELS[tool] ?? "Size"}: ${value}${sizeUnit(tool)}`);
     }
+  }
+
+  /* ---------------------------------------------------------------- shadow */
+
+  const shadowApi = editor as unknown as ShadowApi;
+  let shadow: ShadowStyle = readShadow();
+
+  /** Mirror the shadow into the rail: switch, slider, steppers, colour, sample. */
+  function paintShadow(): void {
+    const on = shadow.enabled;
+    shadowToggle.classList.toggle("is-on", on);
+    shadowToggle.setAttribute("aria-checked", String(on));
+    shadowToggle.title = on ? "Shadow on" : "Shadow off";
+    shadowFields.hidden = !on;
+
+    shadowBlurInput.value = String(shadow.blur);
+    shadowBlurOut.textContent = String(shadow.blur);
+    shadowBlurInput.style.setProperty("--fill", `${(shadow.blur / MAX_SHADOW_BLUR) * 100}%`);
+
+    shadowXInput.value = String(shadow.offsetX);
+    shadowYInput.value = String(shadow.offsetY);
+    shadowXDown.disabled = shadow.offsetX <= MIN_SHADOW_OFFSET;
+    shadowXUp.disabled = shadow.offsetX >= MAX_SHADOW_OFFSET;
+    shadowYDown.disabled = shadow.offsetY <= MIN_SHADOW_OFFSET;
+    shadowYUp.disabled = shadow.offsetY >= MAX_SHADOW_OFFSET;
+
+    shadowColorInput.value = splitColorAlpha(shadow.color).hex;
+    shadowPreview.style.boxShadow =
+      `${shadow.offsetX}px ${shadow.offsetY}px ${shadow.blur}px ${shadow.color}`;
+  }
+
+  /** Push a shadow change to the editor, then persist and repaint. */
+  function applyShadow(patch: Partial<ShadowStyle>, announce = true): void {
+    const next = normalizeShadow({ ...shadow, ...patch });
+    try {
+      shadowApi.setShadow?.(next);
+    } catch (e) {
+      setStatus(`Shadow failed: ${errText(e)}`, "error");
+      return;
+    }
+    shadow = next;
+    writeStore(SHADOW_KEY, JSON.stringify(next));
+    paintShadow();
+    if (announce) {
+      setStatus(
+        next.enabled
+          ? `Shadow on — blur ${next.blur} px, offset ${next.offsetX} / ${next.offsetY}`
+          : "Shadow off",
+      );
+    }
+  }
+
+  /** Step one offset by a pixel (the −/+ buttons beside each field). */
+  function nudgeShadowOffset(axis: "x" | "y", delta: number): void {
+    const current = axis === "x" ? shadow.offsetX : shadow.offsetY;
+    applyShadow(axis === "x" ? { offsetX: current + delta } : { offsetY: current + delta });
+  }
+
+  /** Commit a typed offset, falling back to the live value when it is junk. */
+  function commitShadowOffset(axis: "x" | "y"): void {
+    const input = axis === "x" ? shadowXInput : shadowYInput;
+    const current = axis === "x" ? shadow.offsetX : shadow.offsetY;
+    const typed = Number(input.value);
+    applyShadow(axis === "x" ? { offsetX: typed } : { offsetY: typed }, false);
+    if (!Number.isFinite(typed)) input.value = String(current);
+  }
+
+  /** Adopt the editor's own shadow when it reports one (tool change, undo). */
+  function syncShadowFromEditor(): void {
+    const live = shadowApi.getShadow?.();
+    if (!live || typeof live !== "object") return;
+    shadow = normalizeShadow(live, shadow);
+    paintShadow();
   }
 
   /* --------------------------------------------------------- image resize */
@@ -2899,6 +3186,7 @@ export function mountApp(root: HTMLElement): void {
       italic: typeof live.italic === "boolean" ? live.italic : textItalic,
       blurMode: live.blurMode ?? blurMode,
       blurRadius: typeof live.blurRadius === "number" ? live.blurRadius : blurRadius,
+      shadow: live.shadow ? normalizeShadow(live.shadow, shadow) : { ...shadow },
     };
   }
 
@@ -2953,6 +3241,11 @@ export function mountApp(root: HTMLElement): void {
       writeStore(BLUR_RADIUS_KEY, String(blurRadius));
       paintBlur();
     }
+    if (patch.shadow) {
+      shadow = normalizeShadow(patch.shadow, shadow);
+      writeStore(SHADOW_KEY, JSON.stringify(shadow));
+      paintShadow();
+    }
   }
 
   /** Apply a style slice through the editor's bulk API, or one setter at a time. */
@@ -2974,6 +3267,7 @@ export function mountApp(root: HTMLElement): void {
       if (patch.blurMode) applyBlurMode(patch.blurMode, false);
       if (typeof patch.blurRadius === "number") applyBlurRadius(patch.blurRadius, false);
     }
+    if (patch.shadow) applyShadow(patch.shadow, false);
     paintStyleState(patch);
   }
 
@@ -3339,6 +3633,35 @@ export function mountApp(root: HTMLElement): void {
     window.setTimeout(() => applyToolSize(Number(toolSizeInput.value), false), 0);
   });
 
+  shadowToggle.addEventListener("click", () => applyShadow({ enabled: !shadow.enabled }));
+  shadowBlurInput.addEventListener("input", () =>
+    applyShadow({ blur: Number(shadowBlurInput.value) }, false),
+  );
+  shadowBlurInput.addEventListener("change", () => applyShadow({ blur: Number(shadowBlurInput.value) }));
+  shadowColorInput.addEventListener("input", () => {
+    // Keep the soft alpha the shadow already had when the user picks a new hue.
+    const alpha = splitColorAlpha(shadow.color).alpha;
+    applyShadow({ color: withAlpha(shadowColorInput.value, alpha) }, false);
+  });
+  shadowColorInput.addEventListener("change", () => {
+    const alpha = splitColorAlpha(shadow.color).alpha;
+    applyShadow({ color: withAlpha(shadowColorInput.value, alpha) });
+  });
+  shadowXInput.addEventListener("change", () => commitShadowOffset("x"));
+  shadowYInput.addEventListener("change", () => commitShadowOffset("y"));
+  for (const input of [shadowXInput, shadowYInput]) {
+    input.addEventListener("keydown", (ev) => {
+      if (ev.key !== "Enter") return;
+      ev.preventDefault();
+      input.dispatchEvent(new Event("change"));
+      input.blur();
+    });
+  }
+  shadowXDown.addEventListener("click", () => nudgeShadowOffset("x", -1));
+  shadowXUp.addEventListener("click", () => nudgeShadowOffset("x", 1));
+  shadowYDown.addEventListener("click", () => nudgeShadowOffset("y", -1));
+  shadowYUp.addEventListener("click", () => nudgeShadowOffset("y", 1));
+
   resizeOpenBtn.addEventListener("click", () => {
     if (resizePop.hidden) openResize();
     else closeResize();
@@ -3396,6 +3719,7 @@ export function mountApp(root: HTMLElement): void {
       group.hidden = !spec.groups.includes(key as PropGroup);
     }
     paintToolSize(id);
+    paintShadow();
     // Blur runs its radius through the generic size slider when the editor has one.
     radiusField.hidden = !!sizeRange && id === "blur";
     propsEl.classList.toggle("is-contextless", spec.groups.length === 0 && !sizeRange);
@@ -3555,6 +3879,8 @@ export function mountApp(root: HTMLElement): void {
     undoBtn.disabled = !hasImage || !canUndo;
     redoBtn.disabled = !hasImage || !canRedo;
     if (detail?.tool) paintProps(detail.tool as ShellToolId);
+    // Shadow can change inside the editor (undo, tool restore) — mirror it back.
+    syncShadowFromEditor();
     paintResizeState();
     syncDirty();
   });
@@ -3745,6 +4071,17 @@ export function mountApp(root: HTMLElement): void {
   window.addEventListener("beforeunload", onUnload, { once: true });
 
   /* ------------------------------------------------------------------ init */
+
+  // Shadow first: every setter below notifies capicorn:change, whose
+  // syncShadowFromEditor() would otherwise adopt the editor's default shadow
+  // and quietly wipe what the rail remembered from last session.
+  try {
+    shadowApi.setShadow?.(shadow);
+  } catch {
+    /* older editor without the shadow setter — the rail still remembers it */
+  }
+  syncShadowFromEditor();
+  paintShadow();
 
   selectTool("select", false);
   setImageState(false);

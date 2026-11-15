@@ -1,22 +1,51 @@
-// Capicorn — floating quick-access widget.
+// Capicorn — floating quick-capture widget.
 //
-// A second, frameless window (~260x64) that sits above the desktop and drives
-// the main window: "Full" / "Region" start a capture there, the × hides this
-// widget again. Everything is built here so the window boots from one module;
-// the shell markup is deliberately empty.
+// Two states in one frameless, transparent window:
 //
-// Backend contract (src-tauri):
-//   invoke('widget_capture', { mode: 'full' | 'region' }) — start a capture
-//   invoke('close_widget')                                — hide this window
+//   COLLAPSED  a 44x44 glass tab ("flärp") at the window's left edge — idle,
+//              unobtrusive, only 56x54 of screen taken.
+//   EXPANDED   the full pill: drag grip + Full + Region + fold + close.
+//
+// Hover (or click) on the tab expands it; leaving the widget collapses it after
+// ~1.2s, as does the fold control. A capture always folds it back first.
+//
+// WINDOW PLUMBING IS DONE IN RUST, on purpose.
+// The `default` capability is scoped to `windows: ["main"]` (see
+// src-tauri/capabilities/default.json), so every `plugin:window|*` command is
+// rejected from this webview with "not allowed by ACL" — that is exactly why
+// `getCurrentWindow().startDragging()` never moved the widget, and why
+// `data-tauri-drag-region` (which invokes the same `plugin:window|start_dragging`)
+// did not either. Application commands are not ACL-gated, so all window calls
+// travel through `widget_capture`, whose `mode` the backend dispatches:
+//
+//   invoke('widget_capture', { mode: 'full'     })  capture the whole screen
+//   invoke('widget_capture', { mode: 'region'   })  pick a region
+//   invoke('widget_capture', { mode: 'move'     })  native interactive move (drag)
+//   invoke('widget_capture', { mode: 'expand'   })  grow the window to the pill
+//   invoke('widget_capture', { mode: 'collapse' })  shrink the window to the tab
+//   invoke('close_widget')                          hide this window
+//
+// The `data-tauri-drag-region` attributes are still set on the tab and the pill
+// so the native path takes over unchanged if the widget is ever added to the
+// capability; today the mousedown handler below is what actually moves it.
 
 import { invoke } from "@tauri-apps/api/core";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import "./widget.css";
 
 const THEME_KEY = "capicorn:theme";
+const DRAG_ATTR = "data-tauri-drag-region";
+
+/** Idle time before an expanded widget folds back into its tab. */
+const COLLAPSE_DELAY = 1200;
+/** Must stay >= the pill's fade-out in widget.css before the window shrinks. */
+const FOLD_MS = 170;
+/** Hover right after folding must not immediately re-expand (pointer is still
+ *  sitting on the tab when the window snaps back). */
+const HOVER_GUARD = 420;
 
 type Theme = "light" | "dark";
 type CaptureMode = "full" | "region";
+type WidgetMode = CaptureMode | "move" | "expand" | "collapse";
 
 /* ------------------------------------------------------------------ theme */
 
@@ -39,6 +68,12 @@ const svg = (body: string): string =>
   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" ` +
   `stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${body}</svg>`;
 
+// The Capicorn sparkle: the tab's whole identity in 22px.
+const ICON_SPARK = svg(
+  `<path d="M10.6 3.4c.8 3.7 2.3 5.2 6 6-3.7.8-5.2 2.3-6 6-.8-3.7-2.3-5.2-6-6 3.7-.8 5.2-2.3 6-6z"/>` +
+    `<path d="M17.4 14.6c.35 1.55.95 2.15 2.5 2.5-1.55.35-2.15.95-2.5 2.5-.35-1.55-.95-2.15-2.5-2.5 1.55-.35 2.15-.95 2.5-2.5z"/>`
+);
+
 const ICON_FULL = svg(
   `<rect x="2.5" y="4" width="19" height="12.5" rx="1.8"/>` +
     `<path d="M8.5 20.5h7"/><path d="M12 16.5v4"/>`
@@ -48,6 +83,9 @@ const ICON_REGION = svg(
   `<path d="M6.5 2.5v15a2 2 0 0 0 2 2h13"/>` +
     `<path d="M2.5 6.5h15a2 2 0 0 1 2 2v13"/>`
 );
+
+// Fold: the pill retreats back into its tab.
+const ICON_FOLD = svg(`<path d="M14.5 5.5L8 12l6.5 6.5"/><path d="M8 12h11"/>`);
 
 const ICON_CLOSE = svg(`<path d="M6.5 6.5l11 11"/><path d="M17.5 6.5l-11 11"/>`);
 
@@ -79,18 +117,53 @@ function button(opts: {
   return el;
 }
 
+/** One channel to the backend. Never throws: a failed move or resize must not
+ *  take the widget down with it. */
+async function send(mode: WidgetMode): Promise<void> {
+  try {
+    await invoke("widget_capture", { mode });
+  } catch (err) {
+    console.warn(`[widget] widget_capture(${mode}) failed`, err);
+  }
+}
+
 function mount(): void {
   const host = document.getElementById("widget");
   if (!host) return;
   const root: HTMLElement = host;
 
-  root.classList.add("w-bar");
+  root.classList.add("w-widget");
+  root.dataset.state = "collapsed";
   root.setAttribute("role", "toolbar");
   root.setAttribute("aria-label", "Capicorn quick capture");
 
-  // Drag grip — the frameless window has no titlebar, so this is the handle.
+  /* ------------------------------------------------------------- the tab */
+
+  // The tab IS the drag region: it is the only thing on screen when the widget
+  // is folded, so it has to move the window. Everything drawn inside it is
+  // pointer-events:none (widget.css) so the pointer lands on this element.
+  const tab = document.createElement("div");
+  tab.className = "w-tab";
+  tab.setAttribute(DRAG_ATTR, "");
+  tab.setAttribute("role", "button");
+  tab.tabIndex = 0;
+  tab.setAttribute("aria-expanded", "false");
+  tab.setAttribute("aria-label", "Expand Capicorn capture");
+  tab.title = "Drag to move · click to expand";
+  tab.innerHTML = `<span class="w-icon w-tab__glyph">${ICON_SPARK}</span>`;
+
+  /* ------------------------------------------------------------ the pill */
+
+  const bar = document.createElement("div");
+  bar.className = "w-bar";
+  // The pill's own background drags the window too, so the whole bar is a
+  // handle and not just the 20px grip. Buttons are not drag regions.
+  bar.setAttribute(DRAG_ATTR, "");
+  bar.setAttribute("inert", "");
+
   const grip = document.createElement("div");
   grip.className = "w-grip";
+  grip.setAttribute(DRAG_ATTR, "");
   grip.setAttribute("title", "Drag to move");
   grip.setAttribute("aria-hidden", "true");
   const dots = document.createElement("span");
@@ -120,6 +193,15 @@ function mount(): void {
   sep.className = "w-sep";
   sep.setAttribute("aria-hidden", "true");
 
+  const fold = button({
+    id: "w-fold",
+    label: "",
+    icon: ICON_FOLD,
+    tip: "Fold into the tab",
+    variant: "ghost",
+  });
+  fold.classList.add("w-btn--fold");
+
   const close = button({
     id: "w-close",
     label: "",
@@ -129,25 +211,120 @@ function mount(): void {
   });
   close.classList.add("w-btn--close");
 
-  root.append(grip, full, region, sep, close);
+  bar.append(grip, full, region, sep, fold, close);
+  root.append(tab, bar);
 
-  // Move the frameless window: dragging anywhere on the pill (except the
-  // buttons) starts an interactive compositor move. startDragging() maps to
-  // xdg_toplevel.move on Wayland, which KDE/GNOME honour — unlike manual
-  // set_position, which Wayland ignores. The whole pill is the handle, so it
-  // is easy to grab; the buttons remain ordinary clickable controls.
-  const win = getCurrentWindow();
-  root.addEventListener("mousedown", (ev) => {
-    if (ev.button !== 0) return;
-    const target = ev.target as HTMLElement | null;
-    if (target && target.closest("button")) return;
-    ev.preventDefault();
-    void win.startDragging().catch(() => {
-      /* the compositor refused the move — nothing further to try */
-    });
+  /* -------------------------------------------------- collapse / expand */
+
+  let expanded = false;
+  let hovering = false;
+  let collapseTimer = 0;
+  let foldedAt = 0;
+  let gen = 0;
+
+  function clearTimers(): void {
+    if (collapseTimer) {
+      window.clearTimeout(collapseTimer);
+      collapseTimer = 0;
+    }
+  }
+
+  async function expand(): Promise<void> {
+    clearTimers();
+    if (expanded) return;
+    const mine = ++gen;
+    expanded = true;
+    // Grow the window BEFORE the pill is painted: a 240px pill inside a 56px
+    // window would be clipped for as long as the resize takes to land.
+    await send("expand");
+    if (gen !== mine || !expanded) return;
+    root.dataset.state = "expanded";
+    tab.setAttribute("aria-expanded", "true");
+    bar.removeAttribute("inert");
+  }
+
+  function collapse(): void {
+    clearTimers();
+    if (!expanded) return;
+    gen += 1;
+    expanded = false;
+    root.dataset.state = "collapsed";
+    tab.setAttribute("aria-expanded", "false");
+    bar.setAttribute("inert", "");
+    foldedAt = performance.now();
+    // Shrink only after the pill has faded out, so it is never cut in half by
+    // the window edge mid-transition.
+    window.setTimeout(() => {
+      if (!expanded) void send("collapse");
+    }, FOLD_MS);
+  }
+
+  function collapseIfIdle(): void {
+    if (!expanded) return;
+    if (hovering) return;
+    // Keyboard focus inside the pill (Tab + Enter) keeps it open.
+    if (bar.contains(document.activeElement)) return;
+    collapse();
+  }
+
+  function scheduleCollapse(): void {
+    clearTimers();
+    if (!expanded) return;
+    collapseTimer = window.setTimeout(() => {
+      collapseTimer = 0;
+      collapseIfIdle();
+    }, COLLAPSE_DELAY);
+  }
+
+  /* -------------------------------------------------------------- hover */
+
+  // Leaving the whole window (not just the tab) starts the idle timer.
+  document.documentElement.addEventListener("pointerenter", () => {
+    hovering = true;
+    clearTimers();
+  });
+  document.documentElement.addEventListener("pointerleave", () => {
+    hovering = false;
+    scheduleCollapse();
   });
 
-  /* ---------------------------------------------------------------- wiring */
+  tab.addEventListener("pointerenter", () => {
+    // Right after folding the pointer is still parked on the tab; without this
+    // the widget would ping-pong open/closed under the cursor.
+    if (performance.now() - foldedAt < HOVER_GUARD) return;
+    void expand();
+  });
+  tab.addEventListener("click", () => void expand());
+  tab.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter" || ev.key === " ") {
+      ev.preventDefault();
+      void expand();
+    }
+  });
+
+  /* --------------------------------------------------------------- drag */
+
+  // Capture phase, so this runs before Tauri's own drag-region listener. That
+  // listener calls `plugin:window|start_dragging` (denied here by the ACL, see
+  // the header) and turns a double click into a maximise — neither is wanted.
+  // Stopping the event keeps the move entirely in our hands.
+  function onPress(ev: MouseEvent): void {
+    if (ev.button !== 0) return;
+    const target = ev.target instanceof Element ? ev.target : null;
+    if (!target) return;
+    if (!target.closest(`[${DRAG_ATTR}]`)) return;
+    // Buttons must stay buttons: pressing one never moves the window.
+    if (target.closest("button, a, input, select, textarea, [data-no-drag]")) return;
+
+    ev.preventDefault();
+    ev.stopPropagation();
+    // Second click of a double click: already moving (or just finished).
+    if (ev.detail > 1) return;
+    void send("move");
+  }
+  document.addEventListener("mousedown", onPress, true);
+
+  /* ------------------------------------------------------------- wiring */
 
   // A short debounce kept as a timestamp, not a timer: the widget window is
   // small and often unfocused, and background throttling would otherwise leave
@@ -172,6 +349,8 @@ function mount(): void {
     busyUntil = now + 400;
 
     flash(el);
+    // Fold first: the backend hides the window, and it must come back as a tab.
+    collapse();
     try {
       await invoke("widget_capture", { mode });
     } catch (err) {
@@ -189,6 +368,7 @@ function mount(): void {
 
   full.addEventListener("click", () => void capture("full", full));
   region.addEventListener("click", () => void capture("region", region));
+  fold.addEventListener("click", () => collapse());
   close.addEventListener("click", () => void closeWidget());
 
   document.addEventListener("keydown", (ev) => {
@@ -207,6 +387,16 @@ function mount(): void {
       ev.preventDefault();
       void capture("region", region);
     }
+  });
+
+  // The window is hidden on capture and re-shown with the tab size by Rust
+  // (`show_widget`); coming back with focus means an idle widget.
+  window.addEventListener("focus", () => {
+    if (performance.now() - foldedAt < HOVER_GUARD) return;
+    collapseIfIdle();
+  });
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) collapseIfIdle();
   });
 
   // Keep the widget in step when the app flips the theme while it is open.

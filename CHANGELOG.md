@@ -3,6 +3,11 @@
 All notable changes to Capicorn, newest first. Full release notes for every tag live on
 the [releases page](https://github.com/rostaddotcc/capicorn/releases).
 
+## v0.18.0
+- Settings moved to the top-left of the title bar.
+- Thin AppImage (~3.9 MB) that uses the system's WebKitGTK instead of bundling the whole
+  stack; the full self-contained AppImage (82 MB) ships alongside it.
+
 ## v0.17.2
 - Screen recording: `error alloc buffers: Invalid argument` — drop the explicit
   `SPA_PARAM_Buffers` pool (KWin rejected it); `MAP_BUFFERS` producer defaults are correct.

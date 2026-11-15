@@ -1333,6 +1333,35 @@ kbd {
   border-color: var(--border-strong);
 }
 
+.dir-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.dir-actions .token-hint {
+  flex: 1;
+  min-width: 140px;
+}
+
+.token-hint .nowrap {
+  white-space: nowrap;
+}
+
+.token-hint kbd {
+  display: inline-block;
+  padding: 0 4px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface-sunken);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1.5;
+  color: var(--fg-muted);
+}
+
 .dir-icon {
   display: inline-flex;
   flex: none;
@@ -1783,6 +1812,10 @@ kbd {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
+}
+
+.setting-row + .setting-row {
+  margin-top: 12px;
 }
 
 .setting-row-text {

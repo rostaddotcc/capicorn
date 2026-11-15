@@ -148,6 +148,9 @@ const ICONS = {
   save: icon(
     `<path d="M3 4.2A1.7 1.7 0 0 1 4.7 2.5h6.9L13.5 4.4v7.4a1.7 1.7 0 0 1-1.7 1.7H4.7A1.7 1.7 0 0 1 3 11.8z"/><path d="M5.6 2.5v3.4h4.4V2.5M5.4 13.5v-3.3h5.2v3.3"/>`,
   ),
+  saveAs: icon(
+    `<path d="M2.4 5.6a1.4 1.4 0 0 1 1.4-1.4h2.2l1.2 1.5h5.4a1.4 1.4 0 0 1 1.4 1.4v4.3a1.4 1.4 0 0 1-1.4 1.4H3.8a1.4 1.4 0 0 1-1.4-1.4z"/><path d="M8 7.6v3.5M6.5 9.6 8 11.1l1.5-1.5"/>`,
+  ),
   moon: icon(`<path d="M13.1 9.7A5.5 5.5 0 0 1 6.3 2.9a5.6 5.6 0 1 0 6.8 6.8z"/>`),
   sun: icon(
     `<circle cx="8" cy="8" r="2.9"/><path d="M8 1.7v1.6M8 12.7v1.6M1.7 8h1.6M12.7 8h1.6M3.5 3.5l1.1 1.1M11.4 11.4l1.1 1.1M12.5 3.5l-1.1 1.1M4.6 11.4l-1.1 1.1"/>`,
@@ -653,7 +656,8 @@ export function mountApp(root: HTMLElement): void {
         <button type="button" class="chip" id="pin" disabled title="Pin this capture on top of other windows">${ICONS.pin}<span>Pin</span></button>
         <span class="toolbar-sep" aria-hidden="true"></span>
         <button type="button" class="chip" id="copy" disabled title="Copy to clipboard (Ctrl+C)">${ICONS.copy}<span>Copy</span></button>
-        <button type="button" class="chip" id="save" disabled title="Save an edited copy (Ctrl+S)">${ICONS.save}<span>Save</span></button>
+        <button type="button" class="chip" id="save" disabled title="Save an edited copy to your save folder (Ctrl+S)">${ICONS.save}<span>Save</span></button>
+        <button type="button" class="chip" id="save-as" disabled title="Save As… — choose name and folder (Ctrl+Shift+S)">${ICONS.saveAs}<span>Save As…</span></button>
       </div>
     </nav>
 
@@ -664,7 +668,7 @@ export function mountApp(root: HTMLElement): void {
         <span class="empty-mark" aria-hidden="true">✦</span>
         <p class="empty-title">No capture yet</p>
         <p class="empty-text">Press <kbd>PrintScreen</kbd> for the full screen, <span class="key-pair"><kbd>Shift</kbd><kbd>PrintScreen</kbd></span> for a region — or pick a mode from <strong>Capture</strong>.</p>
-        <p class="empty-note">Every capture is saved to your save folder automatically.</p>
+        <p class="empty-note">Captures are saved to your save folder automatically — switch that off in Settings → General.</p>
       </div>
 
       <footer class="filmstrip" id="filmstrip" hidden aria-label="Recent captures">
@@ -820,7 +824,7 @@ export function mountApp(root: HTMLElement): void {
     <footer class="statusbar">
       <span class="status-dot" id="dot" data-kind="info" aria-hidden="true"></span>
       <span class="status-text" id="status" role="status" aria-live="polite">Ready</span>
-      <span class="status-keys"><kbd>Ctrl</kbd><kbd>Z</kbd> undo · <kbd>Ctrl</kbd><kbd>S</kbd> save copy</span>
+      <span class="status-keys"><kbd>Ctrl</kbd><kbd>Z</kbd> undo · <kbd>Ctrl</kbd><kbd>S</kbd> save copy · <kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>S</kbd> save as</span>
     </footer>
 
     <div class="countdown" id="countdown" hidden role="dialog" aria-modal="true" aria-labelledby="countdown-num">
@@ -913,6 +917,7 @@ export function mountApp(root: HTMLElement): void {
   const redoBtn = $<HTMLButtonElement>("#redo");
   const copyBtn = $<HTMLButtonElement>("#copy");
   const saveBtn = $<HTMLButtonElement>("#save");
+  const saveAsBtn = $<HTMLButtonElement>("#save-as");
   const swatchesEl = $<HTMLDivElement>("#swatches");
   const strokesEl = $<HTMLDivElement>("#strokes");
   const customColorEl = $<HTMLInputElement>("#color-custom");
@@ -1225,6 +1230,12 @@ export function mountApp(root: HTMLElement): void {
         setStatus(`Export quality: ${settings.quality}`);
       } else if (patch.filename !== undefined) {
         setStatus(`Filename pattern: ${expandName(settings.filename)}`);
+      } else if (patch.autoSave !== undefined) {
+        setStatus(
+          settings.autoSave
+            ? "Auto-save on — every capture is written to the save folder"
+            : "Auto-save off — new captures stay in the editor until you save them",
+        );
       }
     }
     panel?.refresh();
@@ -1249,6 +1260,26 @@ export function mountApp(root: HTMLElement): void {
     } catch (e) {
       setStatus(`Could not determine the save folder: ${errText(e)}`, "error");
       return null;
+    }
+  }
+
+  /** Put the save folder back to the OS default and remember it. */
+  async function resetSaveDir(): Promise<string | null> {
+    try {
+      const dir = await invoke<string>("default_save_dir");
+      const trimmed = typeof dir === "string" ? dir.trim() : "";
+      if (!trimmed) {
+        setStatus("Could not resolve the default save folder.", "error");
+        return saveDir;
+      }
+      saveDir = trimmed;
+      writeStore(DIR_KEY, trimmed);
+      setStatus(`Save folder reset to default: ${trimmed}`, "success");
+      panel?.refresh();
+      return trimmed;
+    } catch (e) {
+      setStatus(`Could not reset the save folder: ${errText(e)}`, "error");
+      return saveDir;
     }
   }
 
@@ -1304,6 +1335,16 @@ export function mountApp(root: HTMLElement): void {
    * `prefix` replaces the bare "Saved …" wording (e.g. "Captured window 800 × 600").
    */
   async function autoSave(dataUrl: string, prefix?: string): Promise<void> {
+    // Settings → General → Auto-save captures. Off leaves the capture in the
+    // editor untouched; Save and Save As still write it on demand.
+    if (!settings.autoSave) {
+      setStatus(
+        prefix
+          ? `${prefix} — auto-save is off, not saved to disk`
+          : "Capture ready — auto-save is off, not saved to disk",
+      );
+      return;
+    }
     try {
       const saved = await writeImage(dataUrl, false);
       if (!saved) return;
@@ -1332,6 +1373,35 @@ export function mountApp(root: HTMLElement): void {
     } catch (e) {
       setStatus(`Save failed: ${errText(e)}`, "error");
       return false;
+    }
+  }
+
+  /**
+   * Ctrl+Shift+S / Save As…: native dialog, suggested name from the filename
+   * pattern (no -edited suffix), current default format and quality.
+   */
+  async function saveAs(): Promise<void> {
+    if (!hasImage) {
+      setStatus("Nothing to save yet — capture a screen first.", "error");
+      return;
+    }
+    try {
+      const path = await invoke<string>("save_image_as", {
+        dataUrl: editor.flatten(),
+        suggestedName: buildFilename(settings.filename, settings.format),
+        format: settings.format,
+        quality: Math.round(settings.quality),
+      });
+      const saved = typeof path === "string" ? path.trim() : "";
+      setStatus(saved ? `Saved ${saved}` : "Saved copy", "success");
+      syncDirty();
+    } catch (e) {
+      const message = errText(e);
+      if (/cancel/i.test(message)) {
+        setStatus("Save As cancelled");
+      } else {
+        setStatus(`Save As failed: ${message}`, "error");
+      }
     }
   }
 
@@ -1538,6 +1608,7 @@ export function mountApp(root: HTMLElement): void {
     propsIdle.hidden = loaded;
     copyBtn.disabled = !loaded;
     saveBtn.disabled = !loaded;
+    saveAsBtn.disabled = !loaded;
     ocrBtn.disabled = !loaded;
     pinBtn.disabled = !loaded;
     paintResizeState();
@@ -3195,6 +3266,7 @@ export function mountApp(root: HTMLElement): void {
   panel = new SettingsPanel({
     getSaveDir: () => saveDir,
     changeSaveDir: () => pickSaveDir(),
+    resetSaveDir: () => resetSaveDir(),
     getVersion: () => (versionEl.hidden ? null : versionEl.textContent),
     setTheme: (next) => setTheme(next),
     getSettings: () => settings,
@@ -3289,6 +3361,7 @@ export function mountApp(root: HTMLElement): void {
   });
   copyBtn.addEventListener("click", () => void copyPng());
   saveBtn.addEventListener("click", () => void saveEdited());
+  saveAsBtn.addEventListener("click", () => void saveAs());
   ocrBtn.addEventListener("click", () => openOcr());
   pinBtn.addEventListener("click", () => void pinImage());
 
@@ -3380,7 +3453,8 @@ export function mountApp(root: HTMLElement): void {
       void copyPng();
     } else if (key === "s") {
       ev.preventDefault();
-      void saveEdited();
+      if (ev.shiftKey) void saveAs();
+      else void saveEdited();
     }
   };
   window.addEventListener("keydown", onKeyDown);

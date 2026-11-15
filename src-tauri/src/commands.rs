@@ -12,6 +12,7 @@
 //! | `default_save_dir`   | —                                    | `<pictures>/Capicorn` (`string`)         |
 //! | `pick_save_dir`      | —                                    | chosen folder (`string`)                 |
 //! | `save_png_to_dir`    | `dataUrl`, `dir`, `filename`         | saved path (`string`)                    |
+//! | `save_image_as`      | `dataUrl`, `suggestedName`, `format`, `quality` | saved path (`string`)         |
 //!
 //! `save_image` (PNG/JPEG/WebP + quality) lives in `export.rs`; the close-guard
 //! commands (`force_close`, `set_dirty`, `is_dirty`, `set_minimize_to_tray`,
@@ -154,6 +155,53 @@ pub async fn save_png(
         .map_err(|e| format!("unsupported save location: {e}"))?;
 
     std::fs::write(&path, &png).map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+    Ok(path.to_string_lossy().into_owned())
+}
+
+/// Save As: encode as the requested format, then write it wherever the user
+/// points the native save dialog.
+///
+/// The payload is validated and encoded *before* the dialog opens, so a bad
+/// format or corrupt PNG fails without making the user dismiss a dialog first,
+/// and a cancelled dialog costs no encoding work. `blocking_save_file` is safe
+/// here for the same reason as [`save_png`]: async commands run off the Tauri
+/// main thread and the plugin hops back for the native dialog itself.
+#[tauri::command]
+pub async fn save_image_as(
+    app: tauri::AppHandle,
+    data_url: String,
+    suggested_name: String,
+    format: String,
+    quality: u8,
+) -> Result<String, String> {
+    let encoded = crate::export::encode_data_url(&data_url, &format, quality)?;
+
+    // The dialog's suggested name must not smuggle a path or a foreign
+    // extension in; `safe_filename` reduces it to a bare name that agrees with
+    // the encoded bytes. Either way the chosen path is re-checked below.
+    let suggested = if suggested_name.trim().is_empty() {
+        format!("capicorn.{}", encoded.format.extension())
+    } else {
+        crate::export::safe_filename(&suggested_name, encoded.format)
+    };
+
+    let chosen = app
+        .dialog()
+        .file()
+        .add_filter(encoded.format.label(), encoded.format.extensions())
+        .set_file_name(&suggested)
+        .blocking_save_file()
+        .ok_or_else(|| "save cancelled".to_string())?;
+
+    let path = chosen
+        .into_path()
+        .map_err(|e| format!("unsupported save location: {e}"))?;
+    // The user may have typed (or the OS appended) something else; the bytes
+    // decide the real format, so the path follows them.
+    let path = crate::export::ensure_extension(&path, encoded.format);
+
+    std::fs::write(&path, &encoded.bytes)
+        .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
     Ok(path.to_string_lossy().into_owned())
 }
 

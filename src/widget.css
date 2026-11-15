@@ -1,42 +1,41 @@
-/* Capicorn — floating quick-access widget (frameless ~260x64 window).
-   A single translucent pill: drag grip, Full, Region, close. No scrollbars,
-   no page chrome — this should read as a native floating control. */
+/* Capicorn — floating quick-access widget.
+   A single compact glassy pill in a transparent, frameless window. Only the
+   pill is visible (the window itself is transparent); the whole pill surface
+   drags the window, the buttons stay clickable. No page chrome, no scrollbars. */
 
 :root {
   --accent: #8b7cf6;
-  --accent-soft: rgba(139, 124, 246, 0.16);
-  --accent-press: rgba(139, 124, 246, 0.28);
-  --radius: 16px;
+  --accent-bright: #a99bff;
+  --accent-soft: rgba(139, 124, 246, 0.18);
+  --accent-press: rgba(139, 124, 246, 0.30);
 
-  --surface: linear-gradient(180deg, rgba(32, 29, 44, 0.94), rgba(20, 19, 30, 0.96));
-  --stroke: rgba(255, 255, 255, 0.1);
-  --stroke-strong: rgba(255, 255, 255, 0.16);
-  --shade: 0 10px 24px rgba(6, 4, 18, 0.5), 0 2px 6px rgba(6, 4, 18, 0.4);
-  --text: #ece9f7;
-  --muted: #a49fb9;
-  --hover: rgba(255, 255, 255, 0.07);
-  --press: rgba(255, 255, 255, 0.12);
+  --surface: linear-gradient(180deg, rgba(38, 35, 54, 0.84), rgba(22, 20, 33, 0.88));
+  --surface-edge: rgba(255, 255, 255, 0.14);
+  --stroke: rgba(255, 255, 255, 0.10);
+  --shade: 0 12px 30px rgba(5, 3, 16, 0.55), 0 3px 8px rgba(5, 3, 16, 0.45);
+  --text: #f1eefb;
+  --muted: #aaa5c2;
+  --hover: rgba(255, 255, 255, 0.08);
+  --press: rgba(255, 255, 255, 0.14);
+  --danger: #ff6b6b;
 }
 
 :root[data-theme="light"] {
-  --surface: linear-gradient(180deg, rgba(255, 254, 255, 0.97), rgba(246, 244, 253, 0.97));
-  --stroke: rgba(28, 22, 56, 0.11);
-  --stroke-strong: rgba(28, 22, 56, 0.18);
-  --shade: 0 10px 22px rgba(30, 22, 62, 0.18), 0 2px 5px rgba(30, 22, 62, 0.12);
-  --text: #251f36;
-  --muted: #6d6683;
-  --hover: rgba(28, 22, 56, 0.06);
-  --press: rgba(28, 22, 56, 0.11);
-  --accent-soft: rgba(139, 124, 246, 0.14);
-  --accent-press: rgba(139, 124, 246, 0.24);
+  --surface: linear-gradient(180deg, rgba(255, 255, 255, 0.90), rgba(244, 241, 252, 0.90));
+  --surface-edge: rgba(255, 255, 255, 0.9);
+  --stroke: rgba(30, 24, 60, 0.12);
+  --shade: 0 12px 28px rgba(35, 26, 70, 0.20), 0 3px 7px rgba(35, 26, 70, 0.14);
+  --text: #272138;
+  --muted: #6f6889;
+  --hover: rgba(30, 24, 60, 0.06);
+  --press: rgba(30, 24, 60, 0.12);
+  --accent-soft: rgba(139, 124, 246, 0.15);
+  --accent-press: rgba(139, 124, 246, 0.26);
 }
 
-* {
-  box-sizing: border-box;
-}
+* { box-sizing: border-box; }
 
-html,
-body {
+html, body {
   margin: 0;
   padding: 0;
   height: 100%;
@@ -44,80 +43,68 @@ body {
   overflow: hidden;
   -webkit-user-select: none;
   user-select: none;
-  cursor: default;
 }
 
+/* A little transparent breathing room so the pill's shadow is never clipped
+   by the window edge. The window is 252x60; the pill sits inside this padding. */
 .widget-body {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, "Helvetica Neue", Arial,
-    sans-serif;
+  padding: 5px 6px;
+  font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
 }
 
-#widget {
-  -webkit-font-smoothing: antialiased;
-}
+#widget { -webkit-font-smoothing: antialiased; }
 
 /* --------------------------------------------------------------- the pill */
 
 .w-bar {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 3px;
   width: 100%;
-  height: 56px;
-  padding: 0 7px;
+  height: 50px;
+  padding: 0 6px;
   border: 1px solid var(--stroke);
-  border-radius: var(--radius);
+  border-radius: 25px;
   background: var(--surface);
-  box-shadow: var(--shade), inset 0 1px 0 var(--stroke-strong);
+  box-shadow: var(--shade), inset 0 1px 0 var(--surface-edge);
   color: var(--text);
-  backdrop-filter: blur(18px) saturate(140%);
-  -webkit-backdrop-filter: blur(18px) saturate(140%);
-  overflow: hidden;
+  backdrop-filter: blur(20px) saturate(150%);
+  -webkit-backdrop-filter: blur(20px) saturate(150%);
+  cursor: default;
 }
 
 /* ------------------------------------------------------------ drag grip */
 
 .w-grip {
   display: flex;
-  flex-direction: column;
+  align-items: center;
   justify-content: center;
-  gap: 3px;
-  width: 14px;
-  height: 40px;
-  margin-right: 2px;
-  border-radius: 6px;
+  flex: 0 0 auto;
+  width: 20px;
+  height: 38px;
+  margin-right: 1px;
+  border-radius: 8px;
   cursor: grab;
-  opacity: 0.55;
-  transition: opacity 140ms ease, background-color 140ms ease;
+  color: var(--muted);
+  opacity: 0.7;
+  transition: opacity 140ms ease, background-color 140ms ease, color 140ms ease;
 }
-
-.w-grip:active {
-  cursor: grabbing;
-}
-
-.w-grip:hover {
-  opacity: 0.9;
-  background: var(--hover);
-}
+.w-grip:hover { opacity: 1; background: var(--hover); color: var(--text); }
+.w-grip:active { cursor: grabbing; }
 
 .w-grip__grid {
   display: grid;
-  grid-template-columns: repeat(2, 2px);
+  grid-template-columns: repeat(2, 3px);
+  grid-auto-rows: 3px;
   gap: 3px;
-  justify-content: center;
-  align-content: center;
-  width: 100%;
-  height: 100%;
   pointer-events: none;
 }
-
 .w-grip__dot {
-  display: block;
-  width: 2px;
-  height: 2px;
+  width: 3px;
+  height: 3px;
   border-radius: 50%;
   background: currentColor;
 }
@@ -125,15 +112,16 @@ body {
 /* ---------------------------------------------------------------- buttons */
 
 .w-btn {
+  position: relative;
   display: flex;
   flex: 1 1 0;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 2px;
+  gap: 3px;
   min-width: 0;
-  height: 42px;
-  padding: 0 6px;
+  height: 40px;
+  padding: 0 8px;
   border: 0;
   border-radius: 11px;
   background: transparent;
@@ -141,96 +129,60 @@ body {
   font: inherit;
   font-size: 10.5px;
   font-weight: 600;
-  letter-spacing: 0.01em;
+  letter-spacing: 0.02em;
   line-height: 1;
   cursor: pointer;
-  transition: background-color 120ms ease, color 120ms ease, transform 90ms ease,
-    box-shadow 120ms ease;
+  transition: background-color 130ms ease, color 130ms ease, transform 90ms ease;
 }
-
-.w-btn:hover {
-  background: var(--hover);
-  color: var(--text);
-}
-
-.w-btn:active {
-  background: var(--press);
-  transform: scale(0.96);
-}
-
+.w-btn:hover { background: var(--hover); color: var(--text); }
+.w-btn:active { background: var(--press); transform: scale(0.95); }
 .w-btn:focus-visible {
   outline: none;
   box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px var(--accent-soft);
 }
 
-.w-icon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 18px;
-  height: 18px;
-}
+.w-icon { display: flex; align-items: center; justify-content: center; width: 17px; height: 17px; }
+.w-icon svg { width: 17px; height: 17px; display: block; }
+.w-label { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-.w-icon svg {
-  width: 18px;
-  height: 18px;
-  display: block;
+/* Accent tick under a hovered capture button. */
+.w-btn:not(.w-btn--ghost)::after {
+  content: "";
+  position: absolute;
+  bottom: 4px;
+  left: 50%;
+  width: 16px;
+  height: 2px;
+  border-radius: 1px;
+  background: linear-gradient(90deg, var(--accent), var(--accent-bright));
+  transform: translateX(-50%) scaleX(0);
+  transform-origin: center;
+  opacity: 0;
+  transition: transform 150ms ease, opacity 150ms ease;
 }
+.w-btn:not(.w-btn--ghost):hover::after { transform: translateX(-50%) scaleX(1); opacity: 0.9; }
 
-.w-label {
-  display: block;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* Close is an icon-only affordance at the end of the bar. */
+/* Close — icon-only ghost affordance. */
 .w-btn--ghost {
   flex: 0 0 auto;
   width: 30px;
   height: 30px;
-  margin-left: 1px;
   padding: 0;
   border-radius: 9px;
   color: var(--muted);
 }
-
-.w-btn--ghost:hover {
-  background: var(--press);
-  color: var(--text);
-}
+.w-btn--ghost:hover { background: var(--press); color: var(--danger); }
+.w-btn--ghost::after { display: none; }
 
 .w-sep {
   flex: 0 0 auto;
   width: 1px;
-  height: 22px;
+  height: 24px;
   margin: 0 3px;
   border-radius: 1px;
   background: var(--stroke);
 }
 
-/* The accent tick that sits under a hovered capture button. */
-.w-btn:not(.w-btn--ghost):hover::after {
-  content: "";
-  position: absolute;
-  bottom: 3px;
-  left: 50%;
-  width: 14px;
-  height: 2px;
-  border-radius: 1px;
-  background: var(--accent);
-  transform: translateX(-50%);
-  opacity: 0.7;
-}
-
-.w-btn:not(.w-btn--ghost) {
-  position: relative;
-}
-
 @media (prefers-reduced-motion: reduce) {
-  .w-btn,
-  .w-grip {
-    transition: none;
-  }
+  .w-btn, .w-grip, .w-btn:not(.w-btn--ghost)::after { transition: none; }
 }

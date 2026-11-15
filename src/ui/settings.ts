@@ -47,6 +47,7 @@ export const HOTKEY_FULL_KEY = "capicorn:hotkey-full";
 export const HOTKEY_REGION_KEY = "capicorn:hotkey-region";
 export const WIDGET_KEY = "capicorn:widget";
 export const REC_FORMAT_KEY = "capicorn:rec-format";
+export const AUTOSAVE_KEY = "capicorn:autosave";
 
 export const DEFAULT_FORMAT: ExportFormat = "png";
 export const DEFAULT_REC_FORMAT: RecFormat = "mp4";
@@ -92,6 +93,8 @@ export interface ExportSettings {
   widget: boolean;
   /** Screen-recording container (MP4 or GIF). */
   recFormat: RecFormat;
+  /** Write every fresh capture to the save folder without asking. */
+  autoSave: boolean;
 }
 
 const store = (key: string): string | null => {
@@ -160,6 +163,8 @@ export function readExportSettings(): ExportSettings {
     hotkeyRegion: normalizeTrigger(store(HOTKEY_REGION_KEY) ?? "", DEFAULT_HOTKEY_REGION),
     widget: store(WIDGET_KEY) === "true",
     recFormat: isRecFormat(rawRec) ? rawRec : DEFAULT_REC_FORMAT,
+    // On unless explicitly turned off (Wave 11 default).
+    autoSave: store(AUTOSAVE_KEY) !== "false",
   };
 }
 
@@ -176,6 +181,7 @@ export function saveExportSettings(settings: ExportSettings): void {
     localStorage.setItem(HOTKEY_REGION_KEY, settings.hotkeyRegion);
     localStorage.setItem(WIDGET_KEY, String(settings.widget));
     localStorage.setItem(REC_FORMAT_KEY, settings.recFormat);
+    localStorage.setItem(AUTOSAVE_KEY, String(settings.autoSave));
   } catch {
     /* storage unavailable — the preferences just aren't remembered */
   }
@@ -228,6 +234,8 @@ export interface SettingsOptions {
   getSaveDir(): string | null;
   /** Open the native folder picker; resolves to the new folder (or null). */
   changeSaveDir(): Promise<string | null>;
+  /** Put the save folder back to the OS default; resolves to the folder (or null). */
+  resetSaveDir(): Promise<string | null>;
   /** Version string for the footer, when the shell has one. */
   getVersion(): string | null;
   /** Called when the user picks a theme inside the panel. */
@@ -286,6 +294,7 @@ export class SettingsPanel {
   private versionEl!: HTMLElement;
   private segments: HTMLButtonElement[] = [];
   private changeBtn!: HTMLButtonElement;
+  private resetBtn!: HTMLButtonElement;
   private timerPills: HTMLButtonElement[] = [];
   private formatSelect!: HTMLSelectElement;
   private recFormatSelect!: HTMLSelectElement;
@@ -296,6 +305,7 @@ export class SettingsPanel {
   private namePreview!: HTMLElement;
   private traySwitch!: HTMLButtonElement;
   private widgetSwitch!: HTMLButtonElement;
+  private autosaveSwitch!: HTMLButtonElement;
   private hotkeySwitch!: HTMLButtonElement;
   private hotkeyFullInput!: HTMLInputElement;
   private hotkeyRegionInput!: HTMLInputElement;
@@ -305,6 +315,7 @@ export class SettingsPanel {
   private hotkeyStatusEl!: HTMLElement;
   private lastFocus: HTMLElement | null = null;
   private picking = false;
+  private resetting = false;
   private registering = false;
 
   constructor(opts: SettingsOptions) {
@@ -380,6 +391,12 @@ export class SettingsPanel {
     this.widgetSwitch.classList.toggle("is-on", settings.widget);
     this.widgetSwitch.setAttribute("aria-checked", String(settings.widget));
     this.widgetSwitch.title = settings.widget ? "Floating widget is showing" : "Floating widget is hidden";
+
+    this.autosaveSwitch.classList.toggle("is-on", settings.autoSave);
+    this.autosaveSwitch.setAttribute("aria-checked", String(settings.autoSave));
+    this.autosaveSwitch.title = settings.autoSave
+      ? "Fresh captures are saved automatically"
+      : "Fresh captures stay in the editor until you save them";
 
     this.hotkeySwitch.classList.toggle("is-on", settings.hotkeysEnabled);
     this.hotkeySwitch.setAttribute("aria-checked", String(settings.hotkeysEnabled));
@@ -506,6 +523,13 @@ export class SettingsPanel {
               </div>
               <button type="button" class="switch" id="settings-widget" role="switch" aria-checked="false" aria-labelledby="widget-label"><span class="switch-knob" aria-hidden="true"></span></button>
             </div>
+            <div class="setting-row">
+              <div class="setting-row-text">
+                <span class="setting-label" id="autosave-label">Auto-save captures</span>
+                <span class="setting-sub">Write every fresh capture to the save folder. Off keeps it in the editor until you press Save or Save As.</span>
+              </div>
+              <button type="button" class="switch" id="settings-autosave" role="switch" aria-checked="true" aria-labelledby="autosave-label"><span class="switch-knob" aria-hidden="true"></span></button>
+            </div>
           </section>
 
           <section class="setting" data-section="capture">
@@ -559,6 +583,10 @@ export class SettingsPanel {
               <code class="dir-path" id="settings-dir">Not set yet</code>
               <button type="button" class="btn-secondary" id="settings-change">Change…</button>
             </div>
+            <div class="dir-actions">
+              <button type="button" class="btn-secondary" id="settings-reset">Reset to default</button>
+              <span class="token-hint">Puts the folder back to the OS default (usually Pictures).</span>
+            </div>
           </section>
 
           <section class="setting" data-section="export">
@@ -574,6 +602,7 @@ export class SettingsPanel {
                 </select>
                 <span class="select-arrow" aria-hidden="true">${ICONS.caret}</span>
               </div>
+              <p class="token-hint" id="settings-format-hint">Default save format — auto-save, Save and Save As all write this. <span class="nowrap"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd></span> opens Save As… with any name and folder.</p>
             </div>
             <div class="field">
               <label class="field-label" for="settings-rec-format">Recording format</label>
@@ -618,6 +647,7 @@ export class SettingsPanel {
     this.dirPath = root.querySelector<HTMLElement>("#settings-dir")!;
     this.versionEl = root.querySelector<HTMLElement>("#settings-version")!;
     this.changeBtn = root.querySelector<HTMLButtonElement>("#settings-change")!;
+    this.resetBtn = root.querySelector<HTMLButtonElement>("#settings-reset")!;
     this.segments = Array.from(root.querySelectorAll<HTMLButtonElement>("[data-theme-choice]"));
     this.timerPills = Array.from(root.querySelectorAll<HTMLButtonElement>("[data-timer]"));
     this.formatSelect = root.querySelector<HTMLSelectElement>("#settings-format")!;
@@ -629,6 +659,7 @@ export class SettingsPanel {
     this.namePreview = root.querySelector<HTMLElement>("#settings-preview .preview-name")!;
     this.traySwitch = root.querySelector<HTMLButtonElement>("#settings-tray")!;
     this.widgetSwitch = root.querySelector<HTMLButtonElement>("#settings-widget")!;
+    this.autosaveSwitch = root.querySelector<HTMLButtonElement>("#settings-autosave")!;
     this.hotkeySwitch = root.querySelector<HTMLButtonElement>("#settings-hotkeys")!;
     this.hotkeyFullInput = root.querySelector<HTMLInputElement>("#hotkey-full")!;
     this.hotkeyRegionInput = root.querySelector<HTMLInputElement>("#hotkey-region")!;
@@ -650,6 +681,7 @@ export class SettingsPanel {
     }
 
     this.changeBtn.addEventListener("click", () => void this.pickFolder());
+    this.resetBtn.addEventListener("click", () => void this.resetFolder());
 
     this.traySwitch.addEventListener("click", () => {
       const next = !this.opts.getSettings().minimizeToTray;
@@ -660,6 +692,12 @@ export class SettingsPanel {
     this.widgetSwitch.addEventListener("click", () => {
       const next = !this.opts.getSettings().widget;
       this.opts.updateSettings({ widget: next });
+      this.refresh();
+    });
+
+    this.autosaveSwitch.addEventListener("click", () => {
+      const next = !this.opts.getSettings().autoSave;
+      this.opts.updateSettings({ autoSave: next });
       this.refresh();
     });
 
@@ -782,6 +820,22 @@ export class SettingsPanel {
     } finally {
       this.registering = false;
       this.hotkeyRegisterBtn.textContent = label ?? "Register hotkeys";
+      this.refresh();
+    }
+  }
+
+  private async resetFolder(): Promise<void> {
+    if (this.resetting) return;
+    this.resetting = true;
+    const label = this.resetBtn.textContent;
+    this.resetBtn.disabled = true;
+    this.resetBtn.textContent = "Resetting…";
+    try {
+      await this.opts.resetSaveDir();
+    } finally {
+      this.resetting = false;
+      this.resetBtn.disabled = false;
+      this.resetBtn.textContent = label ?? "Reset to default";
       this.refresh();
     }
   }

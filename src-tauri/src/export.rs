@@ -54,6 +54,25 @@ impl Format {
             Format::Webp => ext == "webp",
         }
     }
+
+    /// Human-facing filter label for a native save dialog.
+    pub fn label(self) -> &'static str {
+        match self {
+            Format::Png => "PNG image",
+            Format::Jpeg => "JPEG image",
+            Format::Webp => "WebP image",
+        }
+    }
+
+    /// Extensions a native dialog should accept for this format. JPEG lists
+    /// both spellings so a `.jpeg` file the user already has is selectable.
+    pub fn extensions(self) -> &'static [&'static str] {
+        match self {
+            Format::Png => &["png"],
+            Format::Jpeg => &["jpg", "jpeg"],
+            Format::Webp => &["webp"],
+        }
+    }
 }
 
 /// Batch of bytes ready to be written plus the format they belong to.
@@ -168,6 +187,28 @@ pub fn safe_filename(filename: &str, format: Format) -> String {
         ),
         None => format!("{name}.{wanted}"),
     }
+}
+
+/// Make an absolute, user-chosen path agree with `format`.
+///
+/// Unlike [`safe_filename`] this keeps the directory: the dialog already
+/// returned a full path, so only the extension is ours to fix. A matching
+/// extension (any case, either JPEG spelling) is left exactly as typed; a
+/// missing or foreign one is appended/replaced so a `.png` path never receives
+/// JPEG bytes.
+pub fn ensure_extension(path: &Path, format: Format) -> PathBuf {
+    let matches = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|ext| format.matches_extension(&ext.to_ascii_lowercase()));
+    if matches {
+        return path.to_path_buf();
+    }
+    let mut out = path.to_path_buf();
+    // `set_extension` appends when there is no extension and swaps when there
+    // is, which is exactly the behaviour wanted here.
+    out.set_extension(format.extension());
+    out
 }
 
 /// Encode the data URL and write it into `dir`, returning the absolute path.
@@ -285,5 +326,24 @@ mod tests {
         assert_eq!(safe_filename("shot.png", Format::Jpeg), "shot.jpg");
         assert_eq!(safe_filename("../../etc/passwd", Format::Png), "capicorn.png");
         assert_eq!(safe_filename("   ", Format::Jpeg), "capicorn.jpg");
+    }
+
+    #[test]
+    fn chosen_save_paths_get_the_format_extension() {
+        let p = |s: &str| PathBuf::from(s);
+        // Matching extensions (any case, either JPEG spelling) survive intact.
+        assert_eq!(ensure_extension(&p("/tmp/shot.png"), Format::Png), p("/tmp/shot.png"));
+        assert_eq!(ensure_extension(&p("/tmp/shot.PNG"), Format::Png), p("/tmp/shot.PNG"));
+        assert_eq!(ensure_extension(&p("/tmp/shot.jpeg"), Format::Jpeg), p("/tmp/shot.jpeg"));
+        // Mismatched extension: swapped, never left lying about the bytes.
+        assert_eq!(ensure_extension(&p("/tmp/shot.png"), Format::Jpeg), p("/tmp/shot.jpg"));
+        assert_eq!(ensure_extension(&p("/tmp/shot.tar.gz"), Format::Webp), p("/tmp/shot.tar.webp"));
+        // No extension at all: appended.
+        assert_eq!(ensure_extension(&p("/tmp/shot"), Format::Webp), p("/tmp/shot.webp"));
+        // The directory is kept — this fix-up never renames the folder.
+        assert_eq!(
+            ensure_extension(&p("/home/me/pics/shot"), Format::Png),
+            p("/home/me/pics/shot.png")
+        );
     }
 }

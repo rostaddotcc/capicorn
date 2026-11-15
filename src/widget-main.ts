@@ -10,6 +10,7 @@
 //   invoke('close_widget')                                — hide this window
 
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import "./widget.css";
 
 const THEME_KEY = "capicorn:theme";
@@ -90,12 +91,10 @@ function mount(): void {
   // Drag grip — the frameless window has no titlebar, so this is the handle.
   const grip = document.createElement("div");
   grip.className = "w-grip";
-  grip.setAttribute("data-tauri-drag-region", "");
   grip.setAttribute("title", "Drag to move");
   grip.setAttribute("aria-hidden", "true");
   const dots = document.createElement("span");
   dots.className = "w-grip__grid";
-  dots.setAttribute("data-tauri-drag-region", "");
   for (let i = 0; i < 6; i += 1) {
     const dot = document.createElement("i");
     dot.className = "w-grip__dot";
@@ -131,6 +130,22 @@ function mount(): void {
   close.classList.add("w-btn--close");
 
   root.append(grip, full, region, sep, close);
+
+  // Move the frameless window: dragging anywhere on the pill (except the
+  // buttons) starts an interactive compositor move. startDragging() maps to
+  // xdg_toplevel.move on Wayland, which KDE/GNOME honour — unlike manual
+  // set_position, which Wayland ignores. The whole pill is the handle, so it
+  // is easy to grab; the buttons remain ordinary clickable controls.
+  const win = getCurrentWindow();
+  root.addEventListener("mousedown", (ev) => {
+    if (ev.button !== 0) return;
+    const target = ev.target as HTMLElement | null;
+    if (target && target.closest("button")) return;
+    ev.preventDefault();
+    void win.startDragging().catch(() => {
+      /* the compositor refused the move — nothing further to try */
+    });
+  });
 
   /* ---------------------------------------------------------------- wiring */
 

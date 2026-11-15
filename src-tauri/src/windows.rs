@@ -186,8 +186,8 @@ pub fn get_minimize_to_tray(flags: State<'_, AppFlags>) -> bool {
 
 /// Label of the widget webview window.
 pub const WIDGET_LABEL: &str = "widget";
-const WIDGET_WIDTH: f64 = 260.0;
-const WIDGET_HEIGHT: f64 = 64.0;
+const WIDGET_WIDTH: f64 = 252.0;
+const WIDGET_HEIGHT: f64 = 60.0;
 
 fn widget_window(app: &AppHandle) -> Option<WebviewWindow> {
     app.get_webview_window(WIDGET_LABEL)
@@ -204,6 +204,8 @@ fn build_widget(app: &AppHandle) -> Result<WebviewWindow, String> {
     .title("Capicorn")
     .inner_size(WIDGET_WIDTH, WIDGET_HEIGHT)
     .decorations(false)
+    .transparent(true)
+    .shadow(false)
     .resizable(false)
     .skip_taskbar(true)
     .visible(true)

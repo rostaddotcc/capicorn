@@ -3,6 +3,10 @@
 All notable changes to Capicorn, newest first. Full release notes for every tag live on
 the [releases page](https://github.com/rostaddotcc/capicorn/releases).
 
+## v0.22.0
+- Design pass toward a **more classic, less "AI" look**: neutral grey chrome (dropped the purple tint from surfaces/borders), tighter border radii, softer shadows; the purple accent is now reserved for primary actions and the brand.
+- Neutral dot grid and scrollbars.
+
 ## v0.21.0
 - Removed the standalone **Record** button — recording lives in the Capture menu; the running take's pill gains a **Stop** button.
 - Blur/pixelate/blackout now preview **transparently** while dragging and apply the **real** effect the moment the box is released (no more odd colour, no click-elsewhere needed).

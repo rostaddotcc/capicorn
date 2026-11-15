@@ -623,6 +623,50 @@ pub fn close_pins(app: AppHandle) -> Result<usize, String> {
     Ok(closed)
 }
 
+/// Saved main-window size while the scrolling-capture card owns the window.
+#[derive(Default)]
+pub struct ScrollWindowSize(pub Mutex<Option<tauri::LogicalSize<f64>>>);
+
+/// Shrink/restore the main window for the scrolling-capture card.
+///
+/// The card used to be a DOM overlay inside a full-size **click-through** window:
+/// its Done button was unclickable (clicks passed through to the app below) and
+/// Enter went to whatever window the user had scrolled. Shrinking the window to
+/// the card (and turning click-through off) keeps Done clickable without the
+/// overlay blocking the page being scrolled.
+#[tauri::command]
+pub fn set_scroll_mode(
+    app: AppHandle,
+    saved: State<'_, ScrollWindowSize>,
+    enabled: bool,
+) -> Result<(), String> {
+    let Some(win) = app.get_webview_window("main") else {
+        return Err("the main window is gone".to_string());
+    };
+    if enabled {
+        let scale = win.scale_factor().unwrap_or(1.0);
+        if let Ok(size) = win.inner_size() {
+            if let Ok(mut slot) = saved.0.lock() {
+                *slot = Some(size.to_logical::<f64>(scale));
+            }
+        }
+        let _ = win.set_min_size(None::<tauri::LogicalSize<f64>>);
+        win.set_size(tauri::LogicalSize::new(372.0, 330.0))
+            .map_err(|e| format!("cannot shrink the window for the scrolling card: {e}"))?;
+        let _ = win.set_always_on_top(true);
+        let _ = win.set_focus();
+    } else {
+        let restore = saved.0.lock().ok().and_then(|g| *g);
+        let _ = win.set_min_size(Some(tauri::LogicalSize::new(800.0, 560.0)));
+        if let Some(size) = restore {
+            let _ = win.set_size(size);
+        }
+        let _ = win.set_always_on_top(false);
+        let _ = win.set_focus();
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

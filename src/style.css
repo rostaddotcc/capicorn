@@ -4398,3 +4398,19 @@ kbd {
   opacity: 0.6;
   cursor: default;
 }
+
+/* ------------------------------------------- scrolling card owns the window */
+/* `set_scroll_mode` shrinks the main window to the card, so hide the app chrome
+   and let the card fill the small window — Done must be clickable. */
+body.scroll-hud #app {
+  display: none;
+}
+
+body.scroll-hud .scroll-card {
+  top: 8px;
+  right: 8px;
+  left: 8px;
+  width: auto;
+  max-height: calc(100vh - 16px);
+  overflow: auto;
+}

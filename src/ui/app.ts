@@ -2302,7 +2302,7 @@ export function mountApp(root: HTMLElement): void {
           <button type="button" class="scroll-btn scroll-btn-ghost" data-act="cancel">Cancel</button>
           <button type="button" class="scroll-btn scroll-btn-primary" data-act="done">Done</button>
         </div>
-        <p class="scroll-note" data-note><kbd>Alt</kbd> mouse control · <kbd>Esc</kbd> cancel</p>
+        <p class="scroll-note" data-note><kbd>Esc</kbd> cancel</p>
       `;
 
       document.querySelectorAll(".scroll-card").forEach((old) => old.remove());
@@ -2313,31 +2313,8 @@ export function mountApp(root: HTMLElement): void {
       const barEl = el.querySelector<HTMLElement>("[data-bar]");
       const warnEl = el.querySelector<HTMLElement>("[data-warn]");
       const hintEl = el.querySelector<HTMLElement>("[data-hint]");
-      const noteEl = el.querySelector<HTMLElement>("[data-note]");
 
       let settled = false;
-      let pointerTimer = 0;
-
-      const setClickThrough = (ignore: boolean): void => {
-        void invoke("set_click_through", { ignore }).catch(() => {
-          /* an older backend without click-through — the card still drives the flow */
-        });
-      };
-
-      const armPointer = (): void => {
-        if (settled) return;
-        setClickThrough(false);
-        el.classList.add("is-pointer");
-        if (noteEl) {
-          noteEl.innerHTML = "<kbd>Alt</kbd> mouse control is on — click Done, it returns to pass-through in 5 s.";
-        }
-        window.clearTimeout(pointerTimer);
-        pointerTimer = window.setTimeout(() => {
-          el.classList.remove("is-pointer");
-          if (noteEl) noteEl.innerHTML = "<kbd>Alt</kbd> mouse control · <kbd>Esc</kbd> cancel";
-          if (!settled) setClickThrough(true);
-        }, 5000);
-      };
 
       const update = (status: ScrollingStatus): void => {
         // Backend numbers can be missing or negative mid-stream; clamp defensively.
@@ -2380,7 +2357,6 @@ export function mountApp(root: HTMLElement): void {
       const finish = (how: "done" | "cancel"): void => {
         if (settled) return;
         settled = true;
-        window.clearTimeout(pointerTimer);
         window.removeEventListener("keydown", onKey, true);
         scrollFeed = null;
         el.remove();
@@ -2396,9 +2372,6 @@ export function mountApp(root: HTMLElement): void {
           ev.preventDefault();
           ev.stopPropagation();
           finish("cancel");
-        } else if (ev.key === "Alt") {
-          ev.preventDefault();
-          armPointer();
         }
       };
 
@@ -2425,7 +2398,6 @@ export function mountApp(root: HTMLElement): void {
    */
   async function runScrollingCapture(): Promise<void> {
     let full = false;
-    let clickThrough = false;
     let casting = false;
     try {
       await invoke("set_fullscreen", { full: true });
@@ -2444,11 +2416,15 @@ export function mountApp(root: HTMLElement): void {
         return;
       }
 
-      await invoke("set_click_through", { ignore: true });
-      clickThrough = true;
       scrollFrames = 0;
       await invoke("scrolling_start", { region: box });
       casting = true;
+      // The card gets its own small clickable window: the main window shrinks to
+      // the card and click-through stays off, so Done (and Enter) actually work.
+      document.body.classList.add("scroll-hud");
+      await invoke("set_scroll_mode", { enabled: true }).catch(() => {
+        /* older backend: fall back to the in-window card */
+      });
       setStatus("Scrolling capture running — scroll the window, then press Enter.");
 
       const decision = await showScrollCard(box);
@@ -2488,12 +2464,11 @@ export function mountApp(root: HTMLElement): void {
       setStatus(scrollErrorText(e), "error");
     } finally {
       scrollFeed = null;
-      if (clickThrough) {
-        try {
-          await invoke("set_click_through", { ignore: false });
-        } catch {
-          /* ignore — the backend restores it when the cast ends */
-        }
+      document.body.classList.remove("scroll-hud");
+      try {
+        await invoke("set_scroll_mode", { enabled: false });
+      } catch {
+        /* nothing to restore */
       }
       if (casting) {
         try {

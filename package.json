@@ -1,7 +1,7 @@
 {
   "name": "capicorn",
   "private": true,
-  "version": "0.22.3",
+  "version": "0.22.4",
   "license": "GPL-3.0-or-later",
   "type": "module",
   "scripts": {

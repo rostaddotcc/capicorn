@@ -3,6 +3,9 @@
 All notable changes to Capicorn, newest first. Full release notes for every tag live on
 the [releases page](https://github.com/rostaddotcc/capicorn/releases).
 
+## v0.22.4
+- **Scrolling capture's Done button now works.** The card used to sit inside a full-size **click-through** window, so a click on Done passed straight through to the app below, and after scrolling another window Enter went there too. A new `set_scroll_mode` shrinks the main window to the card (min-size lifted while active), turns click-through off and keeps the card on top — Done is clickable and Enter is delivered. The app chrome is hidden while the card owns the window; the old Alt "mouse control" step is gone.
+
 ## v0.22.3
 - **Window / Choose-screen capture now negotiates its size flexibly.** The stream asked for an exact `VideoSize` (the portal's hint), which the producer cannot always match for an individual window — the format negotiation failed, no frame arrived, and the grab timed out as "cancelled". It now offers a **range** (1×1 … 16384×16384) with the hint as the default, so the producer delivers its real size. The recorder got the same fix.
 - Window/monitor capture now **logs** to `~/.cache/capicorn-portal.log` (picker answer, stream states, negotiated format, first frame), so "Copy recording diagnostics" covers it too.

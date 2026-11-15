@@ -3770,6 +3770,10 @@ export function mountApp(root: HTMLElement): void {
     updateSettings: (patch, opts) => updateSettings(patch, opts),
     registerHotkeys: () => applyHotkeys(true),
     getHotkeyStatus: () => hotkeyStatus,
+    copyDiagnostics: async () => {
+      const text = await invoke<string>("recording_diagnostics");
+      await navigator.clipboard.writeText(text);
+    },
   });
 
   guardSaveBtn.addEventListener("click", () => void onGuardSave());

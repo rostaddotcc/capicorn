@@ -251,6 +251,8 @@ export interface SettingsOptions {
   registerHotkeys(): Promise<HotkeyStatus | null>;
   /** Last status the shell knows about, painted whenever the panel opens. */
   getHotkeyStatus(): HotkeyStatus | null;
+  /** Copy recording diagnostics (portal + per-take logs) to the clipboard. */
+  copyDiagnostics?(): Promise<void>;
 }
 
 const icon = (body: string, size = 16): string =>
@@ -313,6 +315,8 @@ export class SettingsPanel {
   private hotkeyRegionPreview!: HTMLElement;
   private hotkeyRegisterBtn!: HTMLButtonElement;
   private hotkeyStatusEl!: HTMLElement;
+  private diagBtn!: HTMLButtonElement;
+  private diagFeedback!: HTMLElement;
   private lastFocus: HTMLElement | null = null;
   private picking = false;
   private resetting = false;
@@ -491,6 +495,24 @@ export class SettingsPanel {
     this.namePreview.classList.toggle("is-fallback", this.nameInput.value.trim() === "");
   }
 
+  /** Copy the recording diagnostics via the shell, with inline feedback. */
+  private async copyDiagnostics(): Promise<void> {
+    if (!this.opts.copyDiagnostics) {
+      this.diagFeedback.textContent = "Not available in this build.";
+      return;
+    }
+    this.diagBtn.disabled = true;
+    this.diagFeedback.textContent = "Copying…";
+    try {
+      await this.opts.copyDiagnostics();
+      this.diagFeedback.textContent = "Copied to clipboard ✓";
+    } catch (e) {
+      this.diagFeedback.textContent = `Could not copy: ${e instanceof Error ? e.message : String(e)}`;
+    } finally {
+      this.diagBtn.disabled = false;
+    }
+  }
+
   private ensure(): HTMLDivElement {
     if (this.root) return this.root;
 
@@ -627,6 +649,15 @@ export class SettingsPanel {
             </div>
           </section>
 
+          <section class="setting" data-section="troubleshooting">
+            <h3 class="setting-title">Troubleshooting</h3>
+            <p class="setting-help">Recording not starting? Copy the diagnostic logs — they show exactly where the capture pipeline stopped. Attach them to a bug report.</p>
+            <div class="dir-actions">
+              <button type="button" class="btn-secondary" id="settings-copy-diag">Copy recording diagnostics</button>
+              <span class="token-hint" id="settings-diag-feedback" role="status" aria-live="polite"></span>
+            </div>
+          </section>
+
           <section class="setting" data-section="theme">
             <h3 class="setting-title">Theme</h3>
             <p class="setting-help">Light for daylight, dark for late sessions.</p>
@@ -648,6 +679,8 @@ export class SettingsPanel {
     this.versionEl = root.querySelector<HTMLElement>("#settings-version")!;
     this.changeBtn = root.querySelector<HTMLButtonElement>("#settings-change")!;
     this.resetBtn = root.querySelector<HTMLButtonElement>("#settings-reset")!;
+    this.diagBtn = root.querySelector<HTMLButtonElement>("#settings-copy-diag")!;
+    this.diagFeedback = root.querySelector<HTMLElement>("#settings-diag-feedback")!;
     this.segments = Array.from(root.querySelectorAll<HTMLButtonElement>("[data-theme-choice]"));
     this.timerPills = Array.from(root.querySelectorAll<HTMLButtonElement>("[data-timer]"));
     this.formatSelect = root.querySelector<HTMLSelectElement>("#settings-format")!;
@@ -708,6 +741,8 @@ export class SettingsPanel {
     });
 
     this.hotkeyRegisterBtn.addEventListener("click", () => void this.register());
+
+    this.diagBtn.addEventListener("click", () => void this.copyDiagnostics());
 
     const commitTrigger = (input: HTMLInputElement, which: "full" | "region"): void => {
       const fallback = which === "full" ? DEFAULT_HOTKEY_FULL : DEFAULT_HOTKEY_REGION;

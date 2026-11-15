@@ -271,6 +271,51 @@ pub fn set_fullscreen(app: tauri::AppHandle, full: bool) -> Result<(), String> {
     }
     Ok(())
 }
+/// Collect recording diagnostics — the portal log and the most recent per-take
+/// `.rec.log` — into one string the user can paste into a bug report.
+#[tauri::command]
+pub fn recording_diagnostics(app: tauri::AppHandle) -> String {
+    use tauri::Manager as _;
+
+    let mut out = String::from("=== Capicorn recording diagnostics ===\n");
+
+    let home = app.path().home_dir().ok().unwrap_or_default();
+    let portal = home.join(".cache").join("capicorn-portal.log");
+    out.push_str(&format!("\n--- portal log ({}) ---\n", portal.display()));
+    match std::fs::read_to_string(&portal) {
+        Ok(s) => out.push_str(s.trim_end()),
+        Err(e) => out.push_str(&format!("(could not read: {e})")),
+    }
+    out.push('\n');
+
+    let dir = default_save_dir(app.clone())
+        .ok()
+        .map(std::path::PathBuf::from);
+    let newest = dir.as_ref().and_then(|dir| {
+        std::fs::read_dir(dir).ok().and_then(|rd| {
+            rd.filter_map(|e| e.ok())
+                .filter(|e| e.file_name().to_string_lossy().ends_with(".rec.log"))
+                .filter_map(|e| {
+                    let m = e.metadata().ok()?.modified().ok()?;
+                    Some((m, e.path()))
+                })
+                .max_by_key(|(m, _)| *m)
+                .map(|(_, p)| p)
+        })
+    });
+    match newest {
+        Some(p) => {
+            out.push_str(&format!("\n--- latest take log ({}) ---\n", p.display()));
+            match std::fs::read_to_string(&p) {
+                Ok(s) => out.push_str(s.trim_end()),
+                Err(e) => out.push_str(&format!("(could not read: {e})")),
+            }
+        }
+        None => out.push_str("\n(no per-take .rec.log found yet)"),
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -2160,7 +2160,10 @@ export function mountApp(root: HTMLElement): void {
         // Only a bare user dismissal lands here; every other failure is shown.
         setStatus("Recording cancelled — no screen was picked.");
       } else {
-        setStatus(`Could not start recording: ${message}`, "error");
+        setStatus(
+          `Could not start recording: ${message} — see ~/.cache/capicorn-portal.log for details`,
+          "error",
+        );
       }
       recRegionUsed = null;
       endRecording();

@@ -220,14 +220,6 @@ export interface ShadowStyle {
   offsetY: number;
 }
 
-/** `#rrggbb` → `rgba(r, g, b, a)`. Leaves non-hex input untouched. */
-const tint = (hex: string, alpha: number): string => {
-  const m = hex.trim().match(/^#([0-9a-f]{6})$/i);
-  if (!m) return hex;
-  const n = parseInt(m[1], 16);
-  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`;
-};
-
 /** `fabric.Shadow` for the active style, or null when shadows are off. */
 export const shadowOf = (host: ToolHost): fabric.Shadow | null => {
   const shadow = host.shadow();
@@ -421,9 +413,9 @@ class RectTool extends DragTool {
       height: 1,
       originX: "left",
       originY: "top",
-      // A faint tint (not pure transparent) so a drop shadow has a body to cast
-      // from — on an outline-only shape the shadow only hugs the thin stroke.
-      fill: tint(this.host.color(), 0.1),
+      // Outline only: a transparent fill still casts a natural drop shadow from
+      // the stroke, and keeps the box untinted (no "highlight" look).
+      fill: "transparent",
       stroke: this.host.color(),
       strokeWidth: this.host.strokeWidth(),
       strokeUniform: true,

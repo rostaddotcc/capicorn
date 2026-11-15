@@ -125,7 +125,16 @@ docs/plans/     implementation plans
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+Capicorn is **GPL-3.0-or-later** — genuinely open source. You are free to use, study,
+fork, modify and share it, **including commercially**, as long as derivatives stay open
+under the GPL (see [LICENSE](LICENSE)).
+
+**Commercial license:** if you want to embed Capicorn in a proprietary, closed-source
+product where the GPL's source-sharing obligations don't fit, a separate commercial
+license is available from the author — that's the one case that needs permission. Open an
+issue or reach out to arrange it.
+
+> The project name and logo remain the author's; a fork should carry its own name.
 
 ## Acknowledgements
 

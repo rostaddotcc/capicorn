@@ -3,6 +3,11 @@
 All notable changes to Capicorn, newest first. Full release notes for every tag live on
 the [releases page](https://github.com/rostaddotcc/capicorn/releases).
 
+## v0.18.2
+- License changed to **GPL-3.0-or-later** with a commercial dual-license; added a
+  CONTRIBUTING note (contributions are licensed under both).
+- README: the Windows `.exe` is now marked untested, with Linux as the focus.
+
 ## v0.18.1
 - Recordings now appear in the Recent filmstrip (thumbnail via ffmpeg, film-icon fallback); clicking one opens the file with the OS default player.
 

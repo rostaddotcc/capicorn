@@ -1,9 +1,9 @@
 [package]
 name = "capicorn"
-version = "0.18.1"
+version = "0.18.2"
 description = "Open-source Snagit-style screen capture and annotation"
 authors = ["rostad"]
-license = "MIT"
+license = "GPL-3.0-or-later"
 edition = "2021"
 
 [lib]

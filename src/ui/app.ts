@@ -3,7 +3,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { Editor, type ToolId } from "../editor/editor";
-import { cropDataUrl, selectRegion } from "./region";
+import { cropDataUrl, selectRegion, type Box } from "./region";
 import {
   DEFAULT_PATTERN,
   SettingsPanel,
@@ -26,6 +26,8 @@ import {
 type CaptureResult = { dataUrl: string; width: number; height: number };
 type StatusKind = "info" | "success" | "error";
 type CaptureMode = "full" | "region" | "window" | "monitor" | "scrolling";
+/** Recording modes: the whole screen via the OS picker, or a dragged region. */
+type RecMode = "full" | "region";
 
 /** Modes that hand the choice to the OS portal picker. */
 const PICKER_MODES = ["window", "monitor"] as const;
@@ -353,6 +355,7 @@ const DEFAULT_STROKE = 3;
 const DEFAULT_FONT = "Inter";
 const DEFAULT_SIZE = 32;
 const MODE_KEY = "capicorn:capture-mode";
+const REC_MODE_KEY = "capicorn:rec-mode";
 const INK_KEY = "capicorn:ink-color";
 const STROKE_KEY = "capicorn:stroke-width";
 const DIR_KEY = "capicorn:save-dir";
@@ -431,6 +434,8 @@ const readMode = (): CaptureMode => {
     ? stored
     : "full";
 };
+
+const readRecMode = (): RecMode => (readStore(REC_MODE_KEY) === "region" ? "region" : "full");
 
 const readColor = (): string => {
   const stored = readStore(INK_KEY) ?? "";
@@ -586,13 +591,35 @@ export function mountApp(root: HTMLElement): void {
         <div class="rec-group">
           <div class="rec-pill" id="rec-pill" hidden>
             <span class="rec-pulse" aria-hidden="true"></span>
+            <span class="rec-scope" id="rec-scope" hidden>Region</span>
             <span class="rec-timer" id="rec-timer" role="timer" aria-label="Recording time">00:00</span>
             <span class="rec-format" id="rec-format">MP4</span>
           </div>
-          <button type="button" class="rec-btn" id="record" aria-pressed="false" title="Record the screen (opens the system screen picker)" aria-label="Record screen">
-            <span class="rec-glyph" id="rec-glyph" aria-hidden="true">${ICONS.record}</span>
-            <span class="rec-label" id="rec-label">Record</span>
-          </button>
+          <div class="rec-split" id="record-split">
+            <button type="button" class="rec-btn split-main" id="record" aria-pressed="false" title="Record the screen (opens the system screen picker)" aria-label="Record screen">
+              <span class="rec-glyph" id="rec-glyph" aria-hidden="true">${ICONS.record}</span>
+              <span class="rec-label" id="rec-label">Record</span>
+              <span class="rec-mode" id="rec-mode-label">Full</span>
+            </button>
+            <span class="rec-divider" aria-hidden="true"></span>
+            <button type="button" class="rec-caret" id="record-caret" aria-haspopup="menu" aria-expanded="false" aria-controls="record-menu" aria-label="Recording options" title="Recording options">
+              ${ICONS.caret}
+            </button>
+            <div class="capture-menu record-menu" id="record-menu" role="menu" aria-label="Recording mode" hidden>
+              <button type="button" class="menu-item" role="menuitemradio" data-rec-mode="full" aria-checked="true" title="Record the whole screen (system picker)">
+                <span class="menu-icon">${ICONS.full}</span>
+                <span class="menu-label">Record full screen</span>
+                <span class="menu-check">${ICONS.check}</span>
+                <span class="menu-key-space" aria-hidden="true"></span>
+              </button>
+              <button type="button" class="menu-item" role="menuitemradio" data-rec-mode="region" aria-checked="false" title="Drag a rectangle, then record only that area">
+                <span class="menu-icon">${ICONS.region}</span>
+                <span class="menu-label">Record region</span>
+                <span class="menu-check">${ICONS.check}</span>
+                <span class="menu-key-space" aria-hidden="true"></span>
+              </button>
+            </div>
+          </div>
         </div>
         <div class="split-btn" id="capture-split">
           <button type="button" class="btn-primary split-main" id="capture" aria-keyshortcuts="PrintScreen" title="Capture full screen (PrintScreen)">
@@ -908,6 +935,11 @@ export function mountApp(root: HTMLElement): void {
   const themeBtn = $<HTMLButtonElement>("#theme-toggle");
   const settingsBtn = $<HTMLButtonElement>("#settings-btn");
   const recordBtn = $<HTMLButtonElement>("#record");
+  const recordCaretBtn = $<HTMLButtonElement>("#record-caret");
+  const recordMenuEl = $<HTMLDivElement>("#record-menu");
+  const recordSplitEl = $<HTMLDivElement>("#record-split");
+  const recModeLabelEl = $<HTMLSpanElement>("#rec-mode-label");
+  const recScopeEl = $<HTMLSpanElement>("#rec-scope");
   const recGlyphEl = $<HTMLSpanElement>("#rec-glyph");
   const recLabelEl = $<HTMLSpanElement>("#rec-label");
   const recPillEl = $<HTMLDivElement>("#rec-pill");
@@ -1027,6 +1059,10 @@ export function mountApp(root: HTMLElement): void {
   let recStopping = false;
   /** Format the running take was started with (the setting can change mid-take). */
   let recFormatUsed: RecFormat | null = null;
+  /** Which mode the primary Record button starts (persisted). */
+  let recMode: RecMode = readRecMode();
+  /** Region of the running take, or null for a full-screen take. */
+  let recRegionUsed: Box | null = null;
 
   function setStatus(message: string, kind: StatusKind = "info"): void {
     statusEl.textContent = message;
@@ -1620,45 +1656,62 @@ export function mountApp(root: HTMLElement): void {
 
   /**
    * Menu visibility is tracked in JS (not via `hidden` alone) so the close
-   * animation can play out before the panel is actually removed.
+   * animation can play out before the panel is actually removed. One controller
+   * drives both split buttons, so Capture and Record behave identically.
    */
-  let menuOpen = false;
-  let menuCloseTimer: number | null = null;
+  type MenuController = { setOpen(open: boolean): void; isOpen(): boolean };
 
-  function setMenuOpen(open: boolean): void {
-    if (menuCloseTimer !== null) {
-      window.clearTimeout(menuCloseTimer);
-      menuCloseTimer = null;
-    }
-    const wasOpen = menuOpen;
-    menuOpen = open;
-    splitEl.classList.toggle("is-open", open);
-    caretBtn.setAttribute("aria-expanded", String(open));
+  function createMenu(
+    split: HTMLElement,
+    menu: HTMLElement,
+    caret: HTMLButtonElement,
+  ): MenuController {
+    let open = false;
+    let closeTimer: number | null = null;
 
-    if (open) {
-      menuEl.classList.remove("is-closing");
-      if (!wasOpen) {
-        menuEl.hidden = false;
-        menuEl.classList.remove("is-open");
-        void menuEl.offsetWidth;
-        menuEl.classList.add("is-open");
+    const setOpen = (next: boolean): void => {
+      if (closeTimer !== null) {
+        window.clearTimeout(closeTimer);
+        closeTimer = null;
       }
-      const active = menuEl.querySelector<HTMLButtonElement>(".menu-item.is-active");
-      (active ?? menuEl.querySelector<HTMLButtonElement>(".menu-item"))?.focus({
-        preventScroll: true,
-      });
-      return;
-    }
+      const wasOpen = open;
+      open = next;
+      split.classList.toggle("is-open", next);
+      caret.setAttribute("aria-expanded", String(next));
 
-    if (!wasOpen || menuEl.hidden) return;
-    menuEl.classList.remove("is-open");
-    menuEl.classList.add("is-closing");
-    menuCloseTimer = window.setTimeout(() => {
-      menuCloseTimer = null;
-      menuEl.hidden = true;
-      menuEl.classList.remove("is-closing");
-    }, 130);
+      if (next) {
+        menu.classList.remove("is-closing");
+        if (!wasOpen) {
+          menu.hidden = false;
+          menu.classList.remove("is-open");
+          void menu.offsetWidth;
+          menu.classList.add("is-open");
+        }
+        const active = menu.querySelector<HTMLButtonElement>(".menu-item.is-active");
+        (active ?? menu.querySelector<HTMLButtonElement>(".menu-item"))?.focus({
+          preventScroll: true,
+        });
+        return;
+      }
+
+      if (!wasOpen || menu.hidden) return;
+      menu.classList.remove("is-open");
+      menu.classList.add("is-closing");
+      closeTimer = window.setTimeout(() => {
+        closeTimer = null;
+        menu.hidden = true;
+        menu.classList.remove("is-closing");
+      }, 130);
+    };
+
+    return { setOpen, isOpen: () => open };
   }
+
+  const captureMenu = createMenu(splitEl, menuEl, caretBtn);
+  const recordMenu = createMenu(recordSplitEl, recordMenuEl, recordCaretBtn);
+
+  const setMenuOpen = (open: boolean): void => captureMenu.setOpen(open);
+  const setRecordMenuOpen = (open: boolean): void => recordMenu.setOpen(open);
 
   function setMode(next: CaptureMode, announce = false): void {
     mode = next;
@@ -1710,11 +1763,36 @@ export function mountApp(root: HTMLElement): void {
     if (announce) setStatus(copy.announce);
   }
 
+  /** Persist + paint the recording mode; the primary Record button uses it. */
+  function setRecMode(next: RecMode, announce = false): void {
+    recMode = next;
+    writeStore(REC_MODE_KEY, next);
+    for (const item of Array.from(
+      recordMenuEl.querySelectorAll<HTMLButtonElement>(".menu-item"),
+    )) {
+      const active = item.dataset.recMode === next;
+      item.classList.toggle("is-active", active);
+      item.setAttribute("aria-checked", String(active));
+    }
+    const region = next === "region";
+    recModeLabelEl.textContent = region ? "Region" : "Full";
+    recordBtn.title = recordIdleTitle();
+    recordBtn.setAttribute("aria-label", region ? "Record a screen region" : "Record screen");
+    if (announce) {
+      setStatus(
+        region
+          ? "Recording mode: region — press Record, then drag the area to record."
+          : "Recording mode: full screen — the system picker asks which screen to record.",
+      );
+    }
+  }
+
   function setBusy(value: boolean): void {
     busy = value;
     captureBtn.disabled = value;
     caretBtn.disabled = value;
     recordBtn.disabled = value || recStarting;
+    recordCaretBtn.disabled = value || recStarting || recording;
     captureBtn.classList.toggle("is-busy", value);
     splitEl.classList.toggle("is-busy", value);
     if (value) setMenuOpen(false);
@@ -1735,21 +1813,36 @@ export function mountApp(root: HTMLElement): void {
     recTimerEl.textContent = elapsedLabel(Date.now() - recStartedAt);
   }
 
+  /** Idle title for the primary Record button — reflects the persisted mode. */
+  const recordIdleTitle = (): string =>
+    recMode === "region"
+      ? "Record a screen region — drag the area to record"
+      : "Record the screen (opens the system screen picker)";
+
   /** One place that paints Rec → Stop, the pill and the disabled capture controls. */
   function paintRecording(active: boolean): void {
     recordBtn.classList.toggle("is-recording", active);
+    recordSplitEl.classList.toggle("is-recording", active);
     recordBtn.setAttribute("aria-pressed", String(active));
-    recordBtn.title = active
-      ? "Stop the recording and save it"
-      : "Record the screen (opens the system screen picker)";
-    recordBtn.setAttribute("aria-label", active ? "Stop recording" : "Record screen");
+    recordBtn.title = active ? "Stop the recording and save it" : recordIdleTitle();
+    recordBtn.setAttribute(
+      "aria-label",
+      active ? "Stop recording" : recMode === "region" ? "Record a screen region" : "Record screen",
+    );
     recLabelEl.textContent = active ? "Stop" : "Record";
     recGlyphEl.innerHTML = active ? ICONS.stop : ICONS.record;
+    recModeLabelEl.hidden = active;
     recPillEl.hidden = !active;
+    recScopeEl.hidden = !(active && recRegionUsed !== null);
+    recScopeEl.textContent = "Region";
     recFormatEl.textContent = recFormatLabel(recFormatUsed ?? settings.recFormat);
+    recordCaretBtn.disabled = active || busy || recStarting || recStopping;
     captureBtn.disabled = active || busy;
     caretBtn.disabled = active || busy;
-    if (active) setMenuOpen(false);
+    if (active) {
+      setRecordMenuOpen(false);
+      setMenuOpen(false);
+    }
   }
 
   function beginRecording(): void {
@@ -1765,6 +1858,7 @@ export function mountApp(root: HTMLElement): void {
     recording = false;
     recStartedAt = 0;
     recFormatUsed = null;
+    recRegionUsed = null;
     window.clearInterval(recTick);
     recTick = 0;
     recTimerEl.textContent = "00:00";
@@ -1775,8 +1869,36 @@ export function mountApp(root: HTMLElement): void {
   const recordingFilename = (): string =>
     `Capicorn-${expandPattern("{date}-{time}").replace(/\s+/g, "-")}.${settings.recFormat}`;
 
-  /** Ask the backend for the OS screen picker, then flip the bar into Stop mode. */
-  async function startRecording(): Promise<void> {
+  /** Fullscreen frozen screenshot + drag box — the region selector used by capture. */
+  async function pickRecordingRegion(): Promise<Box | null> {
+    let full = false;
+    try {
+      await invoke("set_fullscreen", { full: true });
+      full = true;
+      await settle();
+      const shot = await invoke<CaptureResult>("capture_screenshot");
+      setStatus("Drag to select the area to record — Enter to confirm, Esc to cancel.");
+      const box = await selectRegion(shot.dataUrl);
+      await invoke("set_fullscreen", { full: false });
+      full = false;
+      return box;
+    } finally {
+      if (full) {
+        try {
+          await invoke("set_fullscreen", { full: false });
+        } catch {
+          /* restore failed — the window is left as-is rather than stuck fullscreen */
+        }
+      }
+    }
+  }
+
+  /**
+   * Start a take in `next` mode. Full screen hands over to the OS screen picker;
+   * region runs the fullscreen selector first and passes the box to the backend.
+   * Selecting a mode from the Record menu calls this with that mode.
+   */
+  async function startRecording(next: RecMode = recMode): Promise<void> {
     if (recording || recStarting || recStopping) return;
     if (busy) {
       setStatus("Wait for the capture to finish before recording.");
@@ -1790,29 +1912,76 @@ export function mountApp(root: HTMLElement): void {
     recStarting = true;
     recFormatUsed = settings.recFormat;
     recordBtn.disabled = true;
+    recordCaretBtn.disabled = true;
+    recordSplitEl.classList.add("is-busy");
     recordBtn.classList.add("is-busy");
     recFormatEl.textContent = recFormatLabel(recFormatUsed);
-    setStatus(`Starting ${recFormatLabel(settings.recFormat)} recording — choose a screen…`);
     try {
-      await invoke("start_recording", {
+      let region: Box | null = null;
+      if (next === "region") {
+        setStatus("Choose the area to record — drag on the screen.");
+        try {
+          region = await pickRecordingRegion();
+        } catch (e) {
+          const message = errText(e);
+          setStatus(
+            isCancelled(message)
+              ? "Region recording cancelled — nothing was recorded."
+              : `Could not grab the screen for the region: ${message}`,
+            isCancelled(message) ? "info" : "error",
+          );
+          return;
+        }
+        if (!region) {
+          setStatus("Region recording cancelled — nothing was recorded.");
+          return;
+        }
+        setStatus(
+          `Starting ${recFormatLabel(settings.recFormat)} region recording — ${region.width} × ${region.height}…`,
+        );
+      } else {
+        setStatus(`Starting ${recFormatLabel(settings.recFormat)} recording — choose a screen…`);
+      }
+
+      const args: Record<string, unknown> = {
         format: settings.recFormat,
         dir,
         filename: recordingFilename(),
-      });
+      };
+      // Full screen omits `region` entirely so the backend runs its OS picker.
+      if (region) args.region = region;
+      // Set before the invoke: the backend's `recording-state` event can land
+      // first, and the pill must already know this is a region take.
+      recRegionUsed = region;
+      await invoke("start_recording", args);
+
       recStartedAt = Date.now();
       beginRecording();
-      setStatus("Recording — click Stop when you're done.", "success");
+      setStatus(
+        region
+          ? `Recording a ${region.width} × ${region.height} region — click Stop when you're done.`
+          : "Recording — click Stop when you're done.",
+        "success",
+      );
     } catch (e) {
       const message = errText(e);
-      if (/cancel|dismiss|denied|deny|refus/i.test(message)) {
+      if (/portal|permission|denied|deny|refus/i.test(message)) {
+        setStatus(
+          "Recording cancelled — screen sharing wasn't allowed. Approve the system prompt and try again.",
+          "error",
+        );
+      } else if (/cancel|dismiss|abort|nothing selected/i.test(message)) {
         setStatus("Recording cancelled — no screen was picked.");
       } else {
         setStatus(`Could not start recording: ${message}`, "error");
       }
+      recRegionUsed = null;
       endRecording();
     } finally {
       recStarting = false;
       recordBtn.disabled = false;
+      recordCaretBtn.disabled = recording;
+      recordSplitEl.classList.remove("is-busy");
       recordBtn.classList.remove("is-busy");
     }
   }
@@ -1834,6 +2003,7 @@ export function mountApp(root: HTMLElement): void {
     } finally {
       recStopping = false;
       recordBtn.disabled = false;
+      recordCaretBtn.disabled = busy;
     }
   }
 
@@ -3289,7 +3459,8 @@ export function mountApp(root: HTMLElement): void {
 
   captureBtn.addEventListener("click", () => void runCapture());
   recordBtn.addEventListener("click", () => void (recording ? stopRecording() : startRecording()));
-  caretBtn.addEventListener("click", () => setMenuOpen(!menuOpen));
+  caretBtn.addEventListener("click", () => setMenuOpen(!captureMenu.isOpen()));
+  recordCaretBtn.addEventListener("click", () => setRecordMenuOpen(!recordMenu.isOpen()));
 
   // Opening from the caret with ArrowDown is a standard menu affordance.
   caretBtn.addEventListener("keydown", (ev) => {
@@ -3332,11 +3503,48 @@ export function mountApp(root: HTMLElement): void {
     }
   });
 
+  // Record menu: same affordances as Capture — ArrowDown from the caret, arrow
+  // keys / Home / End inside, Esc back to the caret. Selecting a mode persists it
+  // AND starts that kind of take immediately.
+  recordCaretBtn.addEventListener("keydown", (ev) => {
+    if (ev.key !== "ArrowDown" || !recordMenuEl.hidden) return;
+    ev.preventDefault();
+    setRecordMenuOpen(true);
+  });
+
+  for (const item of Array.from(recordMenuEl.querySelectorAll<HTMLButtonElement>(".menu-item"))) {
+    item.addEventListener("click", () => {
+      const next: RecMode = item.dataset.recMode === "region" ? "region" : "full";
+      setRecMode(next, true);
+      setRecordMenuOpen(false);
+      recordCaretBtn.focus({ preventScroll: true });
+      void startRecording(next);
+    });
+  }
+
+  recordMenuEl.addEventListener("keydown", (ev) => {
+    const items = Array.from(recordMenuEl.querySelectorAll<HTMLButtonElement>(".menu-item"));
+    const idx = items.indexOf(document.activeElement as HTMLButtonElement);
+    if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
+      ev.preventDefault();
+      const step = ev.key === "ArrowDown" ? 1 : -1;
+      items[(idx + step + items.length) % items.length]?.focus();
+    } else if (ev.key === "Home" || ev.key === "End") {
+      ev.preventDefault();
+      items[ev.key === "Home" ? 0 : items.length - 1]?.focus();
+    } else if (ev.key === "Escape") {
+      ev.preventDefault();
+      setRecordMenuOpen(false);
+      recordCaretBtn.focus({ preventScroll: true });
+    }
+  });
+
   const onDocPointerDown = (ev: PointerEvent): void => {
-    if (menuEl.hidden) return;
     const target = ev.target as Node | null;
-    if (target && splitEl.contains(target)) return;
-    setMenuOpen(false);
+    if (!menuEl.hidden && !(target && splitEl.contains(target))) setMenuOpen(false);
+    if (!recordMenuEl.hidden && !(target && recordSplitEl.contains(target))) {
+      setRecordMenuOpen(false);
+    }
   };
   document.addEventListener("pointerdown", onDocPointerDown);
 
@@ -3541,6 +3749,7 @@ export function mountApp(root: HTMLElement): void {
   selectTool("select", false);
   setImageState(false);
   setMode(mode, false);
+  setRecMode(recMode, false);
   setTheme(theme, false);
 
   const savedInk = readColor();

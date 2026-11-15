@@ -20,9 +20,14 @@
 //!
 //! | command           | args (camelCase)             | returns               |
 //! |-------------------|------------------------------|-----------------------|
-//! | `start_recording` | `format` (`mp4`/`gif`), `dir`, `filename` | `void` — resolves once frames flow |
+//! | `start_recording` | `format` (`mp4`/`gif`), `dir`, `filename`, `region` (optional) | `void` — resolves once frames flow |
 //! | `stop_recording`  | —                            | output path (`string`) |
 //! | `is_recording`    | —                            | `bool`                |
+//!
+//! `region` selects a rectangle of the monitor ({left,top,width,height} in
+//! stream pixels). Every captured frame is cropped to it before it reaches
+//! ffmpeg, and ffmpeg is sized to the (even-padded) region, so the take is the
+//! selected rectangle and nothing else. Omitted/`null` keeps the whole monitor.
 //!
 //! `recording-state` events (`{ recording: bool, path: string|null }`) are emitted on
 //! start and stop so the UI can resync if it missed an invoke result.
@@ -32,8 +37,31 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread::JoinHandle;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::{Emitter, State};
+
+/// Rectangle of the captured stream to keep, in stream pixels.
+///
+/// `left`/`top` are signed so a selection dragged partly off-screen still
+/// arrives intact; the crop clamps whatever falls outside the frame.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Region {
+    pub left: i32,
+    pub top: i32,
+    pub width: u32,
+    pub height: u32,
+}
+
+impl Region {
+    /// An empty rectangle would make ffmpeg choke; that is a frontend bug.
+    fn validate(self) -> Result<Self, String> {
+        if self.width == 0 || self.height == 0 {
+            return Err("the recording region has no area".to_string());
+        }
+        Ok(self)
+    }
+}
 
 /// Message for platforms without a capture backend yet.
 #[cfg(not(target_os = "linux"))]
@@ -170,7 +198,8 @@ impl RecordingState {
 // Commands
 // ---------------------------------------------------------------------------
 
-/// Start a recording of the whole monitor into `dir/filename`.
+/// Start a recording of the monitor — or of `region` within it — into
+/// `dir/filename`.
 ///
 /// Resolves only once real frames are flowing into ffmpeg, so a denied/locked
 /// portal surfaces as a rejected promise instead of a silent "recording" badge.
@@ -181,8 +210,10 @@ pub async fn start_recording(
     format: String,
     dir: String,
     filename: String,
+    region: Option<Region>,
 ) -> Result<(), String> {
     let format = RecordingFormat::parse(&format)?;
+    let region = region.map(Region::validate).transpose()?;
 
     if dir.trim().is_empty() {
         return Err("no save directory given".to_string());
@@ -198,11 +229,11 @@ pub async fn start_recording(
 
     #[cfg(target_os = "linux")]
     {
-        imp::start(app, state, format, out_path).await
+        imp::start(app, state, format, out_path, region).await
     }
     #[cfg(not(target_os = "linux"))]
     {
-        let _ = (app, state, format, out_path);
+        let _ = (app, state, format, out_path, region);
         Err(NOT_SUPPORTED.to_string())
     }
 }
@@ -275,7 +306,7 @@ fn finish(mut active: Active) -> (String, Result<(), String>) {
 
 #[cfg(target_os = "linux")]
 mod imp {
-    use super::{RecordingFormat, FIRST_FRAME_WAIT};
+    use super::{RecordingFormat, Region, FIRST_FRAME_WAIT};
     use std::cell::{Cell, RefCell};
     use std::future::Future;
     use std::io::{Cursor, Write};
@@ -372,6 +403,81 @@ mod imp {
             }
         }
         true
+    }
+
+    // -- region crop --------------------------------------------------------
+
+    /// yuv420p (and libx264's default) needs even dimensions; the frame we feed
+    /// ffmpeg is padded rather than scaled, so the extra column/row is zeroed.
+    fn even_floor(v: usize) -> usize {
+        (v + 1) & !1
+    }
+
+    /// The exact rectangle of a `fw`x`fh` rgb24 frame that `region` covers, in
+    /// frame pixels. `None` when the region misses the frame entirely.
+    ///
+    /// Clamps instead of rejecting: a selection dragged past the screen edge is
+    /// normal, and the part that exists is what the user wants recorded.
+    fn region_bounds(region: Region, fw: usize, fh: usize) -> Option<(usize, usize, usize, usize)> {
+        if fw == 0 || fh == 0 || region.width == 0 || region.height == 0 {
+            return None;
+        }
+        let left = region.left.max(0) as usize;
+        let top = region.top.max(0) as usize;
+        if left >= fw || top >= fh {
+            return None;
+        }
+        let right = (region.left as i64 + region.width as i64).clamp(0, fw as i64) as usize;
+        let bottom = (region.top as i64 + region.height as i64).clamp(0, fh as i64) as usize;
+        let (width, height) = (right.saturating_sub(left), bottom.saturating_sub(top));
+        if width == 0 || height == 0 {
+            return None;
+        }
+        Some((left, top, width, height))
+    }
+
+    /// Padded output size for `region` inside a `fw`x`fh` frame — the value that
+    /// goes into `ffmpeg -s`, and exactly what [`crop_rgb24`] writes per frame.
+    pub(crate) fn region_size(region: Region, fw: usize, fh: usize) -> Option<(u32, u32)> {
+        let (_, _, width, height) = region_bounds(region, fw, fh)?;
+        Some((even_floor(width) as u32, even_floor(height) as u32))
+    }
+
+    /// Crop tightly-packed `rgb24` (`fw`x`fh`) to `region`, writing a
+    /// tightly-packed image of the padded region size into `out`.
+    ///
+    /// Returns the `(width, height)` written, which always equals
+    /// [`region_size`] — ffmpeg is spawned with that size, so a mismatch would
+    /// shear the whole take. Padding (odd region width/height, and any part of
+    /// the rectangle outside the frame) is filled with black.
+    pub(crate) fn crop_rgb24(
+        src: &[u8],
+        fw: usize,
+        fh: usize,
+        region: Region,
+        out: &mut Vec<u8>,
+    ) -> Option<(u32, u32)> {
+        let (left, top, width, height) = region_bounds(region, fw, fh)?;
+        if fw == 0 || fh == 0 || src.len() < fw * fh * 3 {
+            return None;
+        }
+
+        let (out_w, out_h) = region_size(region, fw, fh)?;
+        let (out_w, out_h) = (out_w as usize, out_h as usize);
+
+        out.clear();
+        out.resize(out_w * out_h * 3, 0);
+
+        let row_bytes = width * 3;
+        let dst_stride = out_w * 3;
+        for y in 0..height {
+            let src_start = ((top + y) * fw + left) * 3;
+            let dst_start = y * dst_stride;
+            out[dst_start..dst_start + row_bytes]
+                .copy_from_slice(&src[src_start..src_start + row_bytes]);
+        }
+
+        Some((out_w as u32, out_h as u32))
     }
 
     // -- ffmpeg -------------------------------------------------------------
@@ -694,7 +800,15 @@ mod imp {
         loopweak: pw::main_loop::MainLoopWeak,
         out: PathBuf,
         format: RecordingFormat,
+        /// Selected rectangle, constant for the whole take. `None` records the
+        /// whole monitor exactly as before.
+        region: Option<Region>,
+        /// Size ffmpeg was told via `-s` (already even-padded for a region).
+        out_size: (u32, u32),
+        /// Full-frame rgb24 from `convert_into`.
         buf: Vec<u8>,
+        /// Reused scratch for the cropped (and padded) rgb24 frame.
+        cropped: Vec<u8>,
         spawned: bool,
     }
 
@@ -734,9 +848,30 @@ mod imp {
             "30".to_string()
         };
 
-        match spawn_ffmpeg(&ud.out, ud.format, size.width, size.height, &fps) {
+        // ffmpeg must be told the size of what we actually write: the padded
+        // region when one is selected, the full frame otherwise.
+        let (out_w, out_h) = match ud.region {
+            Some(region) => match region_size(region, size.width as usize, size.height as usize) {
+                Some(dims) => dims,
+                None => {
+                    let msg = format!(
+                        "the recording region {}x{}+{}+{} lies outside the {}x{} capture",
+                        region.width, region.height, region.left, region.top,
+                        size.width, size.height
+                    );
+                    eprintln!("capicorn: {msg}");
+                    report(ud, Err(msg));
+                    quit(ud);
+                    return false;
+                }
+            },
+            None => (size.width, size.height),
+        };
+
+        match spawn_ffmpeg(&ud.out, ud.format, out_w, out_h, &fps) {
             Ok(pair) => {
                 *ud.child.borrow_mut() = Some(pair);
+                ud.out_size = (out_w, out_h);
                 ud.spawned = true;
                 report(ud, Ok(()));
                 true
@@ -758,6 +893,7 @@ mod imp {
         size: (i32, i32),
         out: PathBuf,
         format: RecordingFormat,
+        region: Option<Region>,
         stop: Arc<AtomicBool>,
         started: mpsc::SyncSender<Result<(), String>>,
     ) -> Result<(), String> {
@@ -795,7 +931,11 @@ mod imp {
             loopweak: mainloop.downgrade(),
             out: out.clone(),
             format,
+            region,
+            // Filled in by `ensure_ffmpeg` once the negotiated size is known.
+            out_size: (0, 0),
             buf: Vec::new(),
+            cropped: Vec::new(),
             spawned: false,
         };
 
@@ -881,11 +1021,30 @@ mod imp {
                     return;
                 }
 
+                // Crop to the selected rectangle *before* anything reaches the
+                // encoder, and pad to even dimensions: that padded size is the
+                // `-s` ffmpeg was spawned with, so every frame fits exactly.
+                let frame: &[u8] = match ud.region {
+                    Some(region) => {
+                        match crop_rgb24(&ud.buf, width, height, region, &mut ud.cropped) {
+                            Some(size) => {
+                                debug_assert_eq!(size, ud.out_size, "crop size drifted from -s");
+                                &ud.cropped
+                            }
+                            // The region no longer overlaps the frame: skip this
+                            // one rather than write a short buffer ffmpeg would
+                            // misread as pixels.
+                            None => return,
+                        }
+                    }
+                    None => &ud.buf,
+                };
+
                 let wrote = {
                     let mut slot = ud.child.borrow_mut();
                     match slot.as_mut() {
                         // EPIPE means ffmpeg died: stop instead of spinning.
-                        Some((_, stdin)) => stdin.write_all(&ud.buf).is_ok(),
+                        Some((_, stdin)) => stdin.write_all(frame).is_ok(),
                         None => false,
                     }
                 };
@@ -996,8 +1155,16 @@ mod imp {
         state: State<'_, super::RecordingState>,
         format: RecordingFormat,
         out_path: PathBuf,
+        region: Option<Region>,
     ) -> Result<(), String> {
         let portal = open_portal().await?;
+
+        if let Some(region) = region {
+            eprintln!(
+                "capicorn: recording region {}x{}+{}+{}",
+                region.width, region.height, region.left, region.top
+            );
+        }
 
         let stop = Arc::new(AtomicBool::new(false));
         let (started_tx, started_rx) = mpsc::sync_channel(1);
@@ -1010,7 +1177,8 @@ mod imp {
                 .name("capicorn-recording".to_string())
                 .spawn(move || {
                     let result = capture(
-                        portal.fd, portal.node, portal.size, out, format, stop, started_tx,
+                        portal.fd, portal.node, portal.size, out, format, region, stop,
+                        started_tx,
                     );
                     if let Err(err) = &result {
                         eprintln!("capicorn: recording stopped: {err}");
@@ -1115,6 +1283,114 @@ mod imp {
             let (bpp, idx) = pixfmt(VideoFormat::RGBx).expect("RGBx supported");
             let mut out = Vec::new();
             assert!(!convert_into(&[0u8; 8], 4, 2, bpp, idx, 16, &mut out));
+        }
+
+        // -- region crop ----------------------------------------------------
+
+        /// A frame where every pixel is unique, so a crop that is off by one row
+        /// or column cannot accidentally compare equal.
+        fn sample_frame(fw: usize, fh: usize) -> Vec<u8> {
+            let mut frame = vec![0u8; fw * fh * 3];
+            for y in 0..fh {
+                for x in 0..fw {
+                    let i = (y * fw + x) * 3;
+                    frame[i] = x as u8;
+                    frame[i + 1] = y as u8;
+                    frame[i + 2] = 200;
+                }
+            }
+            frame
+        }
+
+        fn px(frame: &[u8], stride: usize, x: usize, y: usize) -> [u8; 3] {
+            let i = (y * stride + x) * 3;
+            [frame[i], frame[i + 1], frame[i + 2]]
+        }
+
+        #[test]
+        fn crop_recovers_exactly_the_selected_pixels() {
+            let (fw, fh) = (5usize, 4usize);
+            let frame = sample_frame(fw, fh);
+            let region = Region { left: 1, top: 2, width: 2, height: 2 };
+            let mut out = Vec::new();
+
+            let size = crop_rgb24(&frame, fw, fh, region, &mut out).expect("region is inside");
+            assert_eq!(size, (2, 2));
+            assert_eq!(out.len(), 2 * 2 * 3);
+
+            for y in 0..2 {
+                for x in 0..2 {
+                    assert_eq!(
+                        px(&out, 2, x, y),
+                        px(&frame, fw, 1 + x, 2 + y),
+                        "pixel ({x},{y}) of the crop"
+                    );
+                }
+            }
+        }
+
+        #[test]
+        fn crop_clamps_a_region_that_runs_past_the_frame_edge() {
+            let (fw, fh) = (4usize, 3usize);
+            let frame = sample_frame(fw, fh);
+            // Only the single pixel at (3,2) is on screen.
+            let region = Region { left: 3, top: 2, width: 10, height: 10 };
+            let mut out = Vec::new();
+
+            let size = crop_rgb24(&frame, fw, fh, region, &mut out).expect("it overlaps");
+            // 1x1 visible -> padded to 2x2 so yuv420p stays happy.
+            assert_eq!(size, (2, 2));
+            assert_eq!(out.len(), 2 * 2 * 3);
+            assert_eq!(px(&out, 2, 0, 0), px(&frame, fw, 3, 2));
+            assert_eq!(px(&out, 2, 1, 0), [0, 0, 0], "pad column is black");
+            assert_eq!(px(&out, 2, 0, 1), [0, 0, 0], "pad row is black");
+        }
+
+        #[test]
+        fn crop_ignores_the_part_of_a_region_before_the_origin() {
+            let (fw, fh) = (4usize, 3usize);
+            let frame = sample_frame(fw, fh);
+            let region = Region { left: -2, top: -1, width: 4, height: 3 };
+            let mut out = Vec::new();
+
+            let size = crop_rgb24(&frame, fw, fh, region, &mut out).expect("it overlaps");
+            assert_eq!(size, (2, 2), "the on-screen 2x2 part");
+            assert_eq!(px(&out, 2, 0, 0), px(&frame, fw, 0, 0));
+            assert_eq!(px(&out, 2, 1, 1), px(&frame, fw, 1, 1));
+        }
+
+        #[test]
+        fn odd_region_sizes_are_padded_and_ffmpeg_is_told_that_size() {
+            let frame = sample_frame(7, 5);
+            let region = Region { left: 2, top: 1, width: 3, height: 3 };
+            let mut out = Vec::new();
+
+            let size = crop_rgb24(&frame, 7, 5, region, &mut out).expect("inside the frame");
+            assert_eq!(size, (4, 4), "3x3 region padded to even");
+            assert_eq!(size, region_size(region, 7, 5).expect("region size"));
+            assert_eq!(out.len(), 4 * 4 * 3);
+            assert_eq!(px(&out, 4, 3, 3), [0, 0, 0], "pad corner is black");
+
+            // The frame layout the encoder is spawned with must match the crop
+            // exactly, or every take would shear.
+            let args = ffmpeg_args(Path::new("/tmp/out.mp4"), RecordingFormat::Mp4, size.0, size.1, "30");
+            assert!(args.contains(&"4x4".to_string()), "{args:?}");
+        }
+
+        #[test]
+        fn crop_rejects_regions_that_miss_the_frame() {
+            let frame = sample_frame(4, 3);
+            let mut out = Vec::new();
+
+            let outside = Region { left: 9, top: 0, width: 2, height: 2 };
+            assert!(crop_rgb24(&frame, 4, 3, outside, &mut out).is_none());
+            assert!(region_size(outside, 4, 3).is_none());
+
+            let empty = Region { left: 0, top: 0, width: 0, height: 2 };
+            assert!(crop_rgb24(&frame, 4, 3, empty, &mut out).is_none());
+
+            let short = Region { left: 0, top: 0, width: 2, height: 2 };
+            assert!(crop_rgb24(&frame[..8], 4, 3, short, &mut out).is_none());
         }
 
         #[test]

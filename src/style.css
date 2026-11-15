@@ -3565,6 +3565,164 @@ kbd {
   letter-spacing: 0.01em;
 }
 
+/* Record split: primary take + mode caret drawn as a single quiet control,
+   mirroring the Capture split button without its accent fill. */
+.rec-split {
+  position: relative;
+  flex: none;
+  display: inline-flex;
+  align-items: stretch;
+  border: 1px solid var(--border-strong);
+  border-radius: 9px;
+  background: var(--surface);
+  transition: background-color 140ms var(--ease), border-color 140ms var(--ease),
+    box-shadow 140ms var(--ease);
+}
+
+.rec-split:hover {
+  border-color: var(--fg-subtle);
+}
+
+.rec-split .rec-btn {
+  height: 32px;
+  border: 0;
+  border-radius: 8px 0 0 8px;
+  background: transparent;
+}
+
+.rec-split .rec-btn:hover:not(:disabled) {
+  background: transparent;
+  border-color: transparent;
+}
+
+.rec-mode {
+  margin-left: 4px;
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fg-subtle);
+  line-height: 1;
+  transition: color 140ms var(--ease);
+}
+
+.rec-mode[hidden] {
+  display: none;
+}
+
+.rec-divider {
+  width: 1px;
+  margin: 6px 0;
+  background: var(--border-strong);
+}
+
+.rec-caret {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 7px 0 4px;
+  border-radius: 0 8px 8px 0;
+  color: var(--fg-muted);
+  transition: color 120ms var(--ease), background-color 120ms var(--ease);
+}
+
+.rec-caret:hover:not(:disabled) {
+  color: var(--fg);
+  background: var(--surface-soft);
+}
+
+.rec-caret:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.rec-caret svg {
+  display: block;
+  transition: transform 170ms var(--ease);
+}
+
+.rec-split.is-open .rec-caret {
+  color: var(--fg);
+  background: var(--surface-soft);
+}
+
+.rec-split.is-open .rec-caret svg {
+  transform: rotate(180deg);
+}
+
+.rec-split .rec-btn:focus-visible,
+.rec-split .rec-caret:focus-visible {
+  outline: 2px solid var(--accent-ring);
+  outline-offset: 2px;
+}
+
+.rec-split.is-busy {
+  cursor: progress;
+}
+
+.rec-split.is-busy .rec-btn,
+.rec-split.is-busy .rec-caret {
+  cursor: progress;
+  opacity: 0.72;
+}
+
+/* Live take: the whole control turns red, caret included. */
+.rec-split.is-recording {
+  background: var(--rec);
+  border-color: var(--rec);
+  box-shadow: 0 1px 2px rgba(120, 20, 40, 0.32), inset 0 1px 0 rgba(255, 255, 255, 0.16);
+}
+
+.rec-split.is-recording .rec-btn,
+.rec-split.is-recording .rec-btn:hover:not(:disabled) {
+  background: var(--rec);
+  border-color: transparent;
+}
+
+.rec-split.is-recording:hover .rec-btn:not(:disabled) {
+  background: var(--rec-hover);
+}
+
+.rec-split.is-recording .rec-mode {
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.rec-split.is-recording .rec-divider {
+  background: rgba(255, 255, 255, 0.32);
+}
+
+.rec-split.is-recording .rec-caret {
+  color: rgba(255, 255, 255, 0.66);
+}
+
+/* Disabled during a take: keep the segment solid red, only mute the glyph. */
+.rec-split.is-recording .rec-caret:disabled {
+  opacity: 1;
+}
+
+/* Region scope tag inside the live pill. */
+.rec-scope {
+  padding-right: 7px;
+  border-right: 1px solid color-mix(in srgb, var(--rec) 24%, transparent);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--rec);
+  line-height: 1;
+}
+
+.rec-scope[hidden] {
+  display: none;
+}
+
+.record-menu {
+  min-width: 232px;
+  max-height: min(60vh, 260px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
 @keyframes rec-pulse {
   0% {
     box-shadow: 0 0 0 0 color-mix(in srgb, var(--rec) 55%, transparent);
@@ -3606,6 +3764,10 @@ kbd {
   .rec-btn {
     padding: 0 9px;
   }
+
+  .rec-split .rec-mode {
+    display: none;
+  }
 }
 
 @media (max-width: 700px) {
@@ -3627,6 +3789,11 @@ kbd {
   .rec-btn:active:not(:disabled),
   .rec-btn:hover:not(:disabled) .rec-glyph {
     transform: none;
+  }
+
+  .rec-caret svg,
+  .rec-mode {
+    transition: none;
   }
 }
 

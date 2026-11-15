@@ -689,9 +689,11 @@ mod imp {
         Ok(out)
     }
 
-    /// `SPA_PARAM_Buffers`. Without it the pool defaults to 8 KiB buffers and
-    /// frames are silently truncated (`chunk.size > mapped size`) — the trap that
-    /// cost the most time in the probe (`recording.md` §6.1).
+    /// `SPA_PARAM_Buffers` pod, kept for producers that need an explicit pool.
+    /// The CAPTURE stream must NOT send one: an explicit 19.8 MB × 8 pool made KWin
+    /// reject the port with "error alloc buffers: Invalid argument" (v0.17.1 log);
+    /// with MAP_BUFFERS the producer's own full-size buffers are correct.
+    #[allow(dead_code)]
     fn buffers_param(size_per_frame: u32, stride: u32, count: i32) -> Result<Vec<u8>, String> {
         let properties = vec![
             Property::new(spa::sys::SPA_PARAM_BUFFERS_buffers, Value::Int(count)),
@@ -1201,8 +1203,10 @@ mod imp {
                 VideoFormat::RGB,
             ],
         )?;
-        // Without this the pool is 8 KiB and every frame is truncated.
-        pods.push(buffers_param(width * height * 4, width * 4, 8)?);
+        // No explicit SPA_PARAM_Buffers: requesting 19.8 MB × 8 buffers made KWin
+        // reject the allocation with "error alloc buffers: Invalid argument". With
+        // MAP_BUFFERS the producer allocates correct full-size buffers on its own
+        // (verified identical 45-frame output with and without the pod).
         let mut params: Vec<&Pod> = pods.iter().filter_map(|v| Pod::from_bytes(v)).collect();
 
         // Sync this connection's registry and wait until the portal's node is

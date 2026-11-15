@@ -31,8 +31,8 @@ share* flow in one lightweight app. Capicorn fills that gap.
 - Capture timer (off / 3 / 5 / 10 s) and a `PrintScreen` shortcut
 
 **Annotate** (Fabric.js, native resolution)
-- 13 tools: select, crop, arrow, text, rectangle, **true Gaussian blur** / pixelate /
-  blackout, spotlight, highlighter, callout, step numbers, magnify, brush, fill bucket
+- 12 tools: select, crop, arrow, text, rectangle, **true Gaussian blur** / pixelate /
+  blackout, spotlight, highlighter, callout, step numbers, brush, fill bucket
 - Shadows, colours, stroke width, and per-tool sizes with a live brush-size preview
 - Four bundled OFL fonts (Inter, Source Serif 4, JetBrains Mono, Caveat) with
   size / bold / italic, plus reusable style presets
@@ -43,6 +43,12 @@ share* flow in one lightweight app. Capicorn fills that gap.
 - Auto-save on capture, custom filename patterns (`{date}`, `{time}`, `{datetime}`)
 - **OCR** — extract text from a capture (English / Swedish) via the system `tesseract`
 - Recent-captures filmstrip
+
+**Not yet**
+- **Audio in recordings** — video only today; microphone / system audio is the next
+  recording feature
+- **Interval capture** — a screenshot every N seconds (5 s, 30 s, 1 min, …)
+- Upload / share links (files and the clipboard only, by design)
 
 **Desktop integration**
 - System tray, minimise-to-tray, and a collapsible floating capture widget ("flärp")

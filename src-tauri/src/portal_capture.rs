@@ -220,8 +220,10 @@ mod imp {
         Ok(out)
     }
 
-    /// `SPA_PARAM_Buffers`. Without it the pool is 8 KiB and every frame is
-    /// silently truncated (`recording.md` §6.1 — the trap that cost the most time).
+    /// `SPA_PARAM_Buffers` pod, kept for producers that need an explicit pool.
+    /// The CAPTURE stream must NOT send one: KWin rejects a large explicit pool
+    /// with "error alloc buffers" — MAP_BUFFERS producer defaults are correct.
+    #[allow(dead_code)]
     fn buffers_param(
         size_per_frame: u32,
         stride: u32,
@@ -412,13 +414,14 @@ mod imp {
             .connect_fd_rc(fd, None)
             .map_err(|e| format!("cannot connect to the portal PipeWire fd: {e}"))?;
 
-        let mut props = pw::properties::properties! {
+        let props = pw::properties::properties! {
             *pw::keys::MEDIA_TYPE => "Video",
             *pw::keys::MEDIA_CATEGORY => "Capture",
             *pw::keys::MEDIA_ROLE => "Screen",
         };
-        // `pw::keys::TARGET_OBJECT` is feature-gated in pipewire 0.10: literal key.
-        props.insert("target.object", node.to_string());
+        // The target node is passed to `stream.connect` below, NOT as a
+        // `target.object` prop (which resolves too early on a fresh connection —
+        // the same "no target node available" trap the recorder hit).
 
         let stream = pw::stream::StreamBox::new(&core, name, props)
             .map_err(|e| format!("cannot create the PipeWire capture stream: {e}"))?;
@@ -543,9 +546,30 @@ mod imp {
                 VideoFormat::RGB,
             ],
         )?;
-        // Without this the pool is 8 KiB and every frame is truncated.
-        pods.push(buffers_param(width * height * 4, width * 4, 8)?);
+        // No explicit SPA_PARAM_Buffers: a large explicit pool made KWin reject
+        // the port ("error alloc buffers"); MAP_BUFFERS producer defaults are correct.
         let mut params: Vec<&Pod> = pods.iter().filter_map(|v| Pod::from_bytes(v)).collect();
+
+        // Wait for the portal node to appear in this connection's registry before
+        // targeting it — connecting to an unknown node fails the same way.
+        if let Ok(registry) = core.get_registry() {
+            let seen = Rc::new(Cell::new(false));
+            let seen_flag = seen.clone();
+            let _listener = registry
+                .add_listener_local()
+                .global(move |g| {
+                    if g.id == node {
+                        seen_flag.set(true);
+                    }
+                })
+                .register();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+            while !seen.get() && std::time::Instant::now() < deadline {
+                let _ = mainloop
+                    .loop_()
+                    .iterate(pw::loop_::Timeout::Finite(std::time::Duration::from_millis(20)));
+            }
+        }
 
         stream
             .connect(

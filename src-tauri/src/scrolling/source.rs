@@ -160,8 +160,9 @@ fn make_params(width: u32, height: u32, formats: &[VideoFormat]) -> Result<Vec<V
     Ok(out)
 }
 
-/// `SPA_PARAM_Buffers`. Without it the pool is 8 KiB and every frame is silently
-/// truncated (`recording.md` §6.1 — the trap that cost the most probe time).
+/// `SPA_PARAM_Buffers` pod, kept for producers that need an explicit pool.
+/// The CAPTURE stream must NOT send one (KWin rejects a large explicit pool).
+#[allow(dead_code)]
 fn buffers_param(size_per_frame: u32, stride: u32, count: i32) -> Result<Vec<u8>, String> {
     let properties = vec![
         Property::new(spa::sys::SPA_PARAM_BUFFERS_buffers, Value::Int(count)),
@@ -384,14 +385,13 @@ fn capture(
         .connect_fd_rc(fd, None)
         .map_err(|e| format!("cannot connect to the portal PipeWire fd: {e}"))?;
 
-    let mut props = pw::properties::properties! {
+    let props = pw::properties::properties! {
         *pw::keys::MEDIA_TYPE => "Video",
         *pw::keys::MEDIA_CATEGORY => "Capture",
         *pw::keys::MEDIA_ROLE => "Screen",
     };
-    // `pw::keys::TARGET_OBJECT` is feature-gated in pipewire 0.10: literal key.
-    props.insert("target.object", node.to_string());
-
+    // Target goes only to `stream.connect` (see the recorder): a `target.object`
+    // prop resolves before the registry has seen the portal node.
     let stream = pw::stream::StreamBox::new(&core, "capicorn-scrolling", props)
         .map_err(|e| format!("cannot create the PipeWire capture stream: {e}"))?;
 
@@ -521,9 +521,29 @@ fn capture(
             VideoFormat::RGB,
         ],
     )?;
-    // Without this the pool is 8 KiB and every frame is truncated.
-    pods.push(buffers_param(width * height * 4, width * 4, 8)?);
+    // No explicit SPA_PARAM_Buffers — KWin rejects a large explicit pool; the
+    // MAP_BUFFERS producer defaults are correct (same fix as the recorder).
     let mut params: Vec<&Pod> = pods.iter().filter_map(|v| Pod::from_bytes(v)).collect();
+
+    // Wait until the portal node is visible in this connection's registry.
+    if let Ok(registry) = core.get_registry() {
+        let node_seen = Rc::new(Cell::new(false));
+        let seen_flag = node_seen.clone();
+        let _listener = registry
+            .add_listener_local()
+            .global(move |g| {
+                if g.id == node {
+                    seen_flag.set(true);
+                }
+            })
+            .register();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while !node_seen.get() && std::time::Instant::now() < deadline {
+            let _ = mainloop
+                .loop_()
+                .iterate(pw::loop_::Timeout::Finite(std::time::Duration::from_millis(20)));
+        }
+    }
 
     stream
         .connect(

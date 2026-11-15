@@ -3,6 +3,9 @@
 All notable changes to Capicorn, newest first. Full release notes for every tag live on
 the [releases page](https://github.com/rostaddotcc/capicorn/releases).
 
+## v0.22.2
+- Fixed **Window / Choose-screen** capture (and scrolling capture) on KDE. The one-frame ScreenCast consumer carried the same three PipeWire traps the recorder had: a `target.object` prop resolving before the registry saw the portal node, no registry wait before connecting, and an oversized explicit buffer pool KWin rejects. All three now use the proven pattern.
+
 ## v0.22.1
 - Rectangle boxes are **untinted again** (outline only) — the faint fill added for shadows read as an unwanted "highlight". The drop shadow still falls naturally around the outline.
 

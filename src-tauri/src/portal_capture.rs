@@ -105,8 +105,9 @@ mod imp {
     use spa::param::format::{FormatProperties, MediaSubtype, MediaType};
     use spa::param::format_utils;
     use spa::param::video::{VideoFormat, VideoInfoRaw};
-    use spa::pod::{Pod, Property, Value};
-    use spa::utils::Id;
+    use spa::pod::{ChoiceValue, Pod, Property, Value};
+    use spa::utils::{Choice, ChoiceEnum, ChoiceFlags, Id};
+    use std::path::PathBuf;
 
     use super::{FIRST_FRAME_WAIT, PICKER_TIMEOUT, PORTAL_CALL_TIMEOUT, SourceKind};
 
@@ -200,7 +201,23 @@ mod imp {
                 ),
                 Property::new(
                     FormatProperties::VideoSize.as_raw(),
-                    Value::Rectangle(spa::utils::Rectangle { width, height }),
+                    // A RANGE, not a fixated size: the portal's size hint can be
+                    // wrong for an individual window, and a fixated size makes the
+                    // producer fail the negotiation (no frames -> "cancelled").
+                    Value::Choice(ChoiceValue::Rectangle(Choice(
+                        ChoiceFlags::empty(),
+                        ChoiceEnum::Range {
+                            default: spa::utils::Rectangle { width, height },
+                            min: spa::utils::Rectangle {
+                                width: 1,
+                                height: 1,
+                            },
+                            max: spa::utils::Rectangle {
+                                width: 16384,
+                                height: 16384,
+                            },
+                        },
+                    ))),
                 ),
             ];
             let object = spa::pod::Object {
@@ -273,6 +290,25 @@ mod imp {
         }
     }
 
+    /// Append a timestamped line to the shared portal log, so "Copy recording
+    /// diagnostics" covers window/monitor capture as well as the recorder.
+    fn clog(msg: &str) {
+        use std::io::Write;
+        let path = std::env::var("HOME")
+            .map(|h| PathBuf::from(h).join(".cache").join("capicorn-portal.log"))
+            .unwrap_or_else(|_| std::env::temp_dir().join("capicorn-portal.log"));
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+            let ts = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis())
+                .unwrap_or(0);
+            let _ = writeln!(f, "[{ts}] {msg}");
+        }
+    }
+
     struct PortalCast {
         fd: OwnedFd,
         node: u32,
@@ -290,6 +326,7 @@ mod imp {
             SourceKind::Window => SourceType::WINDOW,
             SourceKind::Monitor => SourceType::MONITOR,
         };
+        clog(&format!("{} capture: opening the ScreenCast portal", kind.noun()));
 
         let proxy = portal_call(PORTAL_CALL_TIMEOUT, "ScreenCast portal", Screencast::new()).await?;
 
@@ -360,6 +397,13 @@ mod imp {
         let node = stream.pipe_wire_node_id();
         // Only a hint for format enumeration; `param_changed` has the truth.
         let size = stream.size().unwrap_or((1920, 1080));
+        clog(&format!(
+            "{} capture: picker answered node={} size={}x{}",
+            kind.noun(),
+            node,
+            size.0,
+            size.1
+        ));
 
         let fd = portal_call(
             PORTAL_CALL_TIMEOUT,
@@ -402,8 +446,12 @@ mod imp {
         size: (i32, i32),
         slot: Rc<RefCell<Option<super::Frame>>>,
         stop: Arc<AtomicBool>,
-        name: &str,
+        name: &'static str,
     ) -> Result<(), String> {
+        clog(&format!(
+            "{name}: capture start — node={node} size={}x{}",
+            size.0, size.1
+        ));
         pw::init();
 
         let mainloop = pw::main_loop::MainLoopRc::new(None)
@@ -438,7 +486,7 @@ mod imp {
 
         let listener = stream
             .add_local_listener_with_user_data(ud)
-            .param_changed(|_, ud, id, param| {
+            .param_changed(move |_, ud, id, param| {
                 if id != spa::param::ParamType::Format.as_raw() {
                     return;
                 }
@@ -449,20 +497,20 @@ mod imp {
                 }
                 if ud.fmt.parse(param).is_ok() {
                     let size = ud.fmt.size();
-                    eprintln!(
-                        "capicorn: single-frame capture {:?} {}x{}",
+                    clog(&format!(
+                        "{name}: format negotiated {:?} {}x{}",
                         ud.fmt.format(),
                         size.width,
                         size.height
-                    );
+                    ));
                 }
             })
-            .state_changed(|_, _, old, new| {
+            .state_changed(move |_, _, old, new| {
                 if old != new {
-                    eprintln!("capicorn: capture stream {old:?} -> {new:?}");
+                    clog(&format!("capture stream {old:?} -> {new:?}"));
                 }
             })
-            .process(|stream, ud| {
+            .process(move |stream, ud| {
                 // Stop is polled here as well as from the timer, so an abandoned
                 // grab lands on the very next frame instead of waiting.
                 if ud.stop.load(Ordering::Relaxed) {
@@ -530,6 +578,9 @@ mod imp {
                     Err(_) => return,
                 }
                 ud.got.set(true);
+                clog(&format!(
+                    "{name}: first frame captured {width}x{height}"
+                ));
                 quit(ud);
             })
             .register()

@@ -350,8 +350,8 @@ mod imp {
     use spa::param::format::{FormatProperties, MediaSubtype, MediaType};
     use spa::param::format_utils;
     use spa::param::video::{VideoFormat, VideoInfoRaw};
-    use spa::pod::{Pod, Property, Value};
-    use spa::utils::Id;
+    use spa::pod::{ChoiceValue, Pod, Property, Value};
+    use spa::utils::{Choice, ChoiceEnum, ChoiceFlags, Id};
     use tauri::{Emitter, State};
 
     /// GIFs are downscaled to this width and re-timed to [`GIF_FPS`]: a full-res
@@ -669,7 +669,23 @@ mod imp {
                 ),
                 Property::new(
                     FormatProperties::VideoSize.as_raw(),
-                    Value::Rectangle(spa::utils::Rectangle { width, height }),
+                    // A RANGE, not a fixated size: the portal's size hint can be
+                    // wrong for an individual window, and a fixated size makes the
+                    // producer fail the negotiation (no frames -> "cancelled").
+                    Value::Choice(ChoiceValue::Rectangle(Choice(
+                        ChoiceFlags::empty(),
+                        ChoiceEnum::Range {
+                            default: spa::utils::Rectangle { width, height },
+                            min: spa::utils::Rectangle {
+                                width: 1,
+                                height: 1,
+                            },
+                            max: spa::utils::Rectangle {
+                                width: 16384,
+                                height: 16384,
+                            },
+                        },
+                    ))),
                 ),
             ];
             let object = spa::pod::Object {

@@ -1073,6 +1073,7 @@ export function mountApp(root: HTMLElement): void {
             <div><dt><kbd>Ctrl</kbd> + <kbd>Z</kbd></dt><dd>Undo</dd></div>
             <div><dt><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Z</kbd> · <kbd>Ctrl</kbd> + <kbd>Y</kbd></dt><dd>Redo</dd></div>
             <div><dt><kbd>Ctrl</kbd> + <kbd>C</kbd></dt><dd>Copy to clipboard</dd></div>
+            <div><dt><kbd>Ctrl</kbd> + <kbd>V</kbd></dt><dd>Paste an image to annotate</dd></div>
             <div><dt><kbd>Ctrl</kbd> + <kbd>S</kbd></dt><dd>Save</dd></div>
             <div><dt><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>S</kbd></dt><dd>Save As…</dd></div>
             <div><dt><kbd>Ctrl</kbd> + <kbd>,</kbd></dt><dd>Settings</dd></div>
@@ -4008,6 +4009,50 @@ export function mountApp(root: HTMLElement): void {
   shortcutsCloseBtn.addEventListener("click", closeShortcuts);
   shortcutsModalEl.addEventListener("pointerdown", (ev) => {
     if (ev.target === shortcutsModalEl) closeShortcuts();
+  });
+
+  // Paste or drop an image to annotate it (Snagit-style).
+  const loadImageFile = (file: File): void => {
+    if (!file.type.startsWith("image/")) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result !== "string") return;
+      void editor
+        .load(reader.result)
+        .then(() => {
+          setImageState(true);
+          syncDirty();
+          setStatus("Image loaded — annotate away.", "success");
+        })
+        .catch((e: unknown) => setStatus(`Could not load that image: ${errText(e)}`, "error"));
+    };
+    reader.readAsDataURL(file);
+  };
+
+  document.addEventListener("paste", (ev) => {
+    const items = ev.clipboardData?.items;
+    if (!items) return;
+    for (const item of items) {
+      if (item.kind === "file" && item.type.startsWith("image/")) {
+        const file = item.getAsFile();
+        if (file) {
+          ev.preventDefault();
+          loadImageFile(file);
+        }
+        return;
+      }
+    }
+  });
+
+  window.addEventListener("dragover", (ev) => {
+    if (ev.dataTransfer?.types.includes("Files")) ev.preventDefault();
+  });
+  window.addEventListener("drop", (ev) => {
+    const file = ev.dataTransfer?.files?.[0];
+    if (file?.type.startsWith("image/")) {
+      ev.preventDefault();
+      loadImageFile(file);
+    }
   });
 
   const onKeyDown = (ev: KeyboardEvent): void => {

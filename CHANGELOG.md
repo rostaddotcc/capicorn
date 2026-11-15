@@ -3,6 +3,10 @@
 All notable changes to Capicorn, newest first. Full release notes for every tag live on
 the [releases page](https://github.com/rostaddotcc/capicorn/releases).
 
+## v0.26.0
+- **Open images from disk.** File → Open… (`Ctrl+O`) with an image filter; everything is normalised to PNG, lands in the editor and appears in Recent as "Open". Drag-and-drop and `Ctrl+V` keep working.
+- **Shadow controls you can feel.** The X/Y offset steppers are gone. **Direction** (0–360°), **distance**, **blur** and **opacity** sliders drive the shadow, with the sample tile showing how it falls. Offsets are derived from angle × distance, so existing presets keep their shadows.
+
 ## v0.25.0
 - **Audio in recordings.** Pick a microphone and/or capture system audio (Linux: PulseAudio devices via `pactl`; Windows: `dshow`); the sources are mixed with `amix` into AAC. GIF stays silent.
 - **Interval capture.** Capture → Interval takes a screenshot every 5 s / 10 s / 30 s / 60 s / 5 min in a small always-on-top card, saves every shot with a sequence number and can turn the whole set into an **MP4 timelapse** in one click.

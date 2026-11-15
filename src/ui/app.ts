@@ -2,6 +2,7 @@
 // Talks to the locked Editor API and the locked Tauri command set only.
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { open } from "@tauri-apps/plugin-dialog";
 import { Editor, type ToolId } from "../editor/editor";
 import { cropDataUrl, selectRegion, type Box } from "./region";
 import {
@@ -188,6 +189,9 @@ const ICONS = {
   ),
   save: icon(
     `<path d="M3 4.2A1.7 1.7 0 0 1 4.7 2.5h6.9L13.5 4.4v7.4a1.7 1.7 0 0 1-1.7 1.7H4.7A1.7 1.7 0 0 1 3 11.8z"/><path d="M5.6 2.5v3.4h4.4V2.5M5.4 13.5v-3.3h5.2v3.3"/>`,
+  ),
+  openFile: icon(
+    `<path d="M2.4 4.9a1.2 1.2 0 0 1 1.2-1.2h2.7l1.5 1.7h4.6a1.2 1.2 0 0 1 1.2 1.2v.7"/><path d="M2.4 7.3h9.8a1 1 0 0 1 1 1.2l-.8 4.3a1.2 1.2 0 0 1-1.2 1H3.2a1.2 1.2 0 0 1-1.2-1z"/>`,
   ),
   saveAs: icon(
     `<path d="M2.4 5.6a1.4 1.4 0 0 1 1.4-1.4h2.2l1.2 1.5h5.4a1.4 1.4 0 0 1 1.4 1.4v4.3a1.4 1.4 0 0 1-1.4 1.4H3.8a1.4 1.4 0 0 1-1.4-1.4z"/><path d="M8 7.6v3.5M6.5 9.6 8 11.1l1.5-1.5"/>`,
@@ -600,6 +604,29 @@ const splitColorAlpha = (color: string): { hex: string; alpha: number } => {
   return { hex: /^#[0-9a-f]{6}$/i.test(color) ? color.toLowerCase() : "#000000", alpha: 1 };
 };
 
+/** Direction the shadow falls, in degrees (0 = right, 90 = straight down). */
+const shadowAngleOf = (style: ShadowStyle): number => {
+  const degrees = (Math.atan2(style.offsetY, style.offsetX) * 180) / Math.PI;
+  return Math.round((degrees + 360) % 360);
+};
+
+/** How far it falls, in px. */
+const shadowDistanceOf = (style: ShadowStyle): number =>
+  Math.round(Math.hypot(style.offsetX, style.offsetY));
+
+/** Opacity carried in the colour's alpha, as a percentage. */
+const shadowOpacityOf = (style: ShadowStyle): number =>
+  Math.round(splitColorAlpha(style.color).alpha * 100);
+
+/** Offsets for a direction + distance pair; the stored shape stays offsetX/offsetY. */
+const shadowOffsets = (angle: number, distance: number): { offsetX: number; offsetY: number } => {
+  const radians = (angle * Math.PI) / 180;
+  return {
+    offsetX: Math.round(Math.cos(radians) * distance),
+    offsetY: Math.round(Math.sin(radians) * distance),
+  };
+};
+
 /** Re-attach the alpha the shadow already carried to a freshly picked hex. */
 const withAlpha = (hex: string, alpha: number): string => {
   if (alpha >= 0.999) return hex.toLowerCase();
@@ -721,6 +748,7 @@ export function mountApp(root: HTMLElement): void {
             <span class="file-caret" aria-hidden="true">${ICONS.caret}</span>
           </button>
           <div class="capture-menu file-menu" id="file-menu" role="menu" aria-label="File" hidden>
+            <button type="button" class="menu-item" data-file="open" title="Open an image from disk and annotate it"><span class="menu-icon">${ICONS.openFile}</span><span class="menu-label">Open…</span><span class="menu-check"></span><kbd class="menu-key">Ctrl+O</kbd></button>
             <button type="button" class="menu-item" data-file="save-as" title="Choose a name, folder and format"><span class="menu-icon">${ICONS.saveAs}</span><span class="menu-label">Save As…</span><span class="menu-check"></span><kbd class="menu-key">Ctrl+Shift+S</kbd></button>
             <button type="button" class="menu-item" data-file="save" title="Save a copy at the default format"><span class="menu-icon">${ICONS.save}</span><span class="menu-label">Save</span><span class="menu-check"></span><kbd class="menu-key">Ctrl+S</kbd></button>
             <button type="button" class="menu-item" data-file="copy" title="Copy the image to the clipboard"><span class="menu-icon">${ICONS.copy}</span><span class="menu-label">Copy image</span><span class="menu-check"></span><kbd class="menu-key">Ctrl+C</kbd></button>
@@ -977,24 +1005,21 @@ export function mountApp(root: HTMLElement): void {
                 <output class="prop-value" id="shadow-blur-out" for="shadow-blur">8</output>
               </div>
               <input type="range" class="slider slider-sm" id="shadow-blur" min="0" max="60" step="1" value="8" aria-label="Shadow blur" />
-              <div class="shadow-offsets">
-                <div class="shadow-field">
-                  <span class="prop-label" id="shadow-x-label">Offset X</span>
-                  <div class="size-stepper" role="group" aria-labelledby="shadow-x-label">
-                    <button type="button" class="step-btn" id="shadow-x-down" aria-label="Move the shadow left" title="Left">−</button>
-                    <input type="number" id="shadow-x" class="size-input" min="-50" max="50" step="1" value="0" aria-labelledby="shadow-x-label" />
-                    <button type="button" class="step-btn" id="shadow-x-up" aria-label="Move the shadow right" title="Right">+</button>
-                  </div>
-                </div>
-                <div class="shadow-field">
-                  <span class="prop-label" id="shadow-y-label">Offset Y</span>
-                  <div class="size-stepper" role="group" aria-labelledby="shadow-y-label">
-                    <button type="button" class="step-btn" id="shadow-y-down" aria-label="Move the shadow up" title="Up">−</button>
-                    <input type="number" id="shadow-y" class="size-input" min="-50" max="50" step="1" value="4" aria-labelledby="shadow-y-label" />
-                    <button type="button" class="step-btn" id="shadow-y-up" aria-label="Move the shadow down" title="Down">+</button>
-                  </div>
-                </div>
+              <div class="prop-head">
+                <label class="prop-label" for="shadow-angle">Direction</label>
+                <output class="prop-value" id="shadow-angle-out" for="shadow-angle">90°</output>
               </div>
+              <input type="range" class="slider slider-sm" id="shadow-angle" min="0" max="360" step="1" value="90" aria-label="Shadow direction" />
+              <div class="prop-head">
+                <label class="prop-label" for="shadow-distance">Distance</label>
+                <output class="prop-value" id="shadow-distance-out" for="shadow-distance">4 px</output>
+              </div>
+              <input type="range" class="slider slider-sm" id="shadow-distance" min="0" max="50" step="1" value="4" aria-label="Shadow distance" />
+              <div class="prop-head">
+                <label class="prop-label" for="shadow-opacity">Opacity</label>
+                <output class="prop-value" id="shadow-opacity-out" for="shadow-opacity">45%</output>
+              </div>
+              <input type="range" class="slider slider-sm" id="shadow-opacity" min="2" max="100" step="1" value="45" aria-label="Shadow opacity" />
               <div class="prop-head">
                 <label class="prop-label" for="shadow-color">Color</label>
                 <label class="color-custom prop-custom" title="Shadow color">
@@ -1220,12 +1245,12 @@ export function mountApp(root: HTMLElement): void {
   const shadowFields = $<HTMLDivElement>("#shadow-fields");
   const shadowBlurInput = $<HTMLInputElement>("#shadow-blur");
   const shadowBlurOut = $<HTMLOutputElement>("#shadow-blur-out");
-  const shadowXInput = $<HTMLInputElement>("#shadow-x");
-  const shadowYInput = $<HTMLInputElement>("#shadow-y");
-  const shadowXDown = $<HTMLButtonElement>("#shadow-x-down");
-  const shadowXUp = $<HTMLButtonElement>("#shadow-x-up");
-  const shadowYDown = $<HTMLButtonElement>("#shadow-y-down");
-  const shadowYUp = $<HTMLButtonElement>("#shadow-y-up");
+  const shadowAngleInput = $<HTMLInputElement>("#shadow-angle");
+  const shadowAngleOut = $<HTMLOutputElement>("#shadow-angle-out");
+  const shadowDistanceInput = $<HTMLInputElement>("#shadow-distance");
+  const shadowDistanceOut = $<HTMLOutputElement>("#shadow-distance-out");
+  const shadowOpacityInput = $<HTMLInputElement>("#shadow-opacity");
+  const shadowOpacityOut = $<HTMLOutputElement>("#shadow-opacity-out");
   const shadowColorInput = $<HTMLInputElement>("#shadow-color");
   const shadowPreview = $<HTMLSpanElement>("#shadow-preview");
   const resizeGroup = $<HTMLElement>("#resize-group");
@@ -1317,6 +1342,8 @@ export function mountApp(root: HTMLElement): void {
   /** Pause is a backend stop of the frames; the pill only freezes its clock. */
   let recPaused = false;
   let recPausedAt = 0;
+  /** Total time spent paused, subtracted from the pill's elapsed clock. */
+  let recPausedMs = 0;
   /** Format the running take was started with (the setting can change mid-take). */
   let recFormatUsed: RecFormat | null = null;
   /** Which mode the primary Record button starts (persisted). */
@@ -2074,9 +2101,10 @@ export function mountApp(root: HTMLElement): void {
 
   function paintRecTimer(): void {
     if (!recording) return;
-    // Paused takes keep the clock frozen at the moment Pause was pressed.
+    // Paused takes keep the clock frozen at the moment Pause was pressed; a
+    // resumed take skips over the paused span instead of jumping by it.
     const now = recPaused && recPausedAt ? recPausedAt : Date.now();
-    recTimerEl.textContent = elapsedLabel(now - recStartedAt);
+    recTimerEl.textContent = elapsedLabel(now - recStartedAt - recPausedMs);
   }
 
   /** Pill shows Pause while live and Resume while paused; the dot stops pulsing. */
@@ -2109,6 +2137,7 @@ export function mountApp(root: HTMLElement): void {
     if (!recStartedAt) recStartedAt = Date.now();
     recPaused = false;
     recPausedAt = 0;
+    recPausedMs = 0;
     window.clearInterval(recTick);
     paintRecPaused();
     recTick = window.setInterval(paintRecTimer, 500);
@@ -2120,6 +2149,7 @@ export function mountApp(root: HTMLElement): void {
     recStartedAt = 0;
     recPaused = false;
     recPausedAt = 0;
+    recPausedMs = 0;
     recFormatUsed = null;
     recRegionUsed = null;
     window.clearInterval(recTick);
@@ -2141,8 +2171,10 @@ export function mountApp(root: HTMLElement): void {
     } finally {
       recPauseBtn.disabled = false;
     }
+    const stamp = Date.now();
+    if (recPaused && recPausedAt) recPausedMs += stamp - recPausedAt;
     recPaused = next;
-    recPausedAt = next ? Date.now() : 0;
+    recPausedAt = next ? stamp : 0;
     paintRecPaused();
     setStatus(next ? "Recording paused" : "Recording resumed", next ? "info" : "recording");
   }
@@ -3311,12 +3343,19 @@ export function mountApp(root: HTMLElement): void {
     shadowBlurOut.textContent = String(shadow.blur);
     shadowBlurInput.style.setProperty("--fill", `${(shadow.blur / MAX_SHADOW_BLUR) * 100}%`);
 
-    shadowXInput.value = String(shadow.offsetX);
-    shadowYInput.value = String(shadow.offsetY);
-    shadowXDown.disabled = shadow.offsetX <= MIN_SHADOW_OFFSET;
-    shadowXUp.disabled = shadow.offsetX >= MAX_SHADOW_OFFSET;
-    shadowYDown.disabled = shadow.offsetY <= MIN_SHADOW_OFFSET;
-    shadowYUp.disabled = shadow.offsetY >= MAX_SHADOW_OFFSET;
+    const angle = shadowAngleOf(shadow);
+    const distance = Math.min(MAX_SHADOW_OFFSET, shadowDistanceOf(shadow));
+    const opacity = shadowOpacityOf(shadow);
+
+    shadowAngleInput.value = String(angle);
+    shadowAngleOut.textContent = `${angle}°`;
+    shadowAngleInput.style.setProperty("--fill", `${(angle / 360) * 100}%`);
+    shadowDistanceInput.value = String(distance);
+    shadowDistanceOut.textContent = `${distance} px`;
+    shadowDistanceInput.style.setProperty("--fill", `${(distance / MAX_SHADOW_OFFSET) * 100}%`);
+    shadowOpacityInput.value = String(opacity);
+    shadowOpacityOut.textContent = `${opacity}%`;
+    shadowOpacityInput.style.setProperty("--fill", `${opacity}%`);
 
     shadowColorInput.value = splitColorAlpha(shadow.color).hex;
     shadowPreview.style.boxShadow =
@@ -3338,25 +3377,10 @@ export function mountApp(root: HTMLElement): void {
     if (announce) {
       setStatus(
         next.enabled
-          ? `Shadow on — blur ${next.blur} px, offset ${next.offsetX} / ${next.offsetY}`
+          ? `Shadow on — ${shadowAngleOf(next)}°, ${shadowDistanceOf(next)} px, blur ${next.blur} px`
           : "Shadow off",
       );
     }
-  }
-
-  /** Step one offset by a pixel (the −/+ buttons beside each field). */
-  function nudgeShadowOffset(axis: "x" | "y", delta: number): void {
-    const current = axis === "x" ? shadow.offsetX : shadow.offsetY;
-    applyShadow(axis === "x" ? { offsetX: current + delta } : { offsetY: current + delta });
-  }
-
-  /** Commit a typed offset, falling back to the live value when it is junk. */
-  function commitShadowOffset(axis: "x" | "y"): void {
-    const input = axis === "x" ? shadowXInput : shadowYInput;
-    const current = axis === "x" ? shadow.offsetX : shadow.offsetY;
-    const typed = Number(input.value);
-    applyShadow(axis === "x" ? { offsetX: typed } : { offsetY: typed }, false);
-    if (!Number.isFinite(typed)) input.value = String(current);
   }
 
   /** Adopt the editor's own shadow when it reports one (tool change, undo). */
@@ -3994,20 +4018,38 @@ export function mountApp(root: HTMLElement): void {
     const alpha = splitColorAlpha(shadow.color).alpha;
     applyShadow({ color: withAlpha(shadowColorInput.value, alpha) });
   });
-  shadowXInput.addEventListener("change", () => commitShadowOffset("x"));
-  shadowYInput.addEventListener("change", () => commitShadowOffset("y"));
-  for (const input of [shadowXInput, shadowYInput]) {
-    input.addEventListener("keydown", (ev) => {
-      if (ev.key !== "Enter") return;
-      ev.preventDefault();
-      input.dispatchEvent(new Event("change"));
-      input.blur();
-    });
-  }
-  shadowXDown.addEventListener("click", () => nudgeShadowOffset("x", -1));
-  shadowXUp.addEventListener("click", () => nudgeShadowOffset("x", 1));
-  shadowYDown.addEventListener("click", () => nudgeShadowOffset("y", -1));
-  shadowYUp.addEventListener("click", () => nudgeShadowOffset("y", 1));
+  // Direction + distance are the offsets, just expressed the way people think:
+  // "the shadow falls down-right" instead of "x 6, y 6".
+  const shadowFromSliders = (): { angle: number; distance: number } => ({
+    angle: Number(shadowAngleInput.value) || 0,
+    distance: Math.min(MAX_SHADOW_OFFSET, Math.max(0, Number(shadowDistanceInput.value) || 0)),
+  });
+  shadowAngleInput.addEventListener("input", () => {
+    const { angle, distance } = shadowFromSliders();
+    applyShadow(shadowOffsets(angle, distance), false);
+  });
+  shadowAngleInput.addEventListener("change", () => {
+    const { angle, distance } = shadowFromSliders();
+    applyShadow(shadowOffsets(angle, distance));
+    setStatus(`Shadow falls ${angle}° · ${distance} px`, "success");
+  });
+  shadowDistanceInput.addEventListener("input", () => {
+    const { angle, distance } = shadowFromSliders();
+    applyShadow(shadowOffsets(angle, distance), false);
+  });
+  shadowDistanceInput.addEventListener("change", () => {
+    const { angle, distance } = shadowFromSliders();
+    applyShadow(shadowOffsets(angle, distance));
+    setStatus(`Shadow distance ${distance} px`, "success");
+  });
+  shadowOpacityInput.addEventListener("input", () => {
+    const alpha = Math.min(1, Math.max(0.02, (Number(shadowOpacityInput.value) || 0) / 100));
+    applyShadow({ color: withAlpha(splitColorAlpha(shadow.color).hex, alpha) }, false);
+  });
+  shadowOpacityInput.addEventListener("change", () => {
+    const alpha = Math.min(1, Math.max(0.02, (Number(shadowOpacityInput.value) || 0) / 100));
+    applyShadow({ color: withAlpha(splitColorAlpha(shadow.color).hex, alpha) });
+  });
 
   resizeOpenBtn.addEventListener("click", () => {
     if (resizePop.hidden) openResize();
@@ -4172,6 +4214,9 @@ export function mountApp(root: HTMLElement): void {
       setFileMenuOpen(false);
       fileBtn.focus({ preventScroll: true });
       switch (action) {
+        case "open":
+          void openImage();
+          break;
         case "save-as":
           void saveAs();
           break;
@@ -4413,6 +4458,33 @@ export function mountApp(root: HTMLElement): void {
     reader.readAsDataURL(file);
   };
 
+  /** File → Open: load any image from disk into the editor (Ctrl+O). */
+  async function openImage(): Promise<void> {
+    try {
+      const picked = await open({
+        multiple: false,
+        directory: false,
+        title: "Open an image",
+        filters: [
+          {
+            name: "Images",
+            extensions: ["png", "jpg", "jpeg", "webp", "gif", "bmp", "avif", "tif", "tiff"],
+          },
+        ],
+      });
+      if (!picked || Array.isArray(picked)) return;
+      const dataUrl = await invoke<string>("read_image_file", { path: picked });
+      await editor.load(dataUrl);
+      setImageState(true);
+      syncDirty();
+      const name = picked.split(/[\\/]/).pop() || "image";
+      setStatus(`Opened ${name} — annotate away.`, "success");
+      await addRecent(dataUrl, "Open");
+    } catch (e) {
+      setStatus(`Could not open that image: ${errText(e)}`, "error");
+    }
+  }
+
   document.addEventListener("paste", (ev) => {
     const items = ev.clipboardData?.items;
     if (!items) return;
@@ -4531,6 +4603,9 @@ export function mountApp(root: HTMLElement): void {
       ev.preventDefault();
       if (ev.shiftKey) void saveAs();
       else void saveEdited();
+    } else if (key === "o") {
+      ev.preventDefault();
+      void openImage();
     }
   };
   window.addEventListener("keydown", onKeyDown);

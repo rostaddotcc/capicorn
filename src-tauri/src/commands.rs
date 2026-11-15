@@ -265,6 +265,27 @@ pub async fn save_png_to_dir(data_url: String, dir: String, filename: String) ->
     crate::export::write_export(&data_url, &dir, &filename, "png", 100)
 }
 
+/// Read an image file from disk as a PNG data URL (File → Open).
+///
+/// Everything is normalised to PNG so the editor sees exactly the format a
+/// capture produces — a JPEG or WebP on disk still arrives as one shape, and the
+/// annotation pipeline never has to special-case a MIME type.
+#[tauri::command]
+pub async fn read_image_file(path: String) -> Result<String, String> {
+    let path = std::path::PathBuf::from(path.trim());
+    let bytes = std::fs::read(&path)
+        .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    let image = image::load_from_memory(&bytes)
+        .map_err(|e| format!("{} is not an image Capicorn can read: {e}", path.display()))?;
+    let mut png = Vec::new();
+    image
+        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .map_err(|e| format!("cannot encode the image: {e}"))?;
+    use base64::Engine as _;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&png);
+    Ok(format!("{}{}", crate::capture::PNG_DATA_URL_PREFIX, b64))
+}
+
 #[tauri::command]
 pub async fn copy_png(data_url: String) -> Result<(), String> {
     crate::clipboard::copy_png_data_url(&data_url).map_err(|e| e.to_string())

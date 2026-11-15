@@ -15,6 +15,10 @@ set -euo pipefail
 SRC="${1:?usage: thin-appimage.sh <full.AppImage> [out-dir] [out-name]}"
 OUTDIR="${2:-$(dirname "$SRC")}"
 SRC_ABS="$(readlink -f "$SRC")"
+# Resolve OUTDIR to an absolute path BEFORE we cd into the temp work dir, or a
+# relative out-dir would land inside $WORK and be deleted with it.
+mkdir -p "$OUTDIR"
+OUTDIR="$(readlink -f "$OUTDIR")"
 NAME="${3:-$(basename "$SRC" .AppImage)-thin.AppImage}"
 
 WORK="$(mktemp -d)"

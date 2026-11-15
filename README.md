@@ -26,30 +26,35 @@ share* flow in one lightweight app. Capicorn fills that gap.
   portal on Wayland (no hacks, no root)
 - **Scrolling capture** — scroll the window by hand and Capicorn stitches the frames
   into one tall image
-- **Screen recording** to MP4 or GIF, full screen or a region
-  (Linux: ScreenCast portal · Windows: ffmpeg `gdigrab`), with an on-screen timer
+- **Screen recording** to MP4 or GIF — full screen, a region or a picked window
+  (Linux: ScreenCast portal · Windows: ffmpeg `gdigrab`), with an on-screen timer,
+  **pause/resume** and optional **microphone + system audio** (mixed to AAC)
+- **Interval capture** — a screenshot every 5 s / 10 s / 30 s / 60 s / 5 min, optionally
+  stitched into an MP4 timelapse
 - Capture timer (off / 3 / 5 / 10 s) and a `PrintScreen` shortcut
 
 **Annotate** (Fabric.js, native resolution)
 - 13 tools: select, crop, arrow, text, rectangle, **true Gaussian blur** / pixelate /
   blackout, spotlight, highlighter, callout, step numbers, **live magnify lens**, brush,
   fill bucket
-- Shadows, stroke width, and per-tool sizes with a live brush-size preview
+- Shadows with **direction / distance / blur / opacity** sliders and a live sample,
+  stroke width, and per-tool sizes with a live brush-size preview
 - Four bundled OFL fonts (Inter, Source Serif 4, JetBrains Mono, Caveat) with
   size / bold / italic, plus reusable style presets
 - Undo / redo, in-editor crop, delete the selected annotation with `Delete`
 
 **Share**
 - Copy to clipboard · save as PNG / JPEG / WebP (with quality) · **Save As…**
+- **Watermark** burned into exports (text, opacity, corner — never the live capture)
+- **Upload** to your own endpoint, with the returned link copied to the clipboard
 - Auto-save on capture, custom filename patterns (`{date}`, `{time}`, `{datetime}`)
 - **OCR** — extract text from a capture (English / Swedish) via the system `tesseract`
 - Recent-captures filmstrip
 
 **Open & record**
 - **File → Open…** (`Ctrl+O`) to annotate any image on disk; drag-and-drop and `Ctrl+V` too
-- **Interval capture** — a screenshot every 5 s / 10 s / 30 s / 60 s / 5 min, optionally
-  turned into an MP4 timelapse
 - **Audio in recordings** — microphone and/or system audio, mixed into AAC
+- **Pause/resume** a take without starting a new file
 
 **Desktop integration**
 - System tray, minimise-to-tray, and a collapsible floating capture widget ("flärp")

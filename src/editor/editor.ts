@@ -101,6 +101,9 @@ export interface EditorStyle {
 }
 
 const MAX_HISTORY = 80;
+
+/** Pointer travel (scene px) before a mousedown on a live caption becomes a move. */
+const TEXT_DRAG_THRESHOLD = 4;
 /** Breathing room around the screenshot inside the canvas. */
 const PADDING = 16;
 /** Smallest useful crop / annotation. */
@@ -207,6 +210,22 @@ export class Editor {
   private tool: ToolId = "select";
   private cropBox: Box | null = null;
 
+  /**
+   * In-flight drag of the caption currently being edited. Fabric's IText eats
+   * mousedown for caret placement, so repositioning a live caption is handled
+   * here (scene-space delta applied on every move).
+   */
+  private textDrag: {
+    object: fabric.IText;
+    start: Point;
+    left: number;
+    top: number;
+    moved: boolean;
+  } | null = null;
+
+  /** True when a caption was live at the moment the current pointer went down. */
+  private captionAtPointerDown = false;
+
   /** Ink colour applied to NEW annotations (existing ones keep their colour). */
   private inkColor = ACCENT;
   /** Stroke width applied to NEW annotations. */
@@ -282,6 +301,7 @@ export class Editor {
     this.canvas.on("object:modified", this.onObjectModified);
 
     window.addEventListener("keydown", this.onKeyDown, true);
+    window.addEventListener("pointerdown", this.onPointerDownCapture, true);
 
     this.resizeObserver =
       typeof ResizeObserver === "undefined"
@@ -392,6 +412,7 @@ export class Editor {
 
   setTool(tool: ToolId): void {
     if (!isToolId(tool)) return;
+    this.textDrag = null;
     const previous = this.tools.get(this.tool);
     if (previous && this.tool !== tool) previous.deactivate();
     this.tool = tool;
@@ -420,6 +441,7 @@ export class Editor {
     this.destroyed = true;
     this.resizeObserver?.disconnect();
     window.removeEventListener("keydown", this.onKeyDown, true);
+    window.removeEventListener("pointerdown", this.onPointerDownCapture, true);
     for (const tool of this.tools.values()) tool.deactivate();
     this.tools.clear();
     this.chrome.clear();
@@ -856,25 +878,112 @@ export class Editor {
     return { x: point.x, y: point.y };
   }
 
+  /** True when `point` (scene space) falls inside the object, incl. a margin. */
+  private hitTest(object: fabric.FabricObject, point: Point, margin = 0): boolean {
+    const box = object.getBoundingRect();
+    return (
+      point.x >= box.left - margin &&
+      point.x <= box.left + box.width + margin &&
+      point.y >= box.top - margin &&
+      point.y <= box.top + box.height + margin
+    );
+  }
+
+  private beginTextDrag(object: fabric.IText, point: Point): void {
+    this.textDrag = {
+      object,
+      start: point,
+      left: object.left ?? 0,
+      top: object.top ?? 0,
+      moved: false,
+    };
+  }
+
+  /** Apply the drag delta; returns true when the pointer actually moved. */
+  private moveTextDrag(point: Point): boolean {
+    const drag = this.textDrag;
+    if (!drag) return false;
+    if (!drag.object.isEditing || !this.canvas.getObjects().includes(drag.object)) {
+      this.textDrag = null;
+      return false;
+    }
+    const dx = point.x - drag.start.x;
+    const dy = point.y - drag.start.y;
+    if (!drag.moved && Math.hypot(dx, dy) < TEXT_DRAG_THRESHOLD) return false;
+    drag.moved = true;
+    drag.object.set({ left: drag.left + dx, top: drag.top + dy });
+    drag.object.setCoords();
+    this.canvas.requestRenderAll();
+    return true;
+  }
+
+  private endTextDrag(): void {
+    const drag = this.textDrag;
+    this.textDrag = null;
+    if (!drag || !drag.moved) return;
+    drag.object.setCoords();
+    this.canvas.requestRenderAll();
+    // The caption is still being edited; its position lands in history when it
+    // settles (click away / Escape / undo), so no extra commit here.
+  }
+
+  /**
+   * Snapshot, taken before fabric sees the event, of whether a caption was
+   * being edited. Fabric settles a live caption itself when the click lands
+   * outside it, so by the time our mouse:down handler runs that caption is
+   * already gone — this flag tells "this click dismissed a caption" apart from
+   * "start a new one".
+   */
+  private readonly onPointerDownCapture = (): void => {
+    const active = this.canvas.getActiveObject();
+    this.captionAtPointerDown =
+      this.tool === "text" &&
+      active instanceof fabric.IText &&
+      active.isEditing;
+  };
+
   private readonly onMouseDown = (event: fabric.TPointerEventInfo): void => {
     if (this.destroyed || this.restoring) return;
     if (this.tool === "select") return;
+    const point = this.pointOf(event);
+    const dismissedCaption = this.captionAtPointerDown;
+    this.captionAtPointerDown = false;
     const active = this.canvas.getActiveObject();
     if (active instanceof fabric.IText && active.isEditing) {
+      if (this.hitTest(active, point, 6)) {
+        // Grab the live caption: a drag repositions it, a plain click still
+        // drops the caret where the user clicked.
+        this.beginTextDrag(active, point);
+        return;
+      }
+      // Click outside: settle the caption (an untouched placeholder is
+      // dropped, typed text is committed). The next click starts a new one.
       active.exitEditing();
       return;
     }
-    this.currentTool().onPointerDown(this.pointOf(event), event.e);
+    // Fabric settled the caption while handling this very click — that click
+    // closed the caption, it should not immediately open a fresh one.
+    if (dismissedCaption) return;
+    this.currentTool().onPointerDown(point, event.e);
   };
 
   private readonly onMouseMove = (event: fabric.TPointerEventInfo): void => {
     if (this.destroyed || this.restoring) return;
+    const point = this.pointOf(event);
+    if (this.textDrag) {
+      this.moveTextDrag(point);
+      return;
+    }
     if (this.tool === "select") return;
-    this.currentTool().onPointerMove(this.pointOf(event));
+    this.currentTool().onPointerMove(point);
   };
 
   private readonly onMouseUp = (event: fabric.TPointerEventInfo): void => {
     if (this.destroyed || this.restoring) return;
+    if (this.textDrag) {
+      this.endTextDrag();
+      return;
+    }
     if (this.tool === "select") return;
     this.currentTool().onPointerUp(this.pointOf(event));
   };
@@ -885,6 +994,36 @@ export class Editor {
 
   private readonly onKeyDown = (event: KeyboardEvent): void => {
     if (this.destroyed) return;
+    const modifier = event.ctrlKey || event.metaKey;
+    const key = event.key.toLowerCase();
+
+    // Undo/redo first: while a caption is being edited the keystroke is aimed
+    // at fabric's hidden textarea, whose own Ctrl+Z would swallow it. Settle
+    // the caption, then undo the canvas history.
+    if (modifier && (key === "z" || key === "y")) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      const redo = key === "y" || event.shiftKey;
+      const active = this.canvas.getActiveObject();
+      if (active instanceof fabric.IText && active.isEditing) {
+        const before = this.cursor;
+        active.exitEditing(); // settle: commits real text, drops a placeholder
+        if (this.cursor !== before && !redo) {
+          // The caption just landed on the stack: one Ctrl+Z removes it.
+          this.undo();
+        } else if (this.cursor === before) {
+          // Nothing was committed, so there is nothing of ours to undo — do
+          // not silently roll back the user's previous action.
+          this.canvas.discardActiveObject();
+          this.canvas.requestRenderAll();
+        }
+        return;
+      }
+      if (redo) this.redo();
+      else this.undo();
+      return;
+    }
+
     const target = event.target as HTMLElement | null;
     if (
       target &&
@@ -897,21 +1036,6 @@ export class Editor {
 
     const active = this.canvas.getActiveObject();
     if (active instanceof fabric.IText && active.isEditing) return;
-
-    const modifier = event.ctrlKey || event.metaKey;
-    const key = event.key.toLowerCase();
-
-    if (modifier && key === "z") {
-      event.preventDefault();
-      if (event.shiftKey) this.redo();
-      else this.undo();
-      return;
-    }
-    if (modifier && key === "y") {
-      event.preventDefault();
-      this.redo();
-      return;
-    }
     if (event.key === "Escape") {
       if (this.currentTool().onEscape()) {
         event.preventDefault();
@@ -1221,12 +1345,25 @@ export class Editor {
 
   private commit(): void {
     if (this.destroyed || this.restoring) return;
+    const json = this.canvas.toObject() as Record<string, unknown>;
+    const crop = this.cropBox ? { ...this.cropBox } : null;
+    const natural = { ...this.natural };
+    // A single user action can reach commit() more than once (settling a
+    // caption fires both the tool's own commit and object:modified). Never
+    // stack the same state twice, or one Ctrl+Z would appear to do nothing.
+    const current = this.history[this.cursor];
+    if (
+      current &&
+      JSON.stringify(current.json) === JSON.stringify(json) &&
+      JSON.stringify(current.crop) === JSON.stringify(crop) &&
+      current.natural.width === natural.width &&
+      current.natural.height === natural.height
+    ) {
+      this.notify();
+      return;
+    }
     this.history.length = this.cursor + 1;
-    this.history.push({
-      json: this.canvas.toObject() as Record<string, unknown>,
-      crop: this.cropBox ? { ...this.cropBox } : null,
-      natural: { ...this.natural },
-    });
+    this.history.push({ json, crop, natural });
     while (this.history.length > MAX_HISTORY) this.history.shift();
     this.cursor = this.history.length - 1;
     this.notify();

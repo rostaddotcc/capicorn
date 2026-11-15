@@ -667,10 +667,15 @@ class ArrowTool extends DragTool {
   }
 }
 
+/** Placeholder shown in a brand-new caption until the user types. */
+const TEXT_PLACEHOLDER = "Text";
+
 class TextTool implements Tool {
   readonly id: ToolId = "text";
   readonly cursor = "text";
   private editing: fabric.IText | null = null;
+  /** True once the caption content was actually edited (fabric 'changed'). */
+  private dirty = false;
 
   constructor(private readonly host: ToolHost) {}
 
@@ -682,6 +687,7 @@ class TextTool implements Tool {
   cancel(): void {
     const text = this.editing;
     this.editing = null;
+    this.dirty = false;
     if (text && text.isEditing) text.exitEditing();
   }
 
@@ -689,7 +695,7 @@ class TextTool implements Tool {
     const canvas = this.host.canvas;
     const ink = this.host.color();
     const style = this.host.textStyle();
-    const text = new fabric.IText("Text", {
+    const text = new fabric.IText(TEXT_PLACEHOLDER, {
       left: point.x,
       top: point.y,
       originX: "left",
@@ -708,22 +714,58 @@ class TextTool implements Tool {
       evented: false,
     });
     this.editing = text;
+    this.dirty = false;
+
+    // Typing/pasting fires 'changed'; an untouched placeholder never does.
+    text.on("changed", () => {
+      if (this.editing === text) this.dirty = true;
+    });
+    text.on("editing:exited", () => this.settle(text));
+
     this.host.addObject(text);
     canvas.setActiveObject(text);
     text.enterEditing();
     // Select the placeholder so the first keystroke replaces it.
     text.selectAll();
-    text.on("editing:exited", () => this.settle(text));
+    // Let the live caption be grabbed and dragged: fabric only starts a drag
+    // when it can find the target under the pointer, so a caption that is
+    // selectable/evented (and target-find enabled) can be repositioned while
+    // the caret stays in it. A plain click still just places the caret.
+    text.selectable = true;
+    text.evented = true;
+    text.hoverCursor = "move";
+    canvas.skipTargetFind = false;
   }
 
-  /** Drop the object when the caption was left empty, otherwise record history. */
+  /**
+   * Finish the caption. It is DISCARDED when it was never typed into (or is
+   * blank) — the placeholder is not content — and recorded in history only
+   * when it holds real text, so one Ctrl+Z removes it again.
+   */
   private settle(text: fabric.IText): void {
-    if (this.editing === text) this.editing = null;
-    if (!text.text || !text.text.trim()) {
+    const value = (text.text ?? "").trim();
+    // Untouched: no 'changed' event ever fired, or the text is still exactly
+    // the placeholder it was created with.
+    const untouched = !this.dirty || value === TEXT_PLACEHOLDER;
+    if (this.editing === text) {
+      this.editing = null;
+      this.dirty = false;
+    }
+    if (untouched || !value) {
+      if (this.host.canvas.getActiveObject() === text) {
+        this.host.canvas.discardActiveObject();
+      }
       this.host.removeObject(text);
       this.host.canvas.requestRenderAll();
+      this.host.canvas.skipTargetFind = true;
       return;
     }
+    // Committed captions are not interactive in text mode; Select mode turns
+    // them on again via Editor.applyInteractivity().
+    text.selectable = false;
+    text.evented = false;
+    text.hoverCursor = "default";
+    this.host.canvas.skipTargetFind = true;
     this.host.commit();
   }
 

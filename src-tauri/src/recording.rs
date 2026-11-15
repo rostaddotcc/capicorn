@@ -1013,13 +1013,15 @@ mod imp {
             .connect_fd_rc(fd, None)
             .map_err(|e| format!("cannot connect to the portal PipeWire fd: {e}"))?;
 
-        let mut props = pw::properties::properties! {
+        let props = pw::properties::properties! {
             *pw::keys::MEDIA_TYPE => "Video",
             *pw::keys::MEDIA_CATEGORY => "Capture",
             *pw::keys::MEDIA_ROLE => "Screen",
         };
-        // `pw::keys::TARGET_OBJECT` is feature-gated in pipewire 0.10: literal key.
-        props.insert("target.object", node.to_string());
+        // The target node is passed to `stream.connect` below, NOT via a
+        // `target.object` prop. Setting both makes PipeWire resolve the target at
+        // stream creation — before the registry has synced the portal node — which
+        // fails with "no target node available" (the v0.13–v0.17 recording bug).
 
         let stream = pw::stream::StreamBox::new(&core, "capicorn-recording", props)
             .map_err(|e| format!("cannot create the PipeWire capture stream: {e}"))?;
@@ -1202,6 +1204,42 @@ mod imp {
         // Without this the pool is 8 KiB and every frame is truncated.
         pods.push(buffers_param(width * height * 4, width * 4, 8)?);
         let mut params: Vec<&Pod> = pods.iter().filter_map(|v| Pod::from_bytes(v)).collect();
+
+        // Sync this connection's registry and wait until the portal's node is
+        // visible before targeting it. `connect_fd` can return before the registry
+        // globals arrive, and a stream that targets an unknown node fails with
+        // "no target node available". If the node never shows up we still attempt
+        // the connect (the stream state error is then explicit); normally it is
+        // there within a few milliseconds.
+        if let Ok(registry) = core.get_registry() {
+            let seen = Rc::new(Cell::new(false));
+            let seen_flag = seen.clone();
+            let _listener = registry
+                .add_listener_local()
+                .global(move |g| {
+                    if g.id == node {
+                        seen_flag.set(true);
+                    }
+                })
+                .register();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+            while !seen.get() && std::time::Instant::now() < deadline {
+                let _ = mainloop
+                    .loop_()
+                    .iterate(pw::loop_::Timeout::Finite(std::time::Duration::from_millis(20)));
+            }
+            rec_log(
+                &log_path,
+                &format!(
+                    "target node {node} {}",
+                    if seen.get() {
+                        "visible in registry"
+                    } else {
+                        "NOT seen in registry after 2s"
+                    }
+                ),
+            );
+        }
 
         stream
             .connect(

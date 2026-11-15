@@ -22,6 +22,7 @@ import {
 } from "./blur";
 import {
   ACCENT,
+  BlurRegion,
   MAGNIFY_ZOOM,
   MAX_STROKE_WIDTH,
   MIN_STROKE_WIDTH,
@@ -344,6 +345,7 @@ export class Editor {
     this.canvas.on("mouse:down", this.onMouseDown);
     this.canvas.on("mouse:move", this.onMouseMove);
     this.canvas.on("mouse:up", this.onMouseUp);
+    this.canvas.on("mouse:wheel", this.onWheel);
     this.canvas.on("mouse:out", this.onMouseOut);
     this.canvas.on("object:modified", this.onObjectModified);
 
@@ -395,6 +397,7 @@ export class Editor {
 
     this.image = image;
     this.canvas.add(image);
+    this.canvas.setViewportTransform([1, 0, 0, 1, 0, 0]);
     this.layout(true);
     this.resetHistory();
     this.applyInteractivity();
@@ -624,6 +627,7 @@ export class Editor {
       region.set({ fill: preview.fill, stroke: preview.stroke });
       region.dirty = true;
     }
+    this.refreshBlurPreviews();
     this.commit();
     this.canvas.requestRenderAll();
     return true;
@@ -974,6 +978,34 @@ export class Editor {
     return { x: point.x, y: point.y };
   }
 
+  /** Ctrl/Cmd + wheel zooms the canvas around the pointer. */
+  private readonly onWheel = (event: fabric.TPointerEventInfo): void => {
+    const e = event.e as WheelEvent;
+    if (!(e.ctrlKey || e.metaKey)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
+    this.zoomBy(factor, { x: e.offsetX, y: e.offsetY });
+  };
+
+  /** Multiply the viewport zoom, keeping `screenPoint` (canvas px) fixed. */
+  zoomBy(factor: number, screenPoint?: { x: number; y: number }): void {
+    const current = this.canvas.getZoom();
+    const next = Math.min(8, Math.max(0.4, current * factor));
+    if (Math.abs(next - current) < 1e-4) return;
+    const pivot = screenPoint
+      ? new fabric.Point(screenPoint.x, screenPoint.y)
+      : this.canvas.getCenterPoint();
+    this.canvas.zoomToPoint(pivot, next);
+    this.canvas.requestRenderAll();
+  }
+
+  /** Reset the viewport (zoom + pan) to 1:1, e.g. after loading a new capture. */
+  resetZoom(): void {
+    this.canvas.setViewportTransform([1, 0, 0, 1, 0, 0]);
+    this.canvas.requestRenderAll();
+  }
+
   /** True when `point` (scene space) falls inside the object, incl. a margin. */
   private hitTest(object: fabric.FabricObject, point: Point, margin = 0): boolean {
     const box = object.getBoundingRect();
@@ -1086,6 +1118,7 @@ export class Editor {
   };
 
   private readonly onObjectModified = (): void => {
+    this.refreshBlurPreviews();
     this.commit();
   };
 
@@ -1176,11 +1209,54 @@ export class Editor {
   private addObject(object: fabric.FabricObject): void {
     this.canvas.add(object);
     this.applyInteractivity(object);
+    if (isBlurRegion(object)) this.refreshBlurPreviews();
   }
 
   private removeObject(object: fabric.FabricObject): void {
     this.chrome.delete(object);
     this.canvas.remove(object);
+  }
+
+  /**
+   * Rebuild every blur region's live snapshot from the current background, so
+   * the canvas shows the actual blur/pixelate/blackout instead of a placeholder.
+   */
+  private refreshBlurPreviews(): void {
+    const regions = this.canvas.getObjects().filter(isBlurRegion);
+    if (!regions.length) return;
+    for (const region of regions) {
+      region.snapshot = this.blurSnapshot(region);
+    }
+    this.canvas.requestRenderAll();
+  }
+
+  /** Sample the capture under `region`, apply its effect, return the patch. */
+  private blurSnapshot(region: BlurRegion): HTMLCanvasElement | null {
+    const base = this.base;
+    if (!base) return null;
+    const box = this.imageBox();
+    if (box.width < 1 || box.height < 1) return null;
+    const scaleX = box.width / this.natural.width;
+    const scaleY = box.height / this.natural.height;
+    const scene = region.getBoundingRect();
+    const sx = (scene.left - box.left) / scaleX;
+    const sy = (scene.top - box.top) / scaleY;
+    const sw = scene.width / scaleX;
+    const sh = scene.height / scaleY;
+    if (sw < 1 || sh < 1) return null;
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.min(4096, Math.max(1, Math.round(sw)));
+    canvas.height = Math.min(4096, Math.max(1, Math.round(sh)));
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+    ctx.drawImage(base, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
+    applyBlurRegion(
+      canvas,
+      { x: 0, y: 0, width: canvas.width, height: canvas.height },
+      region.mode,
+      Math.max(1, region.radius / scaleX),
+    );
+    return canvas;
   }
 
   private bounds(): Box {
@@ -1511,6 +1587,8 @@ export class Editor {
       }
     }
 
+    // Zoom/resize rescales the image, so the blur snapshots must be resampled.
+    this.refreshBlurPreviews();
     this.canvas.requestRenderAll();
   }
 
@@ -1620,6 +1698,8 @@ export class Editor {
     // loadFromJSON emptied the canvas: bring the brush footprint back if the
     // brush is mid-hover.
     this.syncBrushCursor();
+    // Fresh regions from JSON carry no snapshot; rebuild them from the capture.
+    this.refreshBlurPreviews();
     canvas.requestRenderAll();
     this.restoring = false;
     this.notify();

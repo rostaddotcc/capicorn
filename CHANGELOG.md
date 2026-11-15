@@ -3,6 +3,14 @@
 All notable changes to Capicorn, newest first. Full release notes for every tag live on
 the [releases page](https://github.com/rostaddotcc/capicorn/releases).
 
+## v0.19.0
+- Recording indicator is red and pulses (the status dot follows the recording state).
+- More shortcuts: bare-letter tool keys (`V R A T B P H S M E K`) and **Ctrl+scroll zoom**.
+- Blur tool shows the **real** blur / pixelate / blackout live on the canvas, not a placeholder.
+- Rectangle shadows now cast (the box gets a faint tint instead of a pure outline).
+- Sleeker arrow: rounded tail, tapered shaft, head scaled with the stroke width.
+- Text tool: resizable **text box** (drag to size), wrapping text, and a thin grey frame.
+
 ## v0.18.2
 - License changed to **GPL-3.0-or-later** with a commercial dual-license; added a
   CONTRIBUTING note (contributions are licensed under both).

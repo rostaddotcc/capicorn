@@ -58,6 +58,12 @@ export class BlurRegion extends fabric.Rect {
   mode: BlurMode = "gaussian";
   /** Gaussian radius / pixelate block size, in scene px. */
   radius = DEFAULT_BLUR_RADIUS;
+  /**
+   * Live blurred snapshot of the background under the region, so the canvas
+   * shows the real effect instead of a translucent stand-in. Not serialized —
+   * the Editor rebuilds it (see `refreshBlurPreviews`) after load/undo/zoom.
+   */
+  snapshot: HTMLCanvasElement | null = null;
 
   constructor(options: RectOptions & { mode?: BlurMode; radius?: number } = {}) {
     const { mode, radius, ...rect } = options;
@@ -68,6 +74,20 @@ export class BlurRegion extends fabric.Rect {
     if (typeof radius === "number" && Number.isFinite(radius)) {
       this.radius = clampBlurRadius(radius);
     }
+  }
+
+  /** Paint the blurred snapshot in place of the placeholder fill. */
+  _render(ctx: CanvasRenderingContext2D): void {
+    const snapshot = this.snapshot;
+    if (!snapshot) {
+      super._render(ctx);
+      return;
+    }
+    const w = this.width;
+    const h = this.height;
+    ctx.save();
+    ctx.drawImage(snapshot, -w / 2, -h / 2, w, h);
+    ctx.restore();
   }
 }
 fabric.classRegistry.setClass(BlurRegion, "capicorn_blur");
@@ -196,6 +216,14 @@ export interface ShadowStyle {
   /** Vertical offset, -50..50 px. */
   offsetY: number;
 }
+
+/** `#rrggbb` → `rgba(r, g, b, a)`. Leaves non-hex input untouched. */
+const tint = (hex: string, alpha: number): string => {
+  const m = hex.trim().match(/^#([0-9a-f]{6})$/i);
+  if (!m) return hex;
+  const n = parseInt(m[1], 16);
+  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`;
+};
 
 /** `fabric.Shadow` for the active style, or null when shadows are off. */
 export const shadowOf = (host: ToolHost): fabric.Shadow | null => {
@@ -390,7 +418,9 @@ class RectTool extends DragTool {
       height: 1,
       originX: "left",
       originY: "top",
-      fill: "transparent",
+      // A faint tint (not pure transparent) so a drop shadow has a body to cast
+      // from — on an outline-only shape the shadow only hugs the thin stroke.
+      fill: tint(this.host.color(), 0.1),
       stroke: this.host.color(),
       strokeWidth: this.host.strokeWidth(),
       strokeUniform: true,
@@ -572,13 +602,17 @@ class HighlighterTool extends RegionTool<HighlighterRegion> {
   }
 }
 
-/** Solid filled arrow head + shaft, as one scalable Path object. */
+/**
+ * Solid arrow as one scalable Path: a rounded tail, a shaft that tapers wider
+ * towards the head, and a sharp triangular head. The head scales with the shaft
+ * so a thick arrow never looks like a lollipop.
+ */
 const arrowPath = (
   start: Point,
   end: Point,
   thickness = STROKE_WIDTH * 2,
-  headLength = 18,
-  headWidth = 20,
+  headLength = 20,
+  headWidth = 22,
 ): string => {
   const dx = end.x - start.x;
   const dy = end.y - start.y;
@@ -587,25 +621,37 @@ const arrowPath = (
   const uy = dy / length;
   const nx = -uy;
   const ny = ux;
-  const halfShaft = Math.max(thickness, 2) / 2;
-  const head = Math.min(headLength, length * 0.6);
+  const shaft = Math.max(thickness, 2);
+  const tailHalf = shaft / 2;
+  const neckHalf = tailHalf * 1.15;
+  const head = Math.min(headLength, length * 0.55);
   const halfHead = headWidth / 2;
   const baseX = end.x - ux * head;
   const baseY = end.y - uy * head;
-  const points: Array<[number, number]> = [
-    [start.x + nx * halfShaft, start.y + ny * halfShaft],
-    [baseX + nx * halfShaft, baseY + ny * halfShaft],
-    [baseX + nx * halfHead, baseY + ny * halfHead],
-    [end.x, end.y],
-    [baseX - nx * halfHead, baseY - ny * halfHead],
-    [baseX - nx * halfShaft, baseY - ny * halfShaft],
-    [start.x - nx * halfShaft, start.y - ny * halfShaft],
-  ];
   const round = (value: number) => Math.round(value * 100) / 100;
+  const P = (x: number, y: number) => `${round(x)} ${round(y)}`;
+  const tailTopX = start.x + nx * tailHalf;
+  const tailTopY = start.y + ny * tailHalf;
+  const tailBottomX = start.x - nx * tailHalf;
+  const tailBottomY = start.y - ny * tailHalf;
+  const neckTopX = baseX + nx * neckHalf;
+  const neckTopY = baseY + ny * neckHalf;
+  const neckBottomX = baseX - nx * neckHalf;
+  const neckBottomY = baseY - ny * neckHalf;
+  const barbTopX = baseX + nx * halfHead;
+  const barbTopY = baseY + ny * halfHead;
+  const barbBottomX = baseX - nx * halfHead;
+  const barbBottomY = baseY - ny * halfHead;
   return (
-    "M " +
-    points.map(([x, y]) => `${round(x)} ${round(y)}`).join(" L ") +
-    " Z"
+    `M ${P(tailTopX, tailTopY)} ` +
+    // Rounded tail: a semicircle sweeps from the shaft's top edge to its bottom.
+    `A ${round(tailHalf)} ${round(tailHalf)} 0 0 0 ${P(tailBottomX, tailBottomY)} ` +
+    `L ${P(neckBottomX, neckBottomY)} ` +
+    `L ${P(barbBottomX, barbBottomY)} ` +
+    `L ${P(end.x, end.y)} ` +
+    `L ${P(barbTopX, barbTopY)} ` +
+    `L ${P(neckTopX, neckTopY)} ` +
+    `Z`
   );
 };
 
@@ -672,7 +718,10 @@ class ArrowTool extends DragTool {
     if (shaft) this.host.removeObject(shaft);
     if (head) this.host.removeObject(head);
     if (Math.hypot(end.x - start.x, end.y - start.y) < MIN_DRAG) return;
-    const arrow = new fabric.Path(arrowPath(start, end, this.host.strokeWidth() * 2), {
+    const thickness = this.host.strokeWidth() * 2;
+    const headLength = Math.max(16, thickness * 1.7);
+    const headWidth = Math.max(18, thickness * 2);
+    const arrow = new fabric.Path(arrowPath(start, end, thickness, headLength, headWidth), {
       fill: this.host.color(),
       stroke: "transparent",
       strokeWidth: 0,
@@ -701,9 +750,11 @@ const TEXT_PLACEHOLDER = "Text";
 class TextTool implements Tool {
   readonly id: ToolId = "text";
   readonly cursor = "text";
-  private editing: fabric.IText | null = null;
+  private editing: fabric.Textbox | null = null;
   /** True once the caption content was actually edited (fabric 'changed'). */
   private dirty = false;
+  /** Pointer-down anchor; a drag sizes the text box instead of a fixed width. */
+  private start: Point | null = null;
 
   constructor(private readonly host: ToolHost) {}
 
@@ -716,16 +767,24 @@ class TextTool implements Tool {
     const text = this.editing;
     this.editing = null;
     this.dirty = false;
+    this.start = null;
     if (text && text.isEditing) text.exitEditing();
   }
 
   onPointerDown(point: Point): void {
+    // Wait for pointerup so a drag can size the text box.
+    this.start = point;
+  }
+
+  /** Create + start editing a caption at (left, top) with the given width. */
+  private place(left: number, top: number, width: number): void {
     const canvas = this.host.canvas;
     const ink = this.host.color();
     const style = this.host.textStyle();
-    const text = new fabric.IText(TEXT_PLACEHOLDER, {
-      left: point.x,
-      top: point.y,
+    const text = new fabric.Textbox(TEXT_PLACEHOLDER, {
+      left,
+      top,
+      width,
       originX: "left",
       originY: "top",
       fontFamily: style.fontFamily || FONT_STACK,
@@ -735,8 +794,13 @@ class TextTool implements Tool {
       fill: ink,
       textBackgroundColor: "",
       padding: 4,
-      borderColor: ink,
-      editingBorderColor: ink,
+      // A whisper-thin neutral frame — just enough to see the box while editing.
+      borderColor: "rgba(124, 128, 142, 0.5)",
+      editingBorderColor: "rgba(124, 128, 142, 0.5)",
+      borderScaleFactor: 0.5,
+      cornerColor: ink,
+      cornerSize: 9,
+      transparentCorners: false,
       cursorColor: ink,
       shadow: shadowOf(this.host) ?? undefined,
       selectable: false,
@@ -771,7 +835,7 @@ class TextTool implements Tool {
    * blank) — the placeholder is not content — and recorded in history only
    * when it holds real text, so one Ctrl+Z removes it again.
    */
-  private settle(text: fabric.IText): void {
+  private settle(text: fabric.Textbox): void {
     const value = (text.text ?? "").trim();
     // Untouched: no 'changed' event ever fired, or the text is still exactly
     // the placeholder it was created with.
@@ -790,7 +854,8 @@ class TextTool implements Tool {
       return;
     }
     // Committed captions are not interactive in text mode; Select mode turns
-    // them on again via Editor.applyInteractivity().
+    // them on again via Editor.applyInteractivity() — which keeps the box
+    // resizable (Textbox mtr handle) so its width can be tuned later.
     text.selectable = false;
     text.evented = false;
     text.hoverCursor = "default";
@@ -799,7 +864,19 @@ class TextTool implements Tool {
   }
 
   onPointerMove(): void {}
-  onPointerUp(): void {}
+
+  onPointerUp(point: Point): void {
+    const start = this.start;
+    this.start = null;
+    if (!start || this.editing) return;
+    const dx = Math.abs(point.x - start.x);
+    const dy = Math.abs(point.y - start.y);
+    const dragged = dx > 24 || dy > 24;
+    const left = dragged ? Math.min(start.x, point.x) : start.x;
+    const top = dragged ? Math.min(start.y, point.y) : start.y;
+    // A drag sets the box width; a plain click gets a comfortable default.
+    this.place(left, top, dragged ? Math.max(80, dx) : 260);
+  }
 
   onEscape(): boolean {
     if (!this.editing) return false;

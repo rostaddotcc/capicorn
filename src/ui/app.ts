@@ -24,7 +24,7 @@ import {
 } from "./settings";
 
 type CaptureResult = { dataUrl: string; width: number; height: number };
-type StatusKind = "info" | "success" | "error";
+type StatusKind = "info" | "success" | "error" | "recording";
 type CaptureMode = "full" | "region" | "window" | "monitor" | "scrolling";
 /** Recording modes: the whole screen via the OS picker, or a dragged region. */
 type RecMode = "full" | "region";
@@ -1080,6 +1080,8 @@ export function mountApp(root: HTMLElement): void {
             <div><dt><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Z</kbd> · <kbd>Ctrl</kbd> + <kbd>Y</kbd></dt><dd>Redo</dd></div>
             <div><dt><kbd>Ctrl</kbd> + <kbd>C</kbd></dt><dd>Copy to clipboard</dd></div>
             <div><dt><kbd>Ctrl</kbd> + <kbd>V</kbd></dt><dd>Paste an image to annotate</dd></div>
+            <div><dt><kbd>Ctrl</kbd> + scroll</dt><dd>Zoom in / out</dd></div>
+            <div><dt><kbd>V</kbd> <kbd>R</kbd> <kbd>A</kbd> <kbd>T</kbd> <kbd>B</kbd> <kbd>P</kbd> <kbd>H</kbd> <kbd>S</kbd> <kbd>M</kbd> <kbd>E</kbd> <kbd>K</kbd></dt><dd>Tool shortcuts</dd></div>
             <div><dt><kbd>Ctrl</kbd> + <kbd>S</kbd></dt><dd>Save</dd></div>
             <div><dt><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>S</kbd></dt><dd>Save As…</dd></div>
             <div><dt><kbd>Ctrl</kbd> + <kbd>,</kbd></dt><dd>Settings</dd></div>
@@ -2184,7 +2186,7 @@ export function mountApp(root: HTMLElement): void {
         region
           ? `Recording a ${region.width} × ${region.height} region — click Stop when you're done.`
           : "Recording — click Stop when you're done.",
-        "success",
+        "recording",
       );
     } catch (e) {
       const message = errText(e);
@@ -4141,6 +4143,31 @@ export function mountApp(root: HTMLElement): void {
     const typing =
       !!target &&
       (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable);
+
+    // Bare-letter tool shortcuts (no modifier), routed through selectTool so the
+    // toolbar and properties rail follow along.
+    if (!typing && !ev.ctrlKey && !ev.metaKey && !ev.altKey && !ev.shiftKey && ev.key.length === 1) {
+      const toolShortcuts: Record<string, ShellToolId> = {
+        v: "select",
+        c: "crop",
+        a: "arrow",
+        t: "text",
+        r: "rect",
+        b: "blur",
+        p: "spotlight",
+        h: "highlighter",
+        s: "step",
+        m: "magnify",
+        e: "brush",
+        k: "bucket",
+      };
+      const tool = toolShortcuts[ev.key.toLowerCase()];
+      if (tool) {
+        ev.preventDefault();
+        void selectTool(tool);
+        return;
+      }
+    }
     if (typing || !(ev.ctrlKey || ev.metaKey) || ev.altKey) return;
 
     const key = ev.key.toLowerCase();
@@ -4214,7 +4241,7 @@ export function mountApp(root: HTMLElement): void {
     const path = typeof ev.payload?.path === "string" ? ev.payload.path.trim() : "";
     if (live && !recording) {
       beginRecording();
-      setStatus("Recording — click Stop when you're done.", "success");
+      setStatus("Recording — click Stop when you're done.", "recording");
     } else if (!live && recording && !recStopping) {
       endRecording();
       if (path) {
@@ -4302,7 +4329,7 @@ export function mountApp(root: HTMLElement): void {
       if (!live || recording) return;
       recStartedAt = Date.now();
       beginRecording();
-      setStatus("Recording — click Stop when you're done.", "success");
+      setStatus("Recording — click Stop when you're done.", "recording");
     })
     .catch(() => {
       /* no recorder in this build */

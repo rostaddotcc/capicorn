@@ -661,6 +661,11 @@ kbd {
   background: var(--danger);
 }
 
+.status-dot[data-kind="recording"] {
+  background: var(--rec);
+  animation: rec-pulse 1.6s var(--ease) infinite;
+}
+
 .status-text {
   min-width: 0;
   overflow: hidden;

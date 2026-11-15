@@ -3,6 +3,12 @@
 All notable changes to Capicorn, newest first. Full release notes for every tag live on
 the [releases page](https://github.com/rostaddotcc/capicorn/releases).
 
+## v0.17.0
+- Paste (`Ctrl+V`) or drag-and-drop an image to annotate it.
+
+## v0.16.0
+- In-app keyboard shortcuts overlay (`?` key or the top-bar help button).
+
 ## v0.15.0 — Windows recording
 - Windows screen recording via `ffmpeg -f gdigrab` (full screen or region), graceful stop.
 

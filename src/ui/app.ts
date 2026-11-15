@@ -194,6 +194,9 @@ const ICONS = {
     `<path d="M2.6 5.2h10.8M2.6 10.8h10.8"/><circle cx="6" cy="5.2" r="1.8"/><circle cx="10.2" cy="10.8" r="1.8"/>`,
   ),
   close: icon(`<path d="M4.6 4.6 11.4 11.4M11.4 4.6 4.6 11.4"/>`, 14, 1.7),
+  help: icon(
+    `<circle cx="8" cy="8" r="6"/><path d="M6.1 6.2a2 2 0 1 1 2.8 1.9c-.6.3-.9.7-.9 1.3v.4"/><circle cx="8" cy="11.6" r=".55" fill="currentColor" stroke="none"/>`,
+  ),
   record: icon(`<circle cx="8" cy="8" r="5.2" fill="currentColor" stroke="none"/>`),
   stop: icon(`<rect x="3.6" y="3.6" width="8.8" height="8.8" rx="1.8" fill="currentColor" stroke="none"/>`),
   ocr: icon(
@@ -706,6 +709,7 @@ export function mountApp(root: HTMLElement): void {
         <span class="topbar-hint" id="hotkey-hint"><kbd>PrintScreen</kbd> full · <span class="key-pair"><kbd>Shift</kbd><kbd>PrintScreen</kbd></span> region</span>
         <div class="topbar-tools">
           <button type="button" class="icon-btn" id="theme-toggle" title="Switch to dark theme" aria-label="Switch to dark theme" aria-pressed="false">${currentTheme === "dark" ? ICONS.sun : ICONS.moon}</button>
+          <button type="button" class="icon-btn" id="help-btn" title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts">${ICONS.help}</button>
           <button type="button" class="icon-btn" id="settings-btn" title="Settings (Ctrl+,)" aria-label="Settings">${ICONS.settings}</button>
         </div>
         <div class="rec-group">
@@ -1051,6 +1055,32 @@ export function mountApp(root: HTMLElement): void {
             <button type="button" class="btn-primary" id="guard-save">Save &amp; close</button>
           </div>
         </footer>
+      </div>
+    </div>
+
+    <div class="modal-backdrop" id="shortcuts-modal" hidden>
+      <div class="modal modal-sm" role="dialog" aria-modal="true" aria-labelledby="shortcuts-title" tabindex="-1">
+        <header class="modal-head">
+          <div class="modal-heading">
+            <h2 class="modal-title" id="shortcuts-title">Keyboard shortcuts</h2>
+          </div>
+          <button type="button" class="icon-btn modal-x" id="shortcuts-close" aria-label="Close" title="Close (Esc)">${ICONS.close}</button>
+        </header>
+        <div class="modal-body">
+          <dl class="shortcut-list">
+            <div><dt><kbd>PrintScreen</kbd></dt><dd>Capture full screen</dd></div>
+            <div><dt><kbd>Shift</kbd> + <kbd>PrintScreen</kbd></dt><dd>Capture a region</dd></div>
+            <div><dt><kbd>Ctrl</kbd> + <kbd>Z</kbd></dt><dd>Undo</dd></div>
+            <div><dt><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Z</kbd> · <kbd>Ctrl</kbd> + <kbd>Y</kbd></dt><dd>Redo</dd></div>
+            <div><dt><kbd>Ctrl</kbd> + <kbd>C</kbd></dt><dd>Copy to clipboard</dd></div>
+            <div><dt><kbd>Ctrl</kbd> + <kbd>S</kbd></dt><dd>Save</dd></div>
+            <div><dt><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>S</kbd></dt><dd>Save As…</dd></div>
+            <div><dt><kbd>Ctrl</kbd> + <kbd>,</kbd></dt><dd>Settings</dd></div>
+            <div><dt><kbd>Delete</kbd> · <kbd>Backspace</kbd></dt><dd>Delete selected annotation</dd></div>
+            <div><dt><kbd>Esc</kbd></dt><dd>Cancel / deselect / close</dd></div>
+            <div><dt><kbd>?</kbd></dt><dd>This help</dd></div>
+          </dl>
+        </div>
       </div>
     </div>
 
@@ -3957,16 +3987,59 @@ export function mountApp(root: HTMLElement): void {
     if (ev.target === ocrModalEl) closeOcr();
   });
 
+  // Keyboard shortcuts overlay (the "?" help).
+  const shortcutsModalEl = $<HTMLDivElement>("#shortcuts-modal");
+  const shortcutsCloseBtn = $<HTMLButtonElement>("#shortcuts-close");
+  const helpBtnEl = $<HTMLButtonElement>("#help-btn");
+  const openShortcuts = (): void => {
+    if (!shortcutsModalEl.hidden) return;
+    shortcutsModalEl.hidden = false;
+    void shortcutsModalEl.offsetWidth;
+    shortcutsModalEl.classList.add("is-open");
+    shortcutsModalEl.querySelector<HTMLElement>(".modal")?.focus({ preventScroll: true });
+  };
+  const closeShortcuts = (): void => {
+    if (shortcutsModalEl.hidden) return;
+    shortcutsModalEl.classList.remove("is-open");
+    shortcutsModalEl.hidden = true;
+    helpBtnEl.focus({ preventScroll: true });
+  };
+  helpBtnEl.addEventListener("click", openShortcuts);
+  shortcutsCloseBtn.addEventListener("click", closeShortcuts);
+  shortcutsModalEl.addEventListener("pointerdown", (ev) => {
+    if (ev.target === shortcutsModalEl) closeShortcuts();
+  });
+
   const onKeyDown = (ev: KeyboardEvent): void => {
     if (ev.key === "Escape" && !resizePop.hidden) {
       ev.preventDefault();
       closeResize();
       return;
     }
+    if (ev.key === "Escape" && !shortcutsModalEl.hidden) {
+      ev.preventDefault();
+      closeShortcuts();
+      return;
+    }
     if (ev.code === "PrintScreen" || ev.key === "PrintScreen") {
       ev.preventDefault();
       void runCapture(ev.shiftKey ? "region" : "full");
       return;
+    }
+    {
+      const field = ev.target as HTMLElement | null;
+      const typingNow =
+        !!field && (field.tagName === "INPUT" || field.tagName === "TEXTAREA" || field.isContentEditable);
+      if (
+        (ev.key === "?" || (ev.key === "/" && ev.shiftKey)) &&
+        !typingNow &&
+        !(ev.ctrlKey || ev.metaKey || ev.altKey) &&
+        shortcutsModalEl.hidden
+      ) {
+        ev.preventDefault();
+        openShortcuts();
+        return;
+      }
     }
     const target = ev.target as HTMLElement | null;
     const typing =

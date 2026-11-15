@@ -4752,3 +4752,42 @@ body.countdown-hud .countdown-card {
   font-size: 11px;
   color: var(--fg-subtle);
 }
+
+/* ------------------------------------------- Shapes picker */
+.shape-picker {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.shape-btn {
+  display: grid;
+  place-items: center;
+  height: 30px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--fg-muted);
+  cursor: pointer;
+  transition: background 120ms var(--ease), color 120ms var(--ease), border-color 120ms var(--ease);
+}
+
+.shape-btn svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.4;
+  stroke-linejoin: round;
+}
+
+.shape-btn:hover {
+  background: var(--surface-soft);
+  color: var(--fg);
+}
+
+.shape-btn.is-active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}

@@ -33,6 +33,7 @@ import {
   type ImageInfo,
   type Point,
   type ShadowStyle,
+  type ShapeKind,
   type TextStyle,
   type Tool,
   type ToolHost,
@@ -58,7 +59,7 @@ export type ToolId =
   | "crop"
   | "arrow"
   | "text"
-  | "rect"
+  | "shape"
   | "blur"
   | "spotlight"
   | "highlighter"
@@ -73,7 +74,7 @@ const TOOL_IDS: readonly ToolId[] = [
   "crop",
   "arrow",
   "text",
-  "rect",
+  "shape",
   "blur",
   "spotlight",
   "highlighter",
@@ -193,7 +194,7 @@ const TOOL_SIZE_RANGES: Record<ToolId, ToolSizeRange | null> = {
   crop: null,
   arrow: { min: MIN_STROKE_WIDTH, max: MAX_STROKE_WIDTH, step: 1 },
   text: { min: MIN_FONT_SIZE, max: MAX_FONT_SIZE, step: 1 },
-  rect: { min: MIN_STROKE_WIDTH, max: MAX_STROKE_WIDTH, step: 1 },
+  shape: { min: MIN_STROKE_WIDTH, max: MAX_STROKE_WIDTH, step: 1 },
   blur: { min: MIN_BLUR_RADIUS, max: MAX_BLUR_RADIUS, step: 1 },
   spotlight: { min: MIN_REGION_THICKNESS, max: MAX_REGION_THICKNESS, step: 1 },
   highlighter: { min: MIN_REGION_THICKNESS, max: MAX_REGION_THICKNESS, step: 1 },
@@ -276,6 +277,8 @@ export class Editor {
   private inkColor = ACCENT;
   /** Stroke width applied to NEW annotations. */
   private inkWidth = STROKE_WIDTH;
+  /** Which outline the Shapes tool draws (persisted by the shell). */
+  private shapeKindValue: ShapeKind = "rect";
   /** Redaction mode applied to NEW blur/redaction regions. */
   private blurMode: BlurMode = "gaussian";
   /** Gaussian radius (or pixelate block size) in scene px, for NEW regions. */
@@ -343,6 +346,7 @@ export class Editor {
       setCrop: (box) => this.setCrop(box),
       nextStepNumber: () => this.nextStepNumber(),
       color: () => this.inkColor,
+      shapeKind: () => this.shapeKindValue,
       strokeWidth: () => this.inkWidth,
       blurMode: () => this.blurMode,
       blurRadius: () => this.blurRadius,
@@ -617,6 +621,16 @@ export class Editor {
     return { ...this.watermark };
   }
 
+  /** Choose the outline the Shapes tool draws. */
+  setShapeKind(kind: ShapeKind): void {
+    this.shapeKindValue = kind;
+  }
+
+  /** Current Shapes outline. */
+  getShapeKind(): ShapeKind {
+    return this.shapeKindValue;
+  }
+
   setShadow(patch: Partial<ShadowStyle>): void {
     if (!patch || typeof patch !== "object") return;
     const next: ShadowStyle = { ...this.shadow };
@@ -775,7 +789,7 @@ export class Editor {
       case "brush":
         return this.brushWidth;
       case "arrow":
-      case "rect":
+      case "shape":
         return this.inkWidth;
       case "text":
         return this.fontSize;
@@ -818,7 +832,7 @@ export class Editor {
         this.calloutFontSize = Math.round(value);
         break;
       case "arrow":
-      case "rect":
+      case "shape":
         this.setStrokeWidth(value);
         return;
       case "text":

@@ -246,10 +246,10 @@ const TOOLS: ReadonlyArray<{ id: ShellToolId; label: string; hint: string; icon:
     icon: icon(`<path d="M3.4 4.4V2.8h9.2v1.6"/><path d="M8 2.8v10.4M6.2 13.2h3.6"/>`),
   },
   {
-    id: "rect",
-    label: "Box",
-    hint: "Draw a rectangle (R)",
-    icon: icon(`<rect x="2.6" y="3.6" width="10.8" height="8.8" rx="1.4"/>`),
+    id: "shape",
+    label: "Shapes",
+    hint: "Draw a shape — pick the outline in the panel (R)",
+    icon: icon(`<rect x="1.9" y="2.2" width="6" height="6" rx="1.1"/><circle cx="10.9" cy="10.9" r="3"/><path d="M11.1 2.2 14 7.4H8.2z"/>`),
   },
   {
     id: "blur",
@@ -326,13 +326,7 @@ const COLORS: ReadonlyArray<{ name: string; hex: string }> = [
   { name: "White", hex: "#ffffff" },
 ];
 
-const STROKES: ReadonlyArray<{ id: string; width: number; label: string }> = [
-  { id: "S", width: 2, label: "Thin stroke" },
-  { id: "M", width: 3, label: "Medium stroke" },
-  { id: "L", width: 5, label: "Thick stroke" },
-];
-
-type PropGroup = "color" | "stroke" | "font" | "blur" | "shadow";
+type PropGroup = "shape" | "color" | "stroke" | "font" | "blur" | "shadow";
 
 /**
  * Contextual properties rail: the one place a tool's settings live. Each tool
@@ -352,9 +346,9 @@ const PROPS: Record<string, { hint: string; groups: ReadonlyArray<PropGroup>; st
     hint: "Drag to draw an arrow. Width sets how heavy it looks.",
     groups: ["color", "stroke", "shadow"],
   },
-  rect: {
-    hint: "Drag to draw a box around something.",
-    groups: ["color", "stroke", "shadow"],
+  shape: {
+    hint: "Drag to draw the chosen outline.",
+    groups: ["shape", "color", "stroke", "shadow"],
   },
   step: {
     hint: "Click to drop the next numbered step — numbers stay in order.",
@@ -912,6 +906,19 @@ export function mountApp(root: HTMLElement): void {
             </form>
           </section>
 
+          <section class="prop-group" data-group="shape" id="shape-group" hidden>
+            <div class="prop-head">
+              <h3 class="prop-label">Shape</h3>
+            </div>
+            <div class="shape-picker" id="shape-picker" role="radiogroup" aria-label="Shape">
+              <button type="button" class="shape-btn" data-shape="rect" role="radio" aria-checked="true" aria-label="Rectangle" title="Rectangle"><svg viewBox="0 0 16 16"><rect x="2.6" y="3.6" width="10.8" height="8.8" rx="1.2"/></svg></button>
+              <button type="button" class="shape-btn" data-shape="ellipse" role="radio" aria-checked="false" aria-label="Ellipse" title="Ellipse"><svg viewBox="0 0 16 16"><ellipse cx="8" cy="8" rx="5.6" ry="4.4"/></svg></button>
+              <button type="button" class="shape-btn" data-shape="triangle" role="radio" aria-checked="false" aria-label="Triangle" title="Triangle"><svg viewBox="0 0 16 16"><path d="M8 2.6 13.6 13H2.4z"/></svg></button>
+              <button type="button" class="shape-btn" data-shape="line" role="radio" aria-checked="false" aria-label="Line" title="Line"><svg viewBox="0 0 16 16"><path d="M2.6 13 13.4 3"/></svg></button>
+              <button type="button" class="shape-btn" data-shape="star" role="radio" aria-checked="false" aria-label="Star" title="Star"><svg viewBox="0 0 16 16"><path d="M8 2.2 9.9 6.4l4.5.4-3.4 3 1 4.4L8 11.8 4 14.2l1-4.4-3.4-3 4.5-.4z"/></svg></button>
+            </div>
+          </section>
+
           <section class="prop-group" data-group="color">
             <div class="prop-head">
               <h3 class="prop-label">Color</h3>
@@ -946,7 +953,6 @@ export function mountApp(root: HTMLElement): void {
               <h3 class="prop-label" id="stroke-label">Width</h3>
               <output class="prop-value" id="stroke-value">${DEFAULT_STROKE} px</output>
             </div>
-            <div class="strokes" id="strokes" role="radiogroup" aria-label="Stroke width"></div>
           </section>
 
           <section class="prop-group" data-group="font">
@@ -1219,7 +1225,6 @@ export function mountApp(root: HTMLElement): void {
   const saveBtn = $<HTMLButtonElement>("#save");
   const saveAsBtn = $<HTMLButtonElement>("#save-as");
   const swatchesEl = $<HTMLDivElement>("#swatches");
-  const strokesEl = $<HTMLDivElement>("#strokes");
   const customColorEl = $<HTMLInputElement>("#color-custom");
   const fontSelect = $<HTMLSelectElement>("#font-family");
   const sizeInput = $<HTMLInputElement>("#font-size");
@@ -1241,6 +1246,7 @@ export function mountApp(root: HTMLElement): void {
   const brushPreview = $<HTMLDivElement>("#brush-preview");
   const brushPreviewDot = $<HTMLSpanElement>("#brush-preview-dot");
   const brushPreviewValue = $<HTMLSpanElement>("#brush-preview-value");
+  const shapePicker = $<HTMLDivElement>("#shape-picker");
   const shadowGroup = $<HTMLElement>("#shadow-group");
   const shadowToggle = $<HTMLButtonElement>("#shadow-toggle");
   const shadowFields = $<HTMLDivElement>("#shadow-fields");
@@ -3000,11 +3006,6 @@ export function mountApp(root: HTMLElement): void {
   }
 
   function highlightStroke(width: number): void {
-    for (const btn of Array.from(strokesEl.querySelectorAll<HTMLButtonElement>(".stroke"))) {
-      const active = Number(btn.dataset.width) === width;
-      btn.classList.toggle("is-active", active);
-      btn.setAttribute("aria-checked", String(active));
-    }
     if (strokeValue) strokeValue.textContent = `${width} px`;
   }
 
@@ -3205,7 +3206,7 @@ export function mountApp(root: HTMLElement): void {
   /** Each tool names its single size knob in its own words. */
   const SIZE_LABELS: Record<string, string> = {
     arrow: "Stroke",
-    rect: "Border",
+    shape: "Border",
     brush: "Brush size",
     bucket: "Spread",
     step: "Ring width",
@@ -3365,7 +3366,11 @@ export function mountApp(root: HTMLElement): void {
     shadowOpacityOut.textContent = `${opacity}%`;
     shadowOpacityInput.style.setProperty("--fill", `${opacity}%`);
 
-    shadowColorInput.value = splitColorAlpha(shadow.color).hex;
+    // Never write back into the colour input while the picker is open: setting
+    // `.value` mid-pick resets the dialog, which read as "the colour won't stick".
+    if (document.activeElement !== shadowColorInput) {
+      shadowColorInput.value = splitColorAlpha(shadow.color).hex;
+    }
     shadowPreview.style.boxShadow =
       `${shadow.offsetX}px ${shadow.offsetY}px ${shadow.blur}px ${shadow.color}`;
   }
@@ -3968,15 +3973,6 @@ export function mountApp(root: HTMLElement): void {
     btn.addEventListener("click", () => applyColor(btn.dataset.hex || DEFAULT_COLOR));
   }
 
-  strokesEl.innerHTML = STROKES.map(
-    (s) =>
-      `<button type="button" class="stroke" role="radio" data-width="${s.width}" aria-checked="false" aria-label="${s.label}" title="${s.label} — ${s.width}px"><span class="stroke-dot" style="--dot:${s.width}px"></span><span class="stroke-letter">${s.id}</span></button>`,
-  ).join("");
-
-  for (const btn of Array.from(strokesEl.querySelectorAll<HTMLButtonElement>(".stroke"))) {
-    btn.addEventListener("click", () => applyStroke(Number(btn.dataset.width)));
-  }
-
   customColorEl.addEventListener("input", () => applyColor(customColorEl.value, false));
   customColorEl.addEventListener("change", () => applyColor(customColorEl.value, false));
 
@@ -4011,6 +4007,19 @@ export function mountApp(root: HTMLElement): void {
     // Let the native range move, then push the snapped value through.
     window.setTimeout(() => applyToolSize(Number(toolSizeInput.value), false), 0);
   });
+
+  for (const btn of Array.from(shapePicker.querySelectorAll<HTMLButtonElement>("[data-shape]"))) {
+    btn.addEventListener("click", () => {
+      const api = editor as unknown as { setShapeKind?: (kind: string) => void };
+      try {
+        api.setShapeKind?.(btn.dataset.shape ?? "rect");
+      } catch (e) {
+        setStatus(`Shape failed: ${errText(e)}`, "error");
+        return;
+      }
+      paintShapePicker();
+    });
+  }
 
   shadowToggle.addEventListener("click", () => applyShadow({ enabled: !shadow.enabled }));
   shadowBlurInput.addEventListener("input", () =>
@@ -4117,9 +4126,23 @@ export function mountApp(root: HTMLElement): void {
     }
     paintToolSize(id);
     paintShadow();
+    paintShapePicker();
     // Blur runs its radius through the generic size slider when the editor has one.
     radiusField.hidden = !!sizeRange && id === "blur";
     propsEl.classList.toggle("is-contextless", spec.groups.length === 0 && !sizeRange);
+  }
+
+  /** Mirror the editor's Shapes outline into the picker. */
+  function paintShapePicker(): void {
+    const api = editor as unknown as { getShapeKind?: () => string };
+    const active = api.getShapeKind?.() ?? "rect";
+    for (const btn of Array.from(
+      shapePicker.querySelectorAll<HTMLButtonElement>("[data-shape]"),
+    )) {
+      const on = btn.dataset.shape === active;
+      btn.classList.toggle("is-active", on);
+      btn.setAttribute("aria-checked", String(on));
+    }
   }
 
   function selectTool(id: ShellToolId, announce = true): void {
@@ -4609,7 +4632,7 @@ export function mountApp(root: HTMLElement): void {
         c: "crop",
         a: "arrow",
         t: "text",
-        r: "rect",
+        r: "shape",
         b: "blur",
         p: "spotlight",
         h: "highlighter",

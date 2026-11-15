@@ -460,6 +460,8 @@ export interface ToolHost {
   sourceImage(): HTMLImageElement | HTMLCanvasElement | null;
   /** Top-left corner of that screenshot, in canvas (scene) coordinates. */
   imageOrigin(): { left: number; top: number };
+  /** Which outline the Shapes tool draws. */
+  shapeKind(): ShapeKind;
   /** Drop shadow applied to NEW arrow/rect/text/callout/step annotations. */
   shadow(): ShadowStyle;
 }
@@ -596,20 +598,31 @@ abstract class DragTool implements Tool {
   protected abstract abort(): void;
 }
 
-class RectTool extends DragTool {
-  readonly id: ToolId = "rect";
-  private shape: fabric.Rect | null = null;
+/** Shapes the Shapes tool can draw; the props rail sets this. */
+export type ShapeKind = "rect" | "ellipse" | "triangle" | "line" | "star";
+
+export const SHAPE_KINDS: readonly ShapeKind[] = ["rect", "ellipse", "triangle", "line", "star"];
+
+/** A 5-point star outline, normalised to a 96 x 91 unit box. */
+const STAR_PATH =
+  "M 50 0 L 61.8 34.5 L 98 34.5 L 68.7 56.5 L 79.4 91 L 50 69.4 L 20.6 91 L 31.3 56.5 L 2 34.5 L 38.2 34.5 Z";
+const STAR_WIDTH = 96;
+const STAR_HEIGHT = 91;
+
+/**
+ * One tool for every common annotation shape. `host.shapeKind()` decides what a
+ * drag draws; the outline/shadow styling is shared with the other shape tools.
+ */
+class ShapeTool extends DragTool {
+  readonly id: ToolId = "shape";
+  private shape: fabric.FabricObject | null = null;
 
   protected begin(point: Point): void {
-    const shape = new fabric.Rect({
+    const common = {
       left: point.x,
       top: point.y,
-      width: 1,
-      height: 1,
-      originX: "left",
-      originY: "top",
-      // Outline only: a transparent fill still casts a natural drop shadow from
-      // the stroke, and keeps the box untinted (no "highlight" look).
+      originX: "left" as const,
+      originY: "top" as const,
       fill: "transparent",
       stroke: this.host.color(),
       strokeWidth: this.host.strokeWidth(),
@@ -618,7 +631,25 @@ class RectTool extends DragTool {
       selectable: false,
       evented: false,
       objectCaching: false,
-    });
+    };
+
+    let shape: fabric.FabricObject;
+    switch (this.host.shapeKind()) {
+      case "ellipse":
+        shape = new fabric.Ellipse({ ...common, rx: 0.5, ry: 0.5 });
+        break;
+      case "triangle":
+        shape = new fabric.Triangle({ ...common, width: 1, height: 1 });
+        break;
+      case "line":
+        shape = new fabric.Line([point.x, point.y, point.x, point.y], common);
+        break;
+      case "star":
+        shape = new fabric.Path(STAR_PATH, { ...common, scaleX: 0.01, scaleY: 0.01 });
+        break;
+      default:
+        shape = new fabric.Rect({ ...common, width: 1, height: 1 });
+    }
     this.shape = shape;
     this.host.addObject(shape);
   }
@@ -627,12 +658,30 @@ class RectTool extends DragTool {
     const shape = this.shape;
     if (!shape) return;
     const box = normalizeBox(start, point);
-    shape.set({
-      left: box.left,
-      top: box.top,
-      width: Math.max(box.width, 1),
-      height: Math.max(box.height, 1),
-    });
+    if (shape instanceof fabric.Line) {
+      shape.set({ x1: start.x, y1: start.y, x2: point.x, y2: point.y });
+    } else if (shape instanceof fabric.Ellipse) {
+      shape.set({
+        left: box.left,
+        top: box.top,
+        rx: Math.max(box.width / 2, 0.5),
+        ry: Math.max(box.height / 2, 0.5),
+      });
+    } else if (shape instanceof fabric.Path) {
+      shape.set({
+        left: box.left,
+        top: box.top,
+        scaleX: Math.max(box.width, 1) / STAR_WIDTH,
+        scaleY: Math.max(box.height, 1) / STAR_HEIGHT,
+      });
+    } else {
+      shape.set({
+        left: box.left,
+        top: box.top,
+        width: Math.max(box.width, 1),
+        height: Math.max(box.height, 1),
+      });
+    }
     shape.setCoords();
   }
 
@@ -640,7 +689,11 @@ class RectTool extends DragTool {
     const shape = this.shape;
     this.shape = null;
     if (!shape) return;
-    if (Math.abs(end.x - start.x) < MIN_DRAG || Math.abs(end.y - start.y) < MIN_DRAG) {
+    const length =
+      shape instanceof fabric.Line
+        ? Math.hypot(end.x - start.x, end.y - start.y)
+        : Math.max(Math.abs(end.x - start.x), Math.abs(end.y - start.y));
+    if (length < MIN_DRAG) {
       this.host.removeObject(shape);
       return;
     }
@@ -1804,8 +1857,8 @@ export const createTool = (id: ToolId, host: ToolHost): Tool => {
       return new BrushTool(host);
     case "arrow":
       return new ArrowTool(host);
-    case "rect":
-      return new RectTool(host);
+    case "shape":
+      return new ShapeTool(host);
     case "blur":
       return new BlurTool(host);
     case "spotlight":

@@ -3,6 +3,11 @@
 All notable changes to Capicorn, newest first. Full release notes for every tag live on
 the [releases page](https://github.com/rostaddotcc/capicorn/releases).
 
+## v0.28.0
+- **Shapes tool** replaces the plain Box: pick rectangle, ellipse, triangle, line or star in the tool panel, then drag. Colour, width and shadow are shared with the other shape annotations.
+- **Shadow colour now sticks** — the colour input is no longer rewritten while the native picker is open, which made the choice look like it reset.
+- **Removed the S/M/L stroke presets**; the width slider is the only control.
+
 ## v0.27.1
 - **Quality gate in CI.** A new `quality` job runs `cargo fmt --check`, `cargo clippy -D warnings`, the Rust unit tests and `tsc --noEmit`; both platform builds now depend on it.
 - The whole Rust tree is **rustfmt-formatted** and **clippy-clean** (zero warnings).

@@ -18,15 +18,50 @@ landscape is fragmented — Flameshot does screenshots, Kooha/Cap do recording, 
 does everything but only on Windows. Nobody ships the whole *capture → annotate →
 share* flow in one lightweight app. Capicorn fills that gap.
 
-## Features (MVP)
+## Features
 
-- 📸 Full-screen capture via the desktop portal (Wayland-native, no hacks)
-- ✂️ In-editor region crop
-- 🖊️ Annotation tools: arrow, text, rectangle, blur/pixelate, step numbers
-- ↩️ Undo / redo
-- 📋 Copy to clipboard & 💾 save to PNG
-- 🎬 Screen recording (MP4/GIF) — *wave 2*
-- 📜 Scrolling capture + OCR + local-AI auto-redaction — *wave 3*
+**Capture**
+- Full screen, a selected region, a single window, or one monitor — via the desktop
+  portal on Wayland (no hacks, no root)
+- **Scrolling capture** — scroll the window by hand and Capicorn stitches the frames
+  into one tall image
+- **Screen recording** to MP4 or GIF, full screen or a region
+  (Linux: ScreenCast portal · Windows: ffmpeg `gdigrab`), with an on-screen timer
+- Capture timer (off / 3 / 5 / 10 s) and a `PrintScreen` shortcut
+
+**Annotate** (Fabric.js, native resolution)
+- 13 tools: select, crop, arrow, text, rectangle, **true Gaussian blur** / pixelate /
+  blackout, spotlight, highlighter, callout, step numbers, magnify, brush, fill bucket
+- Shadows, colours, stroke width, and per-tool sizes with a live brush-size preview
+- Four bundled OFL fonts (Inter, Source Serif 4, JetBrains Mono, Caveat) with
+  size / bold / italic, plus reusable style presets
+- Undo / redo, in-editor crop, delete the selected annotation with `Delete`
+
+**Share**
+- Copy to clipboard · save as PNG / JPEG / WebP (with quality) · **Save As…**
+- Auto-save on capture, custom filename patterns (`{date}`, `{time}`, `{datetime}`)
+- **OCR** — extract text from a capture (English / Swedish) via the system `tesseract`
+- Recent-captures filmstrip
+
+**Desktop integration**
+- System tray, minimise-to-tray, and a collapsible floating capture widget ("flärp")
+- Global hotkeys via the Wayland GlobalShortcuts portal (KDE)
+- Light / dark themes, and a "save before closing?" guard
+
+## Shortcuts
+
+| Key | Action |
+|-----|--------|
+| `PrintScreen` | Capture full screen |
+| `Shift` + `PrintScreen` | Capture a region |
+| `Ctrl` / `Cmd` + `Z` | Undo |
+| `Ctrl` / `Cmd` + `Shift` + `Z` · `Ctrl` + `Y` | Redo |
+| `Ctrl` / `Cmd` + `C` | Copy to clipboard |
+| `Ctrl` / `Cmd` + `S` | Save |
+| `Ctrl` / `Cmd` + `Shift` + `S` | Save As… |
+| `Ctrl` / `Cmd` + `,` | Settings |
+| `Delete` / `Backspace` | Delete the selected annotation |
+| `Esc` | Cancel / deselect / close |
 
 ## Tech stack
 

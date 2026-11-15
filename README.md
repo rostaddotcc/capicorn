@@ -6,10 +6,11 @@ Capicorn is a clean-room, cross-platform reimplementation of the Snagit workflow
 **capture → annotate → share in under ten seconds.** Built with Rust + Tauri, in the
 spirit of the ArtCraft project (open-source clones of proprietary creative tools).
 
-> Status: **alpha.** Linux (Wayland/X11) is the primary, most complete target. A
-> Windows build is produced by CI with the same feature set (screenshots, editor,
-> export, clipboard, tray, recording via ffmpeg `gdigrab`). Scrolling capture and
-> global hotkeys are Linux-only for now (Wayland portal).
+> Status: **alpha, Linux-first.** Linux (Wayland/X11) is the primary target and the only
+> platform tested end-to-end. The **Windows `.exe` is untested** — CI builds it from the
+> same cross-platform code (screenshots, editor, export, clipboard, tray, recording via
+> ffmpeg `gdigrab`), but nobody has run it on real Windows hardware, so treat it as
+> experimental. Scrolling capture and global hotkeys are Linux-only for now.
 
 ## Why
 
@@ -76,15 +77,19 @@ share* flow in one lightweight app. Capicorn fills that gap.
 
 ## Platforms
 
-| Feature | Linux (Wayland/X11) | Windows |
-|---------|--------------------|---------|
-| Screenshot (full / region / window) | ✅ portal + `xcap` | ✅ `xcap` |
-| Editor (annotations, blur, shadows, fonts) | ✅ | ✅ |
-| Copy / save (PNG / JPEG / WebP) | ✅ | ✅ |
-| System tray + floating widget | ✅ | ✅ |
-| Screen recording | ✅ ScreenCast portal (needs `ffmpeg`) | ✅ ffmpeg `gdigrab` (needs `ffmpeg`) |
+| Feature | Linux (Wayland/X11) — tested | Windows — untested |
+|---------|------------------------------|--------------------|
+| Screenshot (full / region / window) | ✅ portal + `xcap` | ⚠️ `xcap` |
+| Editor (annotations, blur, shadows, fonts) | ✅ | ⚠️ |
+| Copy / save (PNG / JPEG / WebP) | ✅ | ⚠️ |
+| System tray + floating widget | ✅ | ⚠️ |
+| Screen recording | ✅ ScreenCast portal (needs `ffmpeg`) | ⚠️ ffmpeg `gdigrab` (needs `ffmpeg`) |
 | Scrolling capture | ✅ | 🔜 |
 | Global hotkeys | ✅ GlobalShortcuts portal | 🔜 |
+
+> **Windows is compile-verified only.** The `.exe` is built by CI from the same code but
+> has not been run on real hardware — **Linux is the focus.** Windows test reports are
+> welcome, but expect rough edges.
 
 ## Recording troubleshooting
 

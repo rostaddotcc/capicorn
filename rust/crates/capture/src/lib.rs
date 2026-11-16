@@ -16,7 +16,11 @@
 //! Every portal interaction is bounded: a locked or unresponsive session must
 //! surface as [`CaptureError::Timeout`], never as a hung UI thread.
 
+pub mod scrolling;
 pub mod timelapse;
+
+/// The scrolling-capture entry points, re-exported for the app layer.
+pub use scrolling::{ScrollConfig, ScrollEvent, ScrollHandle, spawn_scrolling};
 
 use std::path::PathBuf;
 use std::time::Duration;

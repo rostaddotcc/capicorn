@@ -9,6 +9,8 @@ publish = false
 
 [dependencies]
 snagcraft-raster = { path = "../raster" }
+# The locked scrolling contract takes the region as a `snagcraft_geom::Rect`.
+snagcraft-geom = { path = "../geom" }
 thiserror.workspace = true
 tracing.workspace = true
 image.workspace = true
@@ -16,6 +18,7 @@ image.workspace = true
 [target.'cfg(target_os = "linux")'.dependencies]
 ashpd = { workspace = true }
 tokio = { workspace = true }
+pipewire.workspace = true
 
 [target.'cfg(not(target_os = "linux"))'.dependencies]
 xcap = { workspace = true }

@@ -89,7 +89,7 @@ share* flow in one lightweight app. SnagCraft fills that gap.
 | `Ctrl` / `Cmd` + `Shift` + `Z` · `Ctrl` + `Y` | Redo |
 | `Ctrl` / `Cmd` + `C` | Copy to clipboard |
 | `Ctrl` / `Cmd` + scroll | Zoom in / out |
-| `V` `R` `A` `T` `B` `P` `H` `S` `M` `E` `K` | Tool shortcuts (Select, Box, Arrow, Text, Blur…) |
+| `V` `C` `A` `T` `R` `B` `E` `G` `L` `H` `K` `S` `M` | Tools: Select, Crop, Arrow, Text, Shapes, Blur, Brush, Fill, Spotlight, Highlighter, Callout, Step, Magnify |
 | `Ctrl` / `Cmd` + `S` | Save |
 | `Ctrl` / `Cmd` + `Shift` + `S` | Save As… |
 | `Ctrl` / `Cmd` + `,` | Settings |

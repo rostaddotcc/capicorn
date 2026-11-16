@@ -268,7 +268,7 @@ const TOOLS: ReadonlyArray<{ id: ShellToolId; label: string; hint: string; icon:
   {
     id: "brush",
     label: "Brush",
-    hint: "Freehand pen — size sets the nib",
+    hint: "Freehand pen — size sets the nib (E)",
     icon: icon(
       `<path d="M2.9 13.1l.8-3 6.9-6.9 2.2 2.2-6.9 6.9z"/><path d="M9.4 4.3 11.6 6.5"/><path d="M2.6 13.4h3.2"/>`,
     ),
@@ -908,7 +908,7 @@ export function mountApp(root: HTMLElement): void {
       <section class="stage" aria-label="Capture canvas">
       <div class="editor-shell" id="editor"></div>
       <div class="empty-state" id="empty">
-        <span class="empty-mark" aria-hidden="true">✦</span>
+        <span class="empty-mark" aria-hidden="true">${ICONS.capture}</span>
         <p class="empty-title">No capture yet</p>
         <p class="empty-text">Press <kbd>PrintScreen</kbd> for the full screen, <span class="key-pair"><kbd>Shift</kbd><kbd>PrintScreen</kbd></span> for a region — or pick a mode from <strong>Capture</strong>.</p>
         <p class="empty-note">Captures are saved to your save folder automatically — switch that off in Settings → General.</p>
@@ -1192,8 +1192,20 @@ export function mountApp(root: HTMLElement): void {
             <div><dt><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Z</kbd> · <kbd>Ctrl</kbd> + <kbd>Y</kbd></dt><dd>Redo</dd></div>
             <div><dt><kbd>Ctrl</kbd> + <kbd>C</kbd></dt><dd>Copy to clipboard</dd></div>
             <div><dt><kbd>Ctrl</kbd> + <kbd>V</kbd></dt><dd>Paste an image to annotate</dd></div>
-            <div><dt><kbd>Ctrl</kbd> + scroll</dt><dd>Zoom in / out</dd></div>
-            <div><dt><kbd>V</kbd> <kbd>R</kbd> <kbd>A</kbd> <kbd>T</kbd> <kbd>B</kbd> <kbd>P</kbd> <kbd>H</kbd> <kbd>S</kbd> <kbd>M</kbd> <kbd>E</kbd> <kbd>K</kbd></dt><dd>Tool shortcuts</dd></div>
+            <div><dt><kbd>Ctrl</kbd> + <kbd>scroll</kbd></dt><dd>Zoom in / out</dd></div>
+            <div><dt><kbd>V</kbd></dt><dd>Select tool</dd></div>
+            <div><dt><kbd>C</kbd></dt><dd>Crop tool</dd></div>
+            <div><dt><kbd>A</kbd></dt><dd>Arrow tool</dd></div>
+            <div><dt><kbd>T</kbd></dt><dd>Text tool</dd></div>
+            <div><dt><kbd>R</kbd></dt><dd>Shapes tool</dd></div>
+            <div><dt><kbd>B</kbd></dt><dd>Blur tool</dd></div>
+            <div><dt><kbd>E</kbd></dt><dd>Brush tool</dd></div>
+            <div><dt><kbd>G</kbd></dt><dd>Fill bucket tool</dd></div>
+            <div><dt><kbd>L</kbd></dt><dd>Spotlight tool</dd></div>
+            <div><dt><kbd>H</kbd></dt><dd>Highlighter tool</dd></div>
+            <div><dt><kbd>K</kbd></dt><dd>Callout tool</dd></div>
+            <div><dt><kbd>S</kbd></dt><dd>Step numbers tool</dd></div>
+            <div><dt><kbd>M</kbd></dt><dd>Magnify tool</dd></div>
             <div><dt><kbd>Ctrl</kbd> + <kbd>S</kbd></dt><dd>Save</dd></div>
             <div><dt><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>S</kbd></dt><dd>Save As…</dd></div>
             <div><dt><kbd>Ctrl</kbd> + <kbd>,</kbd></dt><dd>Settings</dd></div>
@@ -4472,7 +4484,10 @@ export function mountApp(root: HTMLElement): void {
   const fileMenu = createMenu(fileWrapEl, fileMenuEl, fileBtn);
   const syncFileMenu = (): void => {
     const widgetItem = fileMenuEl.querySelector<HTMLButtonElement>('[data-file="widget"]');
-    if (widgetItem) widgetItem.setAttribute("aria-checked", String(settings.widget));
+    if (widgetItem) {
+      widgetItem.setAttribute("aria-checked", String(settings.widget));
+      widgetItem.classList.toggle("is-active", settings.widget);
+    }
     for (const id of ["save", "save-as", "copy"]) {
       const el = fileMenuEl.querySelector<HTMLButtonElement>(`[data-file="${id}"]`);
       if (el) el.disabled = !hasImage;
@@ -4934,11 +4949,12 @@ export function mountApp(root: HTMLElement): void {
         t: "text",
         r: "shape",
         b: "blur",
-        p: "spotlight",
-        h: "highlighter",
-        s: "step",
         e: "brush",
-        k: "bucket",
+        g: "bucket",
+        l: "spotlight",
+        h: "highlighter",
+        k: "callout",
+        s: "step",
         m: "magnify",
       };
       const tool = toolShortcuts[ev.key.toLowerCase()];

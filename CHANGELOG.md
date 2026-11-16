@@ -3,6 +3,23 @@
 All notable changes to SnagCraft, newest first. Full release notes for every tag live on
 the [releases page](https://github.com/rostaddotcc/snagcraft/releases).
 
+## v1.3.2
+- **Tool shortcuts fixed.** The keys promised in the tooltips now actually work: `G` fill
+  bucket, `L` spotlight, `K` callout (previously unmapped!), `E` brush — the handler had
+  drifted from the documented keys. All 13 tools have a shortcut.
+- **Complete shortcuts sheet.** The overlay lists every tool as its own letter→tool row
+  (no more unmapped letter soup), descriptions left-aligned in a consistent column with
+  full-contrast text. README table matches.
+- **Classic native menus.** Accelerators are plain right-aligned text (no keycap boxes),
+  the empty Upload… keycap is gone, About shows a plain version string, and toggle/radio
+  checks sit in a proper LEFT gutter — the Floating widget checkmark actually renders now
+  (it never did: the state class was missing).
+- **Empty state grows up.** The AI-sparkle glyph is replaced by a neutral monitor icon.
+- **Settings polish.** Helper texts raised to readable contrast, section radii unified.
+- **CI fix.** The release-attach job uploads artifact files, not their bundle subdirs
+  (first run failed on `artifacts/deb: is a directory`); v1.3.1's Windows installers were
+  backfilled onto its release.
+
 ## v1.3.1
 - **Classic icon toolbar.** The annotation tools are now compact icon buttons on a single
   row at every desktop width — names live in the tooltips, the properties rail and the

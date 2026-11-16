@@ -669,12 +669,17 @@ kbd {
   height: 44px;
   margin-bottom: 10px;
   border: 1px solid var(--border);
-  border-radius: 9px;
+  border-radius: 8px;
   background: var(--surface);
-  color: var(--accent);
+  color: var(--fg-muted);
   font-size: 18px;
   line-height: 1;
   box-shadow: var(--shadow-sm);
+}
+
+.empty-mark svg {
+  width: 22px;
+  height: 22px;
 }
 
 .empty-title {
@@ -934,7 +939,9 @@ kbd {
 
 .menu-item {
   display: grid;
-  grid-template-columns: 18px minmax(0, 1fr) 16px auto;
+  /* Classic check gutter: check | icon | label | accelerator. The DOM order
+     is icon/label/check/key — explicit placement puts the check first. */
+  grid-template-columns: 14px 18px minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
   width: 100%;
@@ -947,6 +954,28 @@ kbd {
   text-align: left;
   white-space: nowrap;
   transition: background-color 120ms var(--ease), color 120ms var(--ease);
+}
+
+.menu-item .menu-check {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.menu-item .menu-icon {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.menu-item .menu-label {
+  grid-column: 3;
+  grid-row: 1;
+}
+
+.menu-item .menu-key,
+.menu-item .menu-keys,
+.menu-item .menu-key-space {
+  grid-column: 4;
+  grid-row: 1;
 }
 
 .menu-item:hover {
@@ -1009,12 +1038,19 @@ kbd {
 .menu-key,
 .menu-keys kbd {
   justify-self: end;
-  font-size: 10px;
+  font-size: 11px;
   line-height: 1.4;
-  padding: 1px 6px;
+  padding: 0;
   color: var(--fg-muted);
   background: transparent;
-  border-color: var(--border);
+  border: 0;
+  border-radius: 0;
+}
+
+/* Classic menus show accelerators as plain text; an item without a shortcut
+   (Upload…) must not render an empty keycap box. */
+.menu-key:empty {
+  display: none;
 }
 
 .menu-keys {
@@ -1399,7 +1435,7 @@ kbd {
 .setting {
   padding: 13px 14px;
   border: 1px solid var(--border);
-  border-radius: 9px;
+  border-radius: var(--radius-lg);
   background: var(--surface-soft);
   transition: background-color 160ms var(--ease), border-color 160ms var(--ease);
 }
@@ -1416,7 +1452,7 @@ kbd {
   margin: 3px 0 10px;
   font-size: 11.5px;
   line-height: 1.45;
-  color: var(--fg-subtle);
+  color: var(--fg-muted);
 }
 
 .dir-row {
@@ -2119,7 +2155,7 @@ kbd {
 .setting-sub {
   font-size: 11.5px;
   line-height: 1.45;
-  color: var(--fg-subtle);
+  color: var(--fg-muted);
 }
 
 /* Toggle switch (minimize-to-tray) */
@@ -4582,9 +4618,9 @@ kbd {
 }
 
 .shortcut-list > div {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(150px, 46%) 1fr;
   align-items: center;
-  justify-content: space-between;
   gap: 16px;
   padding: 7px 0;
   border-bottom: 1px solid var(--border);
@@ -4604,9 +4640,9 @@ kbd {
 
 .shortcut-list dd {
   margin: 0;
-  color: var(--fg-muted);
+  color: var(--fg);
   font-size: 12.5px;
-  text-align: right;
+  text-align: left;
 }
 
 /* File menu (top-left quick actions) */

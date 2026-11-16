@@ -52,6 +52,15 @@ pub struct Session {
     /// Running timelapse (W4c): handle + event channel, drained by timelapse.poll.
     timelapse: Option<snagcraft_capture::timelapse::TimelapseHandle>,
     timelapse_rx: Option<std::sync::mpsc::Receiver<snagcraft_capture::timelapse::TimelapseEvent>>,
+    /// Running scrolling capture (W4b). spawn_scrolling blocks through the share
+    /// dialog, so it runs on a thread; the handle arrives via scroll_start_rx.
+    scroll: Option<snagcraft_capture::scrolling::ScrollHandle>,
+    scroll_rx: Option<std::sync::mpsc::Receiver<snagcraft_capture::scrolling::ScrollEvent>>,
+    scroll_start_rx: Option<
+        std::sync::mpsc::Receiver<
+            Result<snagcraft_capture::scrolling::ScrollHandle, snagcraft_capture::CaptureError>,
+        >,
+    >,
 }
 
 impl Default for Session {
@@ -78,6 +87,9 @@ impl Session {
             settings: snagcraft_io::settings::load(),
             timelapse: None,
             timelapse_rx: None,
+            scroll: None,
+            scroll_rx: None,
+            scroll_start_rx: None,
         }
     }
 
@@ -411,6 +423,93 @@ fn cmd_timelapse_poll(s: &mut Session, _p: Value) -> Result<Value, CommandError>
         }
     }
     Ok(json!({"events": events, "running": s.timelapse.is_some()}))
+}
+
+fn cmd_scroll_start(s: &mut Session, p: Value) -> Result<Value, CommandError> {
+    if s.scroll.is_some() || s.scroll_start_rx.is_some() {
+        return Err(CommandError::InvalidParams(
+            "scrolling capture already running".into(),
+        ));
+    }
+    let rect = p_rect(&p, "region")?;
+    let max_height = p.get("max_height").and_then(Value::as_u64).unwrap_or(40000) as u32;
+    let output = p_str(&p, "output")?;
+    let config = snagcraft_capture::scrolling::ScrollConfig {
+        region: rect,
+        max_height,
+        output: std::path::PathBuf::from(output),
+    };
+    let (tx, rx) = std::sync::mpsc::channel();
+    let (htx, hrx) = std::sync::mpsc::channel();
+    // spawn_scrolling blocks through the OS share dialog — never on the UI thread.
+    std::thread::spawn(move || {
+        let _ = htx.send(snagcraft_capture::scrolling::spawn_scrolling(config, tx));
+    });
+    s.scroll_rx = Some(rx);
+    s.scroll_start_rx = Some(hrx);
+    Ok(json!({"starting": true}))
+}
+
+fn cmd_scroll_stop(s: &mut Session, _p: Value) -> Result<Value, CommandError> {
+    match s.scroll.take() {
+        Some(h) => {
+            h.stop(); // graceful: stitches + saves what it has, then Done
+            Ok(json!({"stopped": true}))
+        }
+        None => Ok(json!({"stopped": false, "starting": s.scroll_start_rx.is_some()})),
+    }
+}
+
+fn cmd_scroll_poll(s: &mut Session, _p: Value) -> Result<Value, CommandError> {
+    let mut events = Vec::new();
+    if let Some(hrx) = &s.scroll_start_rx {
+        match hrx.try_recv() {
+            Ok(Ok(handle)) => {
+                s.scroll = Some(handle);
+                s.scroll_start_rx = None;
+                events.push(json!({"type": "started"}));
+            }
+            Ok(Err(e)) => {
+                s.scroll_start_rx = None;
+                s.scroll_rx = None;
+                events.push(json!({"type": "failed", "message": e.to_string()}));
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {}
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                s.scroll_start_rx = None;
+            }
+        }
+    }
+    if let Some(rx) = &s.scroll_rx {
+        while let Ok(ev) = rx.try_recv() {
+            let j = match ev {
+                snagcraft_capture::scrolling::ScrollEvent::Captured {
+                    index,
+                    total_height,
+                } => {
+                    json!({"type": "captured", "index": index, "total_height": total_height})
+                }
+                snagcraft_capture::scrolling::ScrollEvent::Done {
+                    path,
+                    width,
+                    height,
+                } => {
+                    s.scroll = None;
+                    json!({"type": "done", "path": path.to_string_lossy(), "width": width, "height": height})
+                }
+                snagcraft_capture::scrolling::ScrollEvent::Failed(msg) => {
+                    s.scroll = None;
+                    json!({"type": "failed", "message": msg})
+                }
+                snagcraft_capture::scrolling::ScrollEvent::Stopped => {
+                    s.scroll = None;
+                    json!({"type": "stopped"})
+                }
+            };
+            events.push(j);
+        }
+    }
+    Ok(json!({"events": events, "running": s.scroll.is_some() || s.scroll_start_rx.is_some()}))
 }
 
 fn cmd_edit_add(s: &mut Session, p: Value) -> Result<Value, CommandError> {
@@ -794,6 +893,24 @@ pub fn registry() -> Vec<CommandSpec> {
             run: cmd_timelapse_poll,
         },
         CommandSpec {
+            id: "scroll.start",
+            label: "Start scrolling capture",
+            params_doc: "{region:{x,y,w,h}, max_height?, output}",
+            run: cmd_scroll_start,
+        },
+        CommandSpec {
+            id: "scroll.stop",
+            label: "Stop scrolling capture (stitch + save)",
+            params_doc: "{}",
+            run: cmd_scroll_stop,
+        },
+        CommandSpec {
+            id: "scroll.poll",
+            label: "Drain scrolling capture events",
+            params_doc: "{}",
+            run: cmd_scroll_poll,
+        },
+        CommandSpec {
             id: "edit.undo",
             label: "Undo",
             params_doc: "{}",
@@ -1165,6 +1282,34 @@ mod tests {
         );
         // top-left untouched
         assert_eq!(a.get_pixel(5, 5), b.get_pixel(5, 5));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn scroll_commands_headless() {
+        let mut s = Session::new();
+        let stop = s.dispatch("scroll.stop", json!({})).unwrap();
+        assert_eq!(stop["stopped"], false);
+        // missing region → error before any thread
+        assert!(
+            s.dispatch("scroll.start", json!({"output": "/tmp/x.png"}))
+                .is_err()
+        );
+        // valid config: start returns immediately (spawn blocks on the share
+        // dialog in its thread — on a locked host it waits for the portal
+        // timeout, so do NOT assert termination here).
+        let dir = std::env::temp_dir().join("snagcraft-scroll-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let out = dir.join("scroll.png");
+        let r = s.dispatch("scroll.start", json!({"region": {"x": 0.0, "y": 0.0, "w": 200.0, "h": 200.0}, "output": out.to_str().unwrap()})).unwrap();
+        assert_eq!(r["starting"], true);
+        // double-start rejected while pending
+        assert!(s.dispatch("scroll.start", json!({"region": {"x": 0.0, "y": 0.0, "w": 200.0, "h": 200.0}, "output": out.to_str().unwrap()})).is_err());
+        let p = s.dispatch("scroll.poll", json!({})).unwrap();
+        assert!(p["running"].as_bool().unwrap_or(false));
+        let stop = s.dispatch("scroll.stop", json!({})).unwrap();
+        assert_eq!(stop["stopped"], false); // handle not arrived yet
+        assert_eq!(stop["starting"], true);
         std::fs::remove_dir_all(&dir).ok();
     }
 

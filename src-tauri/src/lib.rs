@@ -99,10 +99,10 @@ pub fn run() {
             // carry on. `tray::is_available()` then keeps close-to-tray disabled
             // so the window can never hide with no way back.
             if let Err(err) = tray::init_tray(app) {
-                eprintln!("capicorn: system tray unavailable ({err}); continuing without it");
+                eprintln!("snagcraft: system tray unavailable ({err}); continuing without it");
             }
             Ok(())
         })
         .run(tauri::generate_context!())
-        .expect("error while running Capicorn");
+        .expect("error while running SnagCraft");
 }

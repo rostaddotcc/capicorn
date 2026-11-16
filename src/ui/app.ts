@@ -1,4 +1,4 @@
-// Capicorn app shell — top bar, annotation toolbar, editor stage, status line.
+// SnagCraft app shell — top bar, annotation toolbar, editor stage, status line.
 // Talks to the locked Editor API and the locked Tauri command set only.
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -397,22 +397,22 @@ const DEFAULT_COLOR = "#ff3b30";
 const DEFAULT_STROKE = 3;
 const DEFAULT_FONT = "Inter";
 const DEFAULT_SIZE = 32;
-const MODE_KEY = "capicorn:capture-mode";
-const REC_MODE_KEY = "capicorn:rec-mode";
-const INK_KEY = "capicorn:ink-color";
-const STROKE_KEY = "capicorn:stroke-width";
-const DIR_KEY = "capicorn:save-dir";
-const FONT_KEY = "capicorn:font-family";
-const SIZE_KEY = "capicorn:font-size";
-const BOLD_KEY = "capicorn:text-bold";
-const ITALIC_KEY = "capicorn:text-italic";
-const BLUR_MODE_KEY = "capicorn:blur-mode";
-const BLUR_RADIUS_KEY = "capicorn:blur-radius";
+const MODE_KEY = "snagcraft:capture-mode";
+const REC_MODE_KEY = "snagcraft:rec-mode";
+const INK_KEY = "snagcraft:ink-color";
+const STROKE_KEY = "snagcraft:stroke-width";
+const DIR_KEY = "snagcraft:save-dir";
+const FONT_KEY = "snagcraft:font-family";
+const SIZE_KEY = "snagcraft:font-size";
+const BOLD_KEY = "snagcraft:text-bold";
+const ITALIC_KEY = "snagcraft:text-italic";
+const BLUR_MODE_KEY = "snagcraft:blur-mode";
+const BLUR_RADIUS_KEY = "snagcraft:blur-radius";
 const DEFAULT_BLUR_MODE: BlurMode = "gaussian";
 const DEFAULT_BLUR_RADIUS = 12;
 const MIN_BLUR_RADIUS = 2;
 const MAX_BLUR_RADIUS = 60;
-const SHADOW_KEY = "capicorn:shadow";
+const SHADOW_KEY = "snagcraft:shadow";
 const MIN_SHADOW_BLUR = 0;
 const MAX_SHADOW_BLUR = 60;
 const MIN_SHADOW_OFFSET = -50;
@@ -631,9 +631,9 @@ const withAlpha = (hex: string, alpha: number): string => {
 
 /* ------------------------------------------------- new: presets / recents */
 
-const PRESETS_KEY = "capicorn:presets";
-const FILM_KEY = "capicorn:filmstrip-open";
-const OCR_LANG_KEY = "capicorn:ocr-lang";
+const PRESETS_KEY = "snagcraft:presets";
+const FILM_KEY = "snagcraft:filmstrip-open";
+const OCR_LANG_KEY = "snagcraft:ocr-lang";
 const RECENT_LIMIT = 12;
 
 type OcrLang = "eng" | "swe";
@@ -807,7 +807,7 @@ export function mountApp(root: HTMLElement): void {
               <span class="menu-key-space" aria-hidden="true"></span>
             </button>
             <div class="menu-sep" role="separator" aria-hidden="true"></div>
-            <button type="button" class="menu-item" role="menuitemradio" data-mode="scrolling" aria-checked="false" title="Select a region, then scroll the page yourself — Capicorn stitches it into one tall image">
+            <button type="button" class="menu-item" role="menuitemradio" data-mode="scrolling" aria-checked="false" title="Select a region, then scroll the page yourself — SnagCraft stitches it into one tall image">
               <span class="menu-icon">${ICONS.scrolling}</span>
               <span class="menu-label">Scrolling capture</span>
               <span class="menu-check">${ICONS.check}</span>
@@ -1105,7 +1105,7 @@ export function mountApp(root: HTMLElement): void {
           </div>
         </header>
         <div class="modal-body guard-body">
-          <p class="guard-swatch"><span class="guard-dot" aria-hidden="true"></span><span id="guard-file">Capicorn capture</span></p>
+          <p class="guard-swatch"><span class="guard-dot" aria-hidden="true"></span><span id="guard-file">SnagCraft capture</span></p>
         </div>
         <footer class="modal-foot guard-foot">
           <button type="button" class="btn-secondary" id="guard-cancel">Cancel</button>
@@ -1129,7 +1129,7 @@ export function mountApp(root: HTMLElement): void {
           <span class="about-mark" aria-hidden="true"><svg viewBox="0 0 32 32" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M17.6 9.3 C 22.2 9.4 26 11.9 27.4 15.6 C 28 17.4 28.1 19.1 27.4 20.4 C 26.6 21.9 24.9 22.5 23.2 21.9 C 21.6 22.5 20.4 23.9 19.8 25.9 L 19.3 28.7 L 10.5 28.7 C 10.3 24.5 10.2 20.3 11.4 16.3 C 12.3 13.3 14.5 10.7 17.6 9.3 Z M 22.5 16.1 a 1.1 1.1 0 1 1 -2.2 0 a 1.1 1.1 0 1 1 2.2 0 Z" /><path d="M13.4 10.2 C 12.7 8.1 12.4 6.2 12.7 4.9 C 14.1 6.5 15.6 8.0 16.7 9.2 Z" /><path d="M17.9 9.5 L22.4 1.9 L20.1 10.4 Z" /></svg></span>
           <p class="about-version" id="about-version">—</p>
           <p class="about-meta">Open-source screen capture and recording.</p>
-          <p class="about-meta about-repo">github.com/rostaddotcc/capicorn</p>
+          <p class="about-meta about-repo">github.com/rostaddotcc/snagcraft</p>
           <p class="about-meta about-license">MIT licensed</p>
         </div>
       </div>
@@ -1534,7 +1534,7 @@ export function mountApp(root: HTMLElement): void {
         panel?.refresh();
         setStatus("Minimize to tray is not available in this build.", "error");
       });
-      if (!opts.silent) setStatus(enabled ? "Closing minimizes Capicorn to the tray" : "Closing quits Capicorn");
+      if (!opts.silent) setStatus(enabled ? "Closing minimizes SnagCraft to the tray" : "Closing quits SnagCraft");
       panel?.refresh();
       return;
     }
@@ -2193,9 +2193,9 @@ export function mountApp(root: HTMLElement): void {
     setStatus(next ? "Recording paused" : "Recording resumed", next ? "info" : "recording");
   }
 
-  /** Filename the backend writes: Capicorn-<date>-<time>.<mp4|gif>. */
+  /** Filename the backend writes: SnagCraft-<date>-<time>.<mp4|gif>. */
   const recordingFilename = (): string =>
-    `Capicorn-${expandPattern("{date}-{time}").replace(/\s+/g, "-")}.${settings.recFormat}`;
+    `SnagCraft-${expandPattern("{date}-{time}").replace(/\s+/g, "-")}.${settings.recFormat}`;
 
   /** Fullscreen frozen screenshot + drag box — the region selector used by capture. */
   async function pickRecordingRegion(): Promise<Box | null> {
@@ -2308,7 +2308,7 @@ export function mountApp(root: HTMLElement): void {
         setStatus("Recording cancelled — no screen was picked.");
       } else {
         setStatus(
-          `Could not start recording: ${message} — see ~/.cache/capicorn-portal.log for details`,
+          `Could not start recording: ${message} — see ~/.cache/snagcraft-portal.log for details`,
           "error",
         );
       }
@@ -2662,12 +2662,12 @@ export function mountApp(root: HTMLElement): void {
 
   /**
    * Shot filename: the user's own pattern plus the sequence number. The fixed
-   * `Capicorn-interval-` prefix is what the timelapse glob matches, and a
-   * leading "Capicorn-" in the pattern is folded into it instead of repeated.
+   * `SnagCraft-interval-` prefix is what the timelapse glob matches, and a
+   * leading "SnagCraft-" in the pattern is folded into it instead of repeated.
    */
   function intervalFilename(date: Date, seq: number): string {
-    const expanded = expandPattern(settings.filename, date).replace(/^capicorn[-_ ]/i, "");
-    return `Capicorn-interval-${expanded}-${pad4(seq)}.png`;
+    const expanded = expandPattern(settings.filename, date).replace(/^snagcraft[-_ ]/i, "");
+    return `SnagCraft-interval-${expanded}-${pad4(seq)}.png`;
   }
 
   /** Tiny stateful card for the loop; the widget repaints from the shell. */
@@ -2853,12 +2853,12 @@ export function mountApp(root: HTMLElement): void {
     );
     if (!run.timelapse) return;
 
-    const out = joinPath(dir, `Capicorn-timelapse-${expandPattern("{date}-{time}")}.mp4`);
+    const out = joinPath(dir, `SnagCraft-timelapse-${expandPattern("{date}-{time}")}.mp4`);
     setStatus(`Building a timelapse from ${run.shots} shots…`);
     try {
       const saved = await invoke<string>("make_timelapse", {
         dir,
-        pattern: "Capicorn-interval-*.png",
+        pattern: "SnagCraft-interval-*.png",
         fps: 10,
         out,
       });
@@ -4389,7 +4389,7 @@ export function mountApp(root: HTMLElement): void {
   };
   document.addEventListener("pointerdown", onDocPointerDown);
 
-  editorEl.addEventListener("capicorn:change", (ev) => {
+  editorEl.addEventListener("snagcraft:change", (ev) => {
     const detail = (ev as CustomEvent<ChangeDetail>).detail;
     const canUndo = typeof detail?.canUndo === "boolean" ? detail.canUndo : editor.canUndo();
     const canRedo = typeof detail?.canRedo === "boolean" ? detail.canRedo : editor.canRedo();
@@ -4770,7 +4770,7 @@ export function mountApp(root: HTMLElement): void {
 
   /* ------------------------------------------------------------------ init */
 
-  // Shadow first: every setter below notifies capicorn:change, whose
+  // Shadow first: every setter below notifies snagcraft:change, whose
   // syncShadowFromEditor() would otherwise adopt the editor's default shadow
   // and quietly wipe what the rail remembered from last session.
   try {

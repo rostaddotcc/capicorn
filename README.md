@@ -1,8 +1,8 @@
-# Capicorn ✦
+# SnagCraft ✦
 
 **Open-source Snagit-style screen capture & annotation.** Screenshot, mark up, record — without the subscription.
 
-Capicorn is a clean-room, cross-platform reimplementation of the Snagit workflow:
+SnagCraft is a clean-room, cross-platform reimplementation of the Snagit workflow:
 **capture → annotate → share in under ten seconds.** Built with Rust + Tauri, in the
 spirit of the ArtCraft project (open-source clones of proprietary creative tools).
 
@@ -17,14 +17,14 @@ spirit of the ArtCraft project (open-source clones of proprietary creative tools
 Snagit is excellent but proprietary, paid, and has no Linux build. The open-source
 landscape is fragmented — Flameshot does screenshots, Kooha/Cap do recording, ShareX
 does everything but only on Windows. Nobody ships the whole *capture → annotate →
-share* flow in one lightweight app. Capicorn fills that gap.
+share* flow in one lightweight app. SnagCraft fills that gap.
 
 ## Features
 
 **Capture**
 - Full screen, a selected region, a single window, or one monitor — via the desktop
   portal on Wayland (no hacks, no root)
-- **Scrolling capture** — scroll the window by hand and Capicorn stitches the frames
+- **Scrolling capture** — scroll the window by hand and SnagCraft stitches the frames
   into one tall image
 - **Screen recording** to MP4 or GIF — full screen, a region or a picked window
   (Linux: ScreenCast portal · Windows: ffmpeg `gdigrab`), with an on-screen timer,
@@ -108,8 +108,8 @@ share* flow in one lightweight app. Capicorn fills that gap.
 ## Recording troubleshooting
 
 Linux recording uses the xdg-desktop-portal ScreenCast API and needs `ffmpeg` on
-`PATH`. If a take fails to start, Capicorn logs every portal step to
-`~/.cache/capicorn-portal.log`, and each take writes a `*.rec.log` next to the video.
+`PATH`. If a take fails to start, SnagCraft logs every portal step to
+`~/.cache/snagcraft-portal.log`, and each take writes a `*.rec.log` next to the video.
 Those two files pinpoint exactly where the pipeline stopped.
 
 ## Build from source
@@ -139,11 +139,11 @@ docs/plans/     implementation plans
 
 ## License
 
-Capicorn is **GPL-3.0-or-later** — genuinely open source. You are free to use, study,
+SnagCraft is **GPL-3.0-or-later** — genuinely open source. You are free to use, study,
 fork, modify and share it, **including commercially**, as long as derivatives stay open
 under the GPL (see [LICENSE](LICENSE)).
 
-**Commercial license:** if you want to embed Capicorn in a proprietary, closed-source
+**Commercial license:** if you want to embed SnagCraft in a proprietary, closed-source
 product where the GPL's source-sharing obligations don't fit, a separate commercial
 license is available from the author — that's the one case that needs permission. Open an
 issue or reach out to arrange it.

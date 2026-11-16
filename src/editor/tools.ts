@@ -1,4 +1,4 @@
-// Capicorn annotation tools (Fabric.js 6).
+// SnagCraft annotation tools (Fabric.js 6).
 //
 // Each tool reacts to pointer input forwarded by Editor and mutates the canvas
 // through a narrow ToolHost surface. Editor owns history, layout, export and
@@ -52,7 +52,7 @@ const MIN_DRAG = 8;
 type RectOptions = Partial<fabric.RectProps>;
 
 export class BlurRegion extends fabric.Rect {
-  static type = "capicorn_blur";
+  static type = "snagcraft_blur";
   /** Keep the tuning in the serialized JSON (undo/redo, save/load). */
   static customProperties = ["mode", "radius"];
   mode: BlurMode = "gaussian";
@@ -90,7 +90,7 @@ export class BlurRegion extends fabric.Rect {
     ctx.restore();
   }
 }
-fabric.classRegistry.setClass(BlurRegion, "capicorn_blur");
+fabric.classRegistry.setClass(BlurRegion, "snagcraft_blur");
 
 export const isBlurRegion = (
   object: fabric.FabricObject,
@@ -102,7 +102,7 @@ export const isBlurRegion = (
  * drag is what you get.
  */
 export class SpotlightRegion extends fabric.Rect {
-  static type = "capicorn_spotlight";
+  static type = "snagcraft_spotlight";
   /** Outline thickness (user selected) survives undo/redo. */
   static customProperties = ["thickness"];
   thickness = 2;
@@ -142,7 +142,7 @@ export class SpotlightRegion extends fabric.Rect {
     context.restore();
   }
 }
-fabric.classRegistry.setClass(SpotlightRegion, "capicorn_spotlight");
+fabric.classRegistry.setClass(SpotlightRegion, "snagcraft_spotlight");
 
 export const isSpotlightRegion = (
   object: fabric.FabricObject,
@@ -150,7 +150,7 @@ export const isSpotlightRegion = (
 
 /** Highlighter: translucent ink rectangle, multiplied into the pixels. */
 export class HighlighterRegion extends fabric.Rect {
-  static type = "capicorn_highlight";
+  static type = "snagcraft_highlight";
   static customProperties = ["ink", "alpha", "thickness"];
   /** Colour baked in at creation, so later ink changes do not recolour it. */
   ink = "#ffe066";
@@ -181,7 +181,7 @@ export class HighlighterRegion extends fabric.Rect {
     });
   }
 }
-fabric.classRegistry.setClass(HighlighterRegion, "capicorn_highlight");
+fabric.classRegistry.setClass(HighlighterRegion, "snagcraft_highlight");
 
 export const isHighlighterRegion = (
   object: fabric.FabricObject,
@@ -260,7 +260,7 @@ const lensPath = (
  * the lens always magnifies the capture itself.
  */
 export class MagnifyRegion extends fabric.Rect {
-  static type = "capicorn_magnify";
+  static type = "snagcraft_magnify";
   /** Zoom survives undo/redo; the pixels do not (Editor re-attaches them). */
   static customProperties = ["zoom"];
   zoom = MAGNIFY_ZOOM;
@@ -372,7 +372,7 @@ export class MagnifyRegion extends fabric.Rect {
     ctx.restore();
   }
 }
-fabric.classRegistry.setClass(MagnifyRegion, "capicorn_magnify");
+fabric.classRegistry.setClass(MagnifyRegion, "snagcraft_magnify");
 
 export const isMagnifyRegion = (
   object: fabric.FabricObject,
@@ -1465,7 +1465,7 @@ const loadImageElement = (url: string): Promise<HTMLImageElement> =>
   new Promise((resolve, reject) => {
     const element = new Image();
     element.onload = () => resolve(element);
-    element.onerror = () => reject(new Error("Capicorn: could not decode image"));
+    element.onerror = () => reject(new Error("SnagCraft: could not decode image"));
     element.src = url;
   });
 

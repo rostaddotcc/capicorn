@@ -1,4 +1,4 @@
-# Capicorn Wave 3 — TRUE fullscreen region capture
+# SnagCraft Wave 3 — TRUE fullscreen region capture
 
 > rostad's feedback: v0.2.0 region select only works INSIDE the app window. He wants to select a
 > square on the ACTUAL desktop (Snagit-style). Fix with a fullscreen frozen-screen overlay.

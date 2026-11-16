@@ -1,4 +1,4 @@
-// Capicorn — floating quick-capture widget.
+// SnagCraft — floating quick-capture widget.
 //
 // Two states in one frameless, transparent window:
 //
@@ -32,7 +32,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import "./widget.css";
 
-const THEME_KEY = "capicorn:theme";
+const THEME_KEY = "snagcraft:theme";
 const DRAG_ATTR = "data-tauri-drag-region";
 
 /** Idle time before an expanded widget folds back into its tab. */
@@ -68,7 +68,7 @@ const svg = (body: string): string =>
   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" ` +
   `stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${body}</svg>`;
 
-// The Capicorn sparkle: the tab's whole identity in 22px.
+// The SnagCraft sparkle: the tab's whole identity in 22px.
 const ICON_SPARK = svg(
   `<path d="M10.6 3.4c.8 3.7 2.3 5.2 6 6-3.7.8-5.2 2.3-6 6-.8-3.7-2.3-5.2-6-6 3.7-.8 5.2-2.3 6-6z"/>` +
     `<path d="M17.4 14.6c.35 1.55.95 2.15 2.5 2.5-1.55.35-2.15.95-2.5 2.5-.35-1.55-.95-2.15-2.5-2.5 1.55-.35 2.15-.95 2.5-2.5z"/>`
@@ -135,7 +135,7 @@ function mount(): void {
   root.classList.add("w-widget");
   root.dataset.state = "collapsed";
   root.setAttribute("role", "toolbar");
-  root.setAttribute("aria-label", "Capicorn quick capture");
+  root.setAttribute("aria-label", "SnagCraft quick capture");
 
   /* ------------------------------------------------------------- the tab */
 
@@ -148,7 +148,7 @@ function mount(): void {
   tab.setAttribute("role", "button");
   tab.tabIndex = 0;
   tab.setAttribute("aria-expanded", "false");
-  tab.setAttribute("aria-label", "Expand Capicorn capture");
+  tab.setAttribute("aria-label", "Expand SnagCraft capture");
   tab.title = "Drag to move · click to expand";
   tab.innerHTML = `<span class="w-icon w-tab__glyph">${ICON_SPARK}</span>`;
 

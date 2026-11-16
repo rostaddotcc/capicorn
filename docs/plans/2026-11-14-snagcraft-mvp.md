@@ -1,15 +1,15 @@
-# Capicorn MVP Implementation Plan
+# SnagCraft MVP Implementation Plan
 
 > **For Hermes:** execute with subagent-driven-development + delegation-tuning.
 > Parallel wave 1 = tracks R / F / U with disjoint file ownership and locked contracts.
 
-**Goal:** Ship a runnable Capicorn .AppImage: full-screen capture → annotation editor
+**Goal:** Ship a runnable SnagCraft .AppImage: full-screen capture → annotation editor
 (crop, arrow, text, rect, blur, step, undo/redo) → copy to clipboard / save PNG, on
 rostad's GNOME/Wayland workstation.
 
 **Architecture:** Tauri 2 (Rust backend + Vite/TS frontend, Fabric.js editor).
 Linux capture via ashpd portal; macOS/Win via xcap. See
-`docs/specs/2026-11-14-capicorn-design.md` for the full spec and locked contracts.
+`docs/specs/2026-11-14-snagcraft-design.md` for the full spec and locked contracts.
 
 **Tech stack:** Rust stable, Tauri 2, ashpd, arboard, image, base64; Vite 6, TS 5, Fabric 6.
 
@@ -18,7 +18,7 @@ Linux capture via ashpd portal; macOS/Win via xcap. See
 ## Phase 0 — Environment & scaffold (parent, sequential)
 
 1. Install Rust (rustup) + Tauri Linux deps (`libwebkit2gtk-4.1-dev`, …). [background]
-2. Create public repo `rostaddotcc/capicorn`, clone to `~/projects/capicorn`. ✅
+2. Create public repo `rostaddotcc/snagcraft`, clone to `~/projects/snagcraft`. ✅
 3. Write scaffold: package.json, vite/tsconfig, index.html, src-tauri (Cargo.toml,
    tauri.conf.json, capabilities, main.rs, lib.rs, stub modules), frontend stubs. ✅
 4. `pnpm install`; generate icon set (`pnpm tauri icon`).
@@ -30,7 +30,7 @@ Linux capture via ashpd portal; macOS/Win via xcap. See
 
 All briefs carry: ownership declaration, "do NOT run git/deploy", locked contract text
 (spec §4), first-write-within-8-calls, explicit call budget + "STOP at budget, report
-undone", and a resume changelog at `tmp/capicorn/<track>-changelog.md`.
+undone", and a resume changelog at `tmp/snagcraft/<track>-changelog.md`.
 
 ### Track R — Rust backend
 **Files:** `src-tauri/src/capture.rs`, `clipboard.rs`, `commands.rs` (replace stubs).

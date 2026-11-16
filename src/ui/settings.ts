@@ -1,4 +1,4 @@
-// Capicorn — theme tokens, export settings and the settings modal.
+// SnagCraft — theme tokens, export settings and the settings modal.
 //
 // The app shell owns the live state (save folder, version, theme, export
 // defaults); this module owns applying the theme to <html>, the persistence
@@ -11,7 +11,7 @@ export type ExportFormat = "png" | "jpeg" | "webp";
 /** Container the screen recorder writes. */
 export type RecFormat = "mp4" | "gif";
 
-export const THEME_KEY = "capicorn:theme";
+export const THEME_KEY = "snagcraft:theme";
 
 /** Stored theme, defaulting to light (rostad's default, spec Wave 4). */
 export function readTheme(): Theme {
@@ -37,30 +37,30 @@ export function applyTheme(theme: Theme, persist = true): void {
 
 /* ---------------------------------------------------------------- settings */
 
-export const FORMAT_KEY = "capicorn:format";
-export const QUALITY_KEY = "capicorn:quality";
-export const TIMER_KEY = "capicorn:timer";
-export const FILENAME_KEY = "capicorn:filename";
-export const TRAY_KEY = "capicorn:minimize-tray";
-export const HOTKEYS_ENABLED_KEY = "capicorn:hotkeys-enabled";
-export const HOTKEY_FULL_KEY = "capicorn:hotkey-full";
-export const HOTKEY_REGION_KEY = "capicorn:hotkey-region";
-export const WIDGET_KEY = "capicorn:widget";
-export const REC_FORMAT_KEY = "capicorn:rec-format";
-export const AUTOSAVE_KEY = "capicorn:autosave";
-export const INTERVAL_KEY = "capicorn:interval";
-export const MIC_KEY = "capicorn:mic";
-export const SYSTEM_AUDIO_KEY = "capicorn:system-audio";
-export const WATERMARK_TEXT_KEY = "capicorn:watermark-text";
-export const WATERMARK_OPACITY_KEY = "capicorn:watermark-opacity";
-export const WATERMARK_CORNER_KEY = "capicorn:watermark-corner";
-export const UPLOAD_ENDPOINT_KEY = "capicorn:upload-endpoint";
+export const FORMAT_KEY = "snagcraft:format";
+export const QUALITY_KEY = "snagcraft:quality";
+export const TIMER_KEY = "snagcraft:timer";
+export const FILENAME_KEY = "snagcraft:filename";
+export const TRAY_KEY = "snagcraft:minimize-tray";
+export const HOTKEYS_ENABLED_KEY = "snagcraft:hotkeys-enabled";
+export const HOTKEY_FULL_KEY = "snagcraft:hotkey-full";
+export const HOTKEY_REGION_KEY = "snagcraft:hotkey-region";
+export const WIDGET_KEY = "snagcraft:widget";
+export const REC_FORMAT_KEY = "snagcraft:rec-format";
+export const AUTOSAVE_KEY = "snagcraft:autosave";
+export const INTERVAL_KEY = "snagcraft:interval";
+export const MIC_KEY = "snagcraft:mic";
+export const SYSTEM_AUDIO_KEY = "snagcraft:system-audio";
+export const WATERMARK_TEXT_KEY = "snagcraft:watermark-text";
+export const WATERMARK_OPACITY_KEY = "snagcraft:watermark-opacity";
+export const WATERMARK_CORNER_KEY = "snagcraft:watermark-corner";
+export const UPLOAD_ENDPOINT_KEY = "snagcraft:upload-endpoint";
 
 export const DEFAULT_FORMAT: ExportFormat = "png";
 export const DEFAULT_REC_FORMAT: RecFormat = "mp4";
 export const DEFAULT_QUALITY = 90;
 export const DEFAULT_TIMER = 0;
-export const DEFAULT_PATTERN = "Capicorn-{date}-{time}";
+export const DEFAULT_PATTERN = "SnagCraft-{date}-{time}";
 export const DEFAULT_HOTKEY_FULL = "Print";
 export const DEFAULT_HOTKEY_REGION = "SHIFT+Print";
 /** Delay between shots in Interval capture mode. */
@@ -132,6 +132,29 @@ export interface ExportSettings {
   /** POST target for File → Upload…; empty hides the action. */
   uploadEndpoint: string;
 }
+
+/**
+ * The app was renamed from Capicorn. Copy any surviving `capicorn:*` preference
+ * to its `snagcraft:*` twin once, so the rename doesn't reset the user's setup.
+ */
+const migrateLegacyStorage = (): void => {
+  try {
+    const legacy: Array<[string, string]> = [];
+    for (let index = 0; index < localStorage.length; index += 1) {
+      const key = localStorage.key(index);
+      if (!key || !key.startsWith("capicorn:")) continue;
+      const value = localStorage.getItem(key);
+      if (value !== null) legacy.push([key, value]);
+    }
+    for (const [key, value] of legacy) {
+      const target = `snagcraft:${key.slice("capicorn:".length)}`;
+      if (localStorage.getItem(target) === null) localStorage.setItem(target, value);
+    }
+  } catch {
+    /* storage unavailable — defaults apply */
+  }
+};
+migrateLegacyStorage();
 
 const store = (key: string): string | null => {
   try {
@@ -272,7 +295,7 @@ export function expandPattern(pattern: string, date = new Date()): string {
     .replace(/[\\/:*?"<>|\u0000-\u001f]/g, "-")
     .replace(/\s+/g, " ")
     .trim();
-  return expanded === "" ? `Capicorn-${day}-${clock}` : expanded;
+  return expanded === "" ? `SnagCraft-${day}-${clock}` : expanded;
 }
 
 /** Full filename for a capture, extension included. */
@@ -436,7 +459,7 @@ export class SettingsPanel {
     this.dirPath.classList.toggle("is-empty", !dir);
 
     const version = this.opts.getVersion();
-    this.versionEl.textContent = version ? `Capicorn ${version}` : "Capicorn";
+    this.versionEl.textContent = version ? `SnagCraft ${version}` : "SnagCraft";
 
     for (const segment of this.segments) {
       const active = segment.dataset.themeChoice === theme;
@@ -537,7 +560,7 @@ export class SettingsPanel {
 
     if (!settings.hotkeysEnabled) {
       el.dataset.state = "off";
-      el.innerHTML = `<p class="hotkey-note">Global hotkeys are off — Capicorn listens only while its window has focus.</p>`;
+      el.innerHTML = `<p class="hotkey-note">Global hotkeys are off — SnagCraft listens only while its window has focus.</p>`;
       return;
     }
     if (!status) {
@@ -572,7 +595,7 @@ export class SettingsPanel {
 
     const advice = portal
       ? ""
-      : `<p class="hotkey-note">Global hotkeys need the <strong>Wayland GlobalShortcuts portal</strong>, which KDE Plasma provides (GNOME 46 and older do not). Capicorn cannot bind keys without it — keep using PrintScreen inside the window, or add a shortcut in your desktop settings that runs <code>capicorn --capture</code>.</p>`;
+      : `<p class="hotkey-note">Global hotkeys need the <strong>Wayland GlobalShortcuts portal</strong>, which KDE Plasma provides (GNOME 46 and older do not). SnagCraft cannot bind keys without it — keep using PrintScreen inside the window, or add a shortcut in your desktop settings that runs <code>snagcraft --capture</code>.</p>`;
 
     el.innerHTML = `
       <div class="hotkey-backend">${backendLine}</div>
@@ -686,7 +709,7 @@ export class SettingsPanel {
             <div class="setting-row">
               <div class="setting-row-text">
                 <span class="setting-label" id="tray-label">Minimize to tray</span>
-                <span class="setting-sub">Closing the window keeps Capicorn running in the tray.</span>
+                <span class="setting-sub">Closing the window keeps SnagCraft running in the tray.</span>
               </div>
               <button type="button" class="switch" id="settings-tray" role="switch" aria-checked="false" aria-labelledby="tray-label"><span class="switch-knob" aria-hidden="true"></span></button>
             </div>

@@ -359,26 +359,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "capicorn"
-version = "0.27.0"
-dependencies = [
- "anyhow",
- "arboard",
- "ashpd",
- "base64 0.22.1",
- "image",
- "pipewire",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-dialog",
- "tokio",
- "webp",
- "xcap",
-]
-
-[[package]]
 name = "cargo-platform"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3714,6 +3694,26 @@ name = "smallvec"
 version = "1.16.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "149309498a5f7334b12ddae0cad8aba81ce785fe91755068867e017cf98fee46"
+
+[[package]]
+name = "snagcraft"
+version = "0.28.0"
+dependencies = [
+ "anyhow",
+ "arboard",
+ "ashpd",
+ "base64 0.22.1",
+ "image",
+ "pipewire",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+ "tokio",
+ "webp",
+ "xcap",
+]
 
 [[package]]
 name = "socket2"

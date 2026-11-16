@@ -393,7 +393,7 @@ fn capture(
     };
     // Target goes only to `stream.connect` (see the recorder): a `target.object`
     // prop resolves before the registry has seen the portal node.
-    let stream = pw::stream::StreamBox::new(&core, "capicorn-scrolling", props)
+    let stream = pw::stream::StreamBox::new(&core, "snagcraft-scrolling", props)
         .map_err(|e| format!("cannot create the PipeWire capture stream: {e}"))?;
 
     let notify = Rc::new(RefCell::new(Some(started)));
@@ -423,7 +423,7 @@ fn capture(
             if ud.fmt.parse(param).is_ok() {
                 let size = ud.fmt.size();
                 eprintln!(
-                    "capicorn: scrolling capture {:?} {}x{}",
+                    "snagcraft: scrolling capture {:?} {}x{}",
                     ud.fmt.format(),
                     size.width,
                     size.height
@@ -432,7 +432,7 @@ fn capture(
         })
         .state_changed(|_, _, old, new| {
             if old != new {
-                eprintln!("capicorn: scrolling stream {old:?} -> {new:?}");
+                eprintln!("snagcraft: scrolling stream {old:?} -> {new:?}");
             }
         })
         .process(|stream, ud| {
@@ -576,7 +576,7 @@ fn capture(
     mainloop.run();
 
     eprintln!(
-        "capicorn: scrolling capture ended after {} frames",
+        "snagcraft: scrolling capture ended after {} frames",
         seen.get()
     );
 
@@ -618,7 +618,7 @@ pub async fn open() -> Result<Source, String> {
         let latest = latest.clone();
         let stop = stop.clone();
         std::thread::Builder::new()
-            .name("capicorn-scrolling-source".to_string())
+            .name("snagcraft-scrolling-source".to_string())
             .spawn(move || {
                 let result = capture(
                     portal.fd,
@@ -629,7 +629,7 @@ pub async fn open() -> Result<Source, String> {
                     started_tx,
                 );
                 if let Err(err) = &result {
-                    eprintln!("capicorn: scrolling source stopped: {err}");
+                    eprintln!("snagcraft: scrolling source stopped: {err}");
                 }
             })
             .map_err(|e| format!("cannot start the capture thread: {e}"))?
@@ -649,7 +649,7 @@ pub async fn open() -> Result<Source, String> {
         Ok(Ok(())) => None,
         Ok(Err(err)) => Some(err),
         Err(mpsc::RecvTimeoutError::Disconnected) => Some(
-            "the capture pipeline could not be started — see the capicorn log for details"
+            "the capture pipeline could not be started — see the snagcraft log for details"
                 .to_string(),
         ),
         Err(mpsc::RecvTimeoutError::Timeout) => Some(format!(

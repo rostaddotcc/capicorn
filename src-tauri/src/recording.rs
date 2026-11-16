@@ -303,7 +303,7 @@ impl RecordingFormat {
 /// Same rules as `export::safe_filename` but for the two recording containers,
 /// so a `..`/path-laden name can never escape the chosen directory.
 fn safe_filename(filename: &str, format: RecordingFormat) -> String {
-    const FALLBACK: &str = "capicorn-recording";
+    const FALLBACK: &str = "snagcraft-recording";
 
     let trimmed = filename.trim();
     let hostile = trimmed.is_empty()
@@ -767,9 +767,9 @@ mod imp {
 
     // -- ffmpeg -------------------------------------------------------------
 
-    /// `ffmpeg` from `PATH`, unless the user pinned a binary via `CAPICORN_FFMPEG`.
+    /// `ffmpeg` from `PATH`, unless the user pinned a binary via `SNAGCRAFT_FFMPEG`.
     fn ffmpeg_program() -> String {
-        std::env::var("CAPICORN_FFMPEG")
+        std::env::var("SNAGCRAFT_FFMPEG")
             .ok()
             .filter(|v| !v.trim().is_empty())
             .unwrap_or_else(|| "ffmpeg".to_string())
@@ -1279,12 +1279,12 @@ mod imp {
 
     /// Diagnostic log for the portal half (before any capture exists), so a
     /// "picker answered but nothing recorded" failure can be pinpointed. Lives
-    /// at ~/.cache/capicorn-portal.log.
+    /// at ~/.cache/snagcraft-portal.log.
     fn portal_log(msg: &str) {
         use std::io::Write;
         let path = std::env::var("HOME")
-            .map(|h| PathBuf::from(h).join(".cache").join("capicorn-portal.log"))
-            .unwrap_or_else(|_| std::env::temp_dir().join("capicorn-portal.log"));
+            .map(|h| PathBuf::from(h).join(".cache").join("snagcraft-portal.log"))
+            .unwrap_or_else(|_| std::env::temp_dir().join("snagcraft-portal.log"));
         if let Some(parent) = path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
@@ -1323,7 +1323,7 @@ mod imp {
             let msg = format!(
                 "unsupported capture pixel format {format:?} — this compositor offers no packed RGB/BGR mode"
             );
-            eprintln!("capicorn: {msg}");
+            eprintln!("snagcraft: {msg}");
             report(ud, Err(msg));
             quit(ud);
             return false;
@@ -1352,7 +1352,7 @@ mod imp {
                         size.width,
                         size.height
                     );
-                    eprintln!("capicorn: {msg}");
+                    eprintln!("snagcraft: {msg}");
                     report(ud, Err(msg));
                     quit(ud);
                     return false;
@@ -1370,7 +1370,7 @@ mod imp {
                 true
             }
             Err(err) => {
-                eprintln!("capicorn: {err}");
+                eprintln!("snagcraft: {err}");
                 report(ud, Err(err));
                 quit(ud);
                 false
@@ -1413,7 +1413,7 @@ mod imp {
         // stream creation — before the registry has synced the portal node — which
         // fails with "no target node available" (the v0.13–v0.17 recording bug).
 
-        let stream = pw::stream::StreamBox::new(&core, "capicorn-recording", props)
+        let stream = pw::stream::StreamBox::new(&core, "snagcraft-recording", props)
             .map_err(|e| format!("cannot create the PipeWire capture stream: {e}"))?;
 
         let child_slot: Rc<RefCell<Option<(Child, ChildStdin)>>> = Rc::new(RefCell::new(None));
@@ -1470,7 +1470,7 @@ mod imp {
                     let size = ud.fmt.size();
                     let fps = ud.fmt.framerate();
                     eprintln!(
-                        "capicorn: capture format {:?} {}x{} @ {}/{}",
+                        "snagcraft: capture format {:?} {}x{} @ {}/{}",
                         ud.fmt.format(),
                         size.width,
                         size.height,
@@ -1488,7 +1488,7 @@ mod imp {
             })
             .state_changed(|_, ud, old, new| {
                 if old != new {
-                    eprintln!("capicorn: capture stream {old:?} -> {new:?}");
+                    eprintln!("snagcraft: capture stream {old:?} -> {new:?}");
                     rec_log(&ud.log, &format!("stream state {old:?} -> {new:?}"));
                 }
             })
@@ -1604,7 +1604,7 @@ mod imp {
                 };
 
                 if !wrote {
-                    eprintln!("capicorn: the encoder stopped accepting frames");
+                    eprintln!("snagcraft: the encoder stopped accepting frames");
                     quit(ud);
                     return;
                 }
@@ -1709,7 +1709,7 @@ mod imp {
 
         let captured = frames.get();
         eprintln!(
-            "capicorn: captured {captured} frames -> {}",
+            "snagcraft: captured {captured} frames -> {}",
             out.to_string_lossy()
         );
         rec_log(&log_path, &format!("capture ended: {captured} frames"));
@@ -1764,14 +1764,14 @@ mod imp {
 
         if let Some(region) = region {
             eprintln!(
-                "capicorn: recording region {}x{}+{}+{}",
+                "snagcraft: recording region {}x{}+{}+{}",
                 region.width, region.height, region.left, region.top
             );
         }
         if let Some(audio) = audio.as_ref() {
             if audio.input_count() > 0 {
                 eprintln!(
-                    "capicorn: recording {} audio source(s){}",
+                    "snagcraft: recording {} audio source(s){}",
                     audio.input_count(),
                     if audio.system {
                         " including system audio"
@@ -1794,7 +1794,7 @@ mod imp {
             let out = out_path.clone();
             let paused = paused.clone();
             std::thread::Builder::new()
-                .name("capicorn-recording".to_string())
+                .name("snagcraft-recording".to_string())
                 .spawn(move || {
                     let result = capture(
                         portal.fd,
@@ -1809,7 +1809,7 @@ mod imp {
                         started_tx,
                     );
                     if let Err(err) = &result {
-                        eprintln!("capicorn: recording stopped: {err}");
+                        eprintln!("snagcraft: recording stopped: {err}");
                     }
                     let _ = done_tx.send(());
                 })
@@ -1835,7 +1835,7 @@ mod imp {
             // The sender is gone: the capture thread gave up before the first
             // frame (fd connect, stream setup, ffmpeg), and already logged why.
             Err(mpsc::RecvTimeoutError::Disconnected) => Some(
-                "the capture pipeline could not be started — see the capicorn log for details"
+                "the capture pipeline could not be started — see the snagcraft log for details"
                     .to_string(),
             ),
             Err(mpsc::RecvTimeoutError::Timeout) => Some(format!(
@@ -2108,7 +2108,7 @@ mod imp {
 
         fn args_with_audio(format: RecordingFormat, audio: Option<AudioConfig>) -> Vec<String> {
             ffmpeg_args(
-                Path::new("/tmp/capicorn-out.bin"),
+                Path::new("/tmp/snagcraft-out.bin"),
                 format,
                 1280,
                 720,
@@ -2252,7 +2252,7 @@ mod imp {
 
         // -- real ffmpeg children: the exact runtime path -------------------
 
-        /// ffmpeg is an existing Capicorn requirement, but a dev box may lack it:
+        /// ffmpeg is an existing SnagCraft requirement, but a dev box may lack it:
         /// skip rather than fail when it really is missing.
         fn ffmpeg_present() -> bool {
             Command::new(ffmpeg_program())
@@ -2270,7 +2270,7 @@ mod imp {
                 .map(|d| d.as_nanos())
                 .unwrap_or(0);
             std::env::temp_dir().join(format!(
-                "capicorn-recording-test-{}-{stamp}.{ext}",
+                "snagcraft-recording-test-{}-{stamp}.{ext}",
                 std::process::id()
             ))
         }
@@ -2524,15 +2524,15 @@ mod tests {
         assert_eq!(safe_filename("demo.gif", RecordingFormat::Mp4), "demo.mp4");
         assert_eq!(
             safe_filename("", RecordingFormat::Gif),
-            "capicorn-recording.gif"
+            "snagcraft-recording.gif"
         );
         assert_eq!(
             safe_filename("../../etc/passwd", RecordingFormat::Mp4),
-            "capicorn-recording.mp4"
+            "snagcraft-recording.mp4"
         );
         assert_eq!(
             safe_filename(".", RecordingFormat::Gif),
-            "capicorn-recording.gif"
+            "snagcraft-recording.gif"
         );
     }
 

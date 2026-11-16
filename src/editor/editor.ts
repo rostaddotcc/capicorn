@@ -1,4 +1,4 @@
-// Capicorn annotation editor.
+// SnagCraft annotation editor.
 //
 // Fabric.js 6 canvas wrapper: loads a captured screenshot, fits it to the
 // container, hosts the annotation tools (src/editor/tools.ts), keeps an
@@ -1739,7 +1739,7 @@ export class Editor {
       .then(() => this.applyEntry(json, crop, natural))
       .catch((error: unknown) => {
         this.restoring = false;
-        console.error("Capicorn: could not restore canvas state", error);
+        console.error("SnagCraft: could not restore canvas state", error);
       });
     this.notify();
   }
@@ -1881,7 +1881,7 @@ export class Editor {
 
   private notify(): void {
     this.container.dispatchEvent(
-      new CustomEvent("capicorn:change", {
+      new CustomEvent("snagcraft:change", {
         bubbles: true,
         detail: {
           tool: this.tool,

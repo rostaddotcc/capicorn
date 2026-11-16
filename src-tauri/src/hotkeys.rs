@@ -239,7 +239,7 @@ fn description_for(id: &str) -> String {
         "open-widget" | "open_widget" | "toggle-widget" | "toggle_widget" => {
             "Show the quick capture widget".to_string()
         }
-        other => format!("Capicorn: {other}"),
+        other => format!("SnagCraft: {other}"),
     }
 }
 
@@ -350,7 +350,7 @@ mod portal {
                         if let Err(err) =
                             app_task.emit("hotkey-activated", serde_json::json!({ "id": id }))
                         {
-                            eprintln!("capicorn: could not emit hotkey-activated: {err}");
+                            eprintln!("snagcraft: could not emit hotkey-activated: {err}");
                         }
                     }
                     None => break,
@@ -406,7 +406,7 @@ pub async fn register_hotkeys(
                 Ok(state.set_status(bound.status))
             }
             Err(err) => {
-                eprintln!("capicorn: global hotkeys unavailable ({err}); backend=none");
+                eprintln!("snagcraft: global hotkeys unavailable ({err}); backend=none");
                 Ok(state.set_status(HotkeyStatus::none()))
             }
         }

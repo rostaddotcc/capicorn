@@ -1,4 +1,4 @@
-# Capicorn Wave 4 (v0.3.0) — dropdown, dark mode, bucket, settings & auto-save
+# SnagCraft Wave 4 (v0.3.0) — dropdown, dark mode, bucket, settings & auto-save
 
 > rostad's explicit requirements (all mandatory):
 > 1. Capture mode = a REAL dropdown: click the caret in the Capture button → menu appears
@@ -14,7 +14,7 @@
 ## Locked contracts
 
 ### Tauri commands (R) — existing kept, ADD:
-- `default_save_dir() -> String` (picture dir / Capicorn, cross-platform via tauri path API)
+- `default_save_dir() -> String` (picture dir / SnagCraft, cross-platform via tauri path API)
 - `pick_save_dir() -> String` (native folder dialog; cancel → Err("cancelled"))
 - `save_png_to_dir(dataUrl, dir, filename) -> String` (create dir, validate+write PNG, return path)
 - existing: capture_screenshot, set_fullscreen, copy_png, get_version, save_png.
@@ -26,10 +26,10 @@
 
 ### Frontend (U) — owns app.ts, style.css, main.ts, index.html, settings.ts(new)
 - Theme via `<html data-theme="light|dark">`; persist localStorage.
-- localStorage keys: capicorn:theme, capicorn:capture-mode, capicorn:ink-color,
-  capicorn:stroke-width, capicorn:save-dir.
-- Save flow: capture → auto-save raw `Capicorn-<ts>.png`; Save/Ctrl+S → if isDirty(),
-  save flattened `Capicorn-<ts>-edited.png`, else "No changes to save".
+- localStorage keys: snagcraft:theme, snagcraft:capture-mode, snagcraft:ink-color,
+  snagcraft:stroke-width, snagcraft:save-dir.
+- Save flow: capture → auto-save raw `SnagCraft-<ts>.png`; Save/Ctrl+S → if isDirty(),
+  save flattened `SnagCraft-<ts>-edited.png`, else "No changes to save".
 
 ## Tracks (disjoint)
 - R: src-tauri/src/commands.rs, lib.rs (+ capture.rs helper if needed).

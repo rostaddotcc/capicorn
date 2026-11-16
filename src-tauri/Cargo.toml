@@ -1,13 +1,13 @@
 [package]
-name = "capicorn"
-version = "0.28.0"
+name = "snagcraft"
+version = "1.0.0"
 description = "Open-source Snagit-style screen capture and annotation"
 authors = ["rostad"]
 license = "GPL-3.0-or-later"
 edition = "2021"
 
 [lib]
-name = "capicorn_lib"
+name = "snagcraft_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

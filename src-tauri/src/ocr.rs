@@ -28,7 +28,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// Language used when the frontend does not name one.
 pub const DEFAULT_LANG: &str = "eng";
 
-/// Languages Capicorn offers in its menu. `sanitize_lang` still accepts any
+/// Languages SnagCraft offers in its menu. `sanitize_lang` still accepts any
 /// `[a-z+]` combination (so `deu`, `fra+eng` work if the user asks for them);
 /// this list only drives the UI defaults and the docs.
 pub const SUPPORTED_LANGS: &[&str] = &["eng", "swe", "eng+swe"];
@@ -90,7 +90,7 @@ fn temp_png_path() -> PathBuf {
         .unwrap_or(0);
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
     std::env::temp_dir().join(format!(
-        "capicorn-ocr-{}-{}-{}.png",
+        "snagcraft-ocr-{}-{}-{}.png",
         std::process::id(),
         stamp,
         n
@@ -161,7 +161,7 @@ fn run_tesseract(png: &[u8], lang: &str) -> Result<String, String> {
     if let Err(err) = std::fs::remove_file(&path) {
         // Not fatal: a leaked temp file is noise, a failed OCR is the story.
         eprintln!(
-            "capicorn: could not remove OCR temp file {}: {err}",
+            "snagcraft: could not remove OCR temp file {}: {err}",
             path.display()
         );
     }

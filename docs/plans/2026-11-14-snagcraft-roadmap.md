@@ -1,16 +1,16 @@
-# Capicorn Roadmap — FOSS Snagit alternative (Rust / Tauri 2)
+# SnagCraft Roadmap — FOSS Snagit alternative (Rust / Tauri 2)
 
 Synthesis of deep research (snagit.md, competitors.md, technical.md, ui-inspiration.md).
 Goal: a polished FOSS Snagit alternative in Rust, ArtCraft-style "small app, many features".
 No POC — production quality, end-to-end verified, iterated.
 
 ## Architecture decision
-ArtCraft's PhotoCraft is **egui + wgpu** (it bans Tauri/JS). Capicorn stays **Tauri 2 + Rust**
+ArtCraft's PhotoCraft is **egui + wgpu** (it bans Tauri/JS). SnagCraft stays **Tauri 2 + Rust**
 (already shipping, cross-platform, working) but borrows ArtCraft's *structural* lessons:
 engine-first modules, one command surface, factored platform/settings/quit modules, honest
 Wayland docs, blur via fast multi-pass. We do NOT rewrite to egui (would discard working progress).
 
-## Gap analysis (Capicorn v0.3.0 vs Snagit / best competitors)
+## Gap analysis (SnagCraft v0.3.0 vs Snagit / best competitors)
 Have: full+region capture, editor (select/crop/arrow/text/box/blur-pixelate/bucket/step),
 color/stroke/fonts, undo/redo, copy/save PNG, auto-save, save-copy, dark mode, settings(save dir),
 dropdown, persistence.

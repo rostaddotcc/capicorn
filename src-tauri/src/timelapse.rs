@@ -1,6 +1,6 @@
 //! Interval capture → timelapse.
 //!
-//! The shell writes one PNG per interval tick (`Capicorn-interval-*.png` in the
+//! The shell writes one PNG per interval tick (`SnagCraft-interval-*.png` in the
 //! save folder), and stops by calling `make_timelapse` to turn that run into an
 //! MP4. Nothing here knows about the capture loop itself — it only reads the
 //! files the loop already wrote, so a failed render never costs the shots.
@@ -9,7 +9,7 @@
 //! |-------------------|------------------------------|----------------------|
 //! | `make_timelapse`  | `dir`, `pattern`, `fps`, `out` | output path (`string`) |
 //!
-//! `pattern` is a plain file-name glob (`Capicorn-interval-*.png`) resolved
+//! `pattern` is a plain file-name glob (`SnagCraft-interval-*.png`) resolved
 //! inside `dir`; it may not contain path separators. ffmpeg is invoked with
 //! `-pattern_type glob`, so the frames play in lexicographic order — which is
 //! exactly the order the zero-padded shot numbers give.

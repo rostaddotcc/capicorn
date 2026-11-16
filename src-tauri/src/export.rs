@@ -173,7 +173,7 @@ pub fn safe_filename(filename: &str, format: Format) -> String {
         || trimmed.contains('\\')
         || trimmed.contains('\0');
 
-    let name = if hostile { "capicorn" } else { trimmed };
+    let name = if hostile { "snagcraft" } else { trimmed };
 
     let path = Path::new(name);
     let wanted = format.extension();
@@ -183,7 +183,7 @@ pub fn safe_filename(filename: &str, format: Format) -> String {
             "{}.{wanted}",
             path.file_stem()
                 .and_then(|s| s.to_str())
-                .unwrap_or("capicorn")
+                .unwrap_or("snagcraft")
         ),
         None => format!("{name}.{wanted}"),
     }
@@ -292,7 +292,7 @@ mod tests {
 
     #[test]
     fn writes_png_jpeg_and_webp_to_disk() {
-        let dir = std::env::temp_dir().join(format!("capicorn-export-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("snagcraft-export-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let dir_str = dir.to_string_lossy().into_owned();
         let data_url = rgba_png(5, 4);
@@ -326,9 +326,9 @@ mod tests {
         assert_eq!(safe_filename("shot.png", Format::Jpeg), "shot.jpg");
         assert_eq!(
             safe_filename("../../etc/passwd", Format::Png),
-            "capicorn.png"
+            "snagcraft.png"
         );
-        assert_eq!(safe_filename("   ", Format::Jpeg), "capicorn.jpg");
+        assert_eq!(safe_filename("   ", Format::Jpeg), "snagcraft.jpg");
     }
 
     #[test]

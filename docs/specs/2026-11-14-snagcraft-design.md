@@ -1,4 +1,4 @@
-# Capicorn — Design Spec (MVP)
+# SnagCraft — Design Spec (MVP)
 
 **Date:** 2026-11-14
 **Status:** approved direction (ArtCraft track: cross-platform product, open repo)

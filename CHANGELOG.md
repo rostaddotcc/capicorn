@@ -1,7 +1,17 @@
 # Changelog
 
-All notable changes to Capicorn, newest first. Full release notes for every tag live on
-the [releases page](https://github.com/rostaddotcc/capicorn/releases).
+All notable changes to SnagCraft, newest first. Full release notes for every tag live on
+the [releases page](https://github.com/rostaddotcc/snagcraft/releases).
+
+## v1.0.0
+**SnagCraft** — the app is renamed from **Capicorn** (a nod to Snagit and the ArtCraft suite).
+Same app, new name:
+- product name, binary, crate, app identifier, window title, About dialog, tray and every release
+  asset (`SnagCraft_*`)
+- the save folder becomes `~/Pictures/SnagCraft`; the old `~/Pictures/Capicorn` folder is adopted
+  on first launch, so existing captures stay put
+- stored preferences (`capicorn:*`) are copied to `snagcraft:*` once, so settings survive the rename
+- the repository moves to github.com/rostaddotcc/snagcraft (GitHub redirects the old URL)
 
 ## v0.28.0
 - **Shapes tool** replaces the plain Box: pick rectangle, ellipse, triangle, line or star in the tool panel, then drag. Colour, width and shadow are shared with the other shape annotations.
@@ -44,7 +54,7 @@ the [releases page](https://github.com/rostaddotcc/capicorn/releases).
 
 ## v0.22.3
 - **Window / Choose-screen capture now negotiates its size flexibly.** The stream asked for an exact `VideoSize` (the portal's hint), which the producer cannot always match for an individual window — the format negotiation failed, no frame arrived, and the grab timed out as "cancelled". It now offers a **range** (1×1 … 16384×16384) with the hint as the default, so the producer delivers its real size. The recorder got the same fix.
-- Window/monitor capture now **logs** to `~/.cache/capicorn-portal.log` (picker answer, stream states, negotiated format, first frame), so "Copy recording diagnostics" covers it too.
+- Window/monitor capture now **logs** to `~/.cache/snagcraft-portal.log` (picker answer, stream states, negotiated format, first frame), so "Copy recording diagnostics" covers it too.
 
 ## v0.22.2
 - Fixed **Window / Choose-screen** capture (and scrolling capture) on KDE. The one-frame ScreenCast consumer carried the same three PipeWire traps the recorder had: a `target.object` prop resolving before the registry saw the portal node, no registry wait before connecting, and an oversized explicit buffer pool KWin rejects. All three now use the proven pattern.
@@ -121,7 +131,7 @@ the [releases page](https://github.com/rostaddotcc/capicorn/releases).
 ## v0.13.0
 - Recording: the portal offers monitors **and** windows; SelectSources is kept alive until
   the cast starts; the real portal error is surfaced (no more false "no screen was picked");
-  every portal step is logged to `~/.cache/capicorn-portal.log`.
+  every portal step is logged to `~/.cache/snagcraft-portal.log`.
 - Brush-size preview in the properties rail and as an on-canvas cursor.
 - Shadows for arrows, rectangles, text, callouts and steps.
 - The floating widget collapses to a small edge tab ("flärp").

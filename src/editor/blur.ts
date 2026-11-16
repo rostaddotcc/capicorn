@@ -1,9 +1,9 @@
-// Capicorn image effects: real gaussian blur, pixelate, blackout, spotlight
+// SnagCraft image effects: real gaussian blur, pixelate, blackout, spotlight
 // dimming and highlighter tint — all applied to the IMAGE layer at export
 // resolution, so text stays blurred properly instead of looking like a drop
 // shadow.
 //
-// Why not `ctx.filter = "blur(n)"`? WebKitGTK (the WebView Capicorn ships on
+// Why not `ctx.filter = "blur(n)"`? WebKitGTK (the WebView SnagCraft ships on
 // Linux) has patchy and version-dependent support for canvas filters. StackBlur
 // is a deterministic, dependency-free JS convolution that behaves the same on
 // every WebEngine, so gaussian blur goes through it.

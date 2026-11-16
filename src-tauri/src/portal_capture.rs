@@ -292,8 +292,8 @@ mod imp {
     fn clog(msg: &str) {
         use std::io::Write;
         let path = std::env::var("HOME")
-            .map(|h| PathBuf::from(h).join(".cache").join("capicorn-portal.log"))
-            .unwrap_or_else(|_| std::env::temp_dir().join("capicorn-portal.log"));
+            .map(|h| PathBuf::from(h).join(".cache").join("snagcraft-portal.log"))
+            .unwrap_or_else(|_| std::env::temp_dir().join("snagcraft-portal.log"));
         if let Some(parent) = path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
@@ -537,7 +537,7 @@ mod imp {
                     // No packed RGB/BGR: nothing to convert — fail loudly instead
                     // of looping until the timeout.
                     eprintln!(
-                        "capicorn: unsupported capture pixel format {:?}",
+                        "snagcraft: unsupported capture pixel format {:?}",
                         ud.fmt.format()
                     );
                     ud.stop.store(true, Ordering::Relaxed);
@@ -674,8 +674,8 @@ mod imp {
     pub(super) async fn grab(kind: SourceKind) -> Result<super::Frame, String> {
         let portal = open_portal(kind).await?;
         let name = match kind {
-            SourceKind::Window => "capicorn-window-capture",
-            SourceKind::Monitor => "capicorn-monitor-capture",
+            SourceKind::Window => "snagcraft-window-capture",
+            SourceKind::Monitor => "snagcraft-monitor-capture",
         };
 
         // `MainLoopRc`/`Rc` are `!Send`, so the capture slots must be created
@@ -706,7 +706,7 @@ mod imp {
                             .ok_or_else(|| "the capture stream produced no frame".to_string())
                     });
                     if let Err(err) = &result {
-                        eprintln!("capicorn: {err}");
+                        eprintln!("snagcraft: {err}");
                     }
                     let _ = tx.try_send(result);
                 })
@@ -729,7 +729,7 @@ mod imp {
         .await
         .is_err()
         {
-            eprintln!("capicorn: the capture thread did not join cleanly");
+            eprintln!("snagcraft: the capture thread did not join cleanly");
         }
 
         // Only now is it safe to end the portal session: dropping it closes the
@@ -740,7 +740,7 @@ mod imp {
             Ok(Ok(frame)) => Ok(frame),
             Ok(Err(err)) => Err(err),
             Err(mpsc::RecvTimeoutError::Disconnected) => Err(format!(
-                "the {} capture pipeline could not be started — see the capicorn log",
+                "the {} capture pipeline could not be started — see the snagcraft log",
                 kind.noun()
             )),
             Err(mpsc::RecvTimeoutError::Timeout) => Err(format!(

@@ -6,7 +6,7 @@
 //! left click open that menu — the only interaction the platform gives us.
 //!
 //! Menu items:
-//! - `Show Capicorn` — show/unminimize + focus the main window
+//! - `Show SnagCraft` — show/unminimize + focus the main window
 //! - `Capture`       — emit `tray-capture`; the frontend starts the capture flow
 //! - `Quit`          — set the force-quit flag, then exit (bypasses the close guard)
 
@@ -42,7 +42,7 @@ pub fn show_main<R: Runtime>(app: &AppHandle<R>) {
 
 /// Build the tray icon and menu. Called once from `lib.rs` setup.
 pub fn init_tray<R: Runtime>(app: &App<R>) -> tauri::Result<()> {
-    let show = MenuItemBuilder::with_id(ID_SHOW, "Show Capicorn").build(app)?;
+    let show = MenuItemBuilder::with_id(ID_SHOW, "Show SnagCraft").build(app)?;
     let capture = MenuItemBuilder::with_id(ID_CAPTURE, "Capture").build(app)?;
     let quit = MenuItemBuilder::with_id(ID_QUIT, "Quit").build(app)?;
 
@@ -54,7 +54,7 @@ pub fn init_tray<R: Runtime>(app: &App<R>) -> tauri::Result<()> {
 
     TrayIconBuilder::with_id("main-tray")
         .icon(icon)
-        .tooltip("Capicorn — screen capture")
+        .tooltip("SnagCraft — screen capture")
         .menu(&menu)
         // Linux emits no tray click events; the menu is the interaction, so open
         // it on a normal left click instead of requiring right click.

@@ -1,4 +1,4 @@
-# Capicorn Wave 2 — Region capture, color & stroke, self-capture fix
+# SnagCraft Wave 2 — Region capture, color & stroke, self-capture fix
 
 > Execute with subagent-driven-development + delegation-tuning. Parallel tracks R / E / U,
 > disjoint files, locked contracts. Parent owns scaffold/Cargo.toml/lib.rs/build.
@@ -6,7 +6,7 @@
 **Goal:** Fix the recursive self-capture (the "hall of mirrors" rostad saw), add Snagit-style
 **region/zone capture**, and add **annotation color + stroke-width selection**. Ship v0.2.0 AppImage.
 
-**Root cause of the recursion:** full-screen capture included the Capicorn window itself, so each
+**Root cause of the recursion:** full-screen capture included the SnagCraft window itself, so each
 capture nested the previous one. Fix: hide the app window during capture, and offer region capture.
 
 ---
@@ -49,4 +49,4 @@ push, `gh release v0.2.0`, deliver via MEDIA.
 | Claim | Measured | Change |
 |-------|----------|--------|
 | The build host is rostad's test machine | Build host = PN53 (GNOME, screen locked). rostad's screenshot shows a **KDE Plasma ultrawide 3440×1440** desktop (Dolphin, different taskbar) — a SEPARATE workstation where he runs the AppImage. | Capture is validated by rostad's own screenshot (3440×1440), not by the PN53 probe. PN53's portal probe hangs only because PN53's screen is locked — irrelevant to the user's box. The hide-window + region fix must work cross-DE (GNOME/KDE); Tauri hide/show + portal Screenshot are DE-agnostic. |
-| Repeated full-screen captures "get smaller" | Droste effect: full-screen capture includes the Capicorn window, nesting the previous capture. Capture dimensions stay 3440×1440. | Fixed by hiding the app window during capture + offering region capture. |
+| Repeated full-screen captures "get smaller" | Droste effect: full-screen capture includes the SnagCraft window, nesting the previous capture. Capture dimensions stay 3440×1440. | Fixed by hiding the app window during capture + offering region capture. |

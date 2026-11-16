@@ -1,4 +1,4 @@
-# Capicorn — Wave 25 plan (v0.25.0)
+# SnagCraft — Wave 25 plan (v0.25.0)
 
 Goal: build every remaining feature the user asked for, **except AI redaction**
 (postponed), and rebuild **Magnify** so the marked area is really enlarged live
@@ -63,7 +63,7 @@ POST `multipart/form-data` (`file` field) → trimmed response body = the link.
 
 ## Wave 25b — user follow-ups (after the three tracks land)
 
-### Open an image (use Capicorn as a quick editor)
+### Open an image (use SnagCraft as a quick editor)
 - File → **Open…** + `Ctrl+O`, using `tauri-plugin-dialog` (`open({ multiple:false,
   filters:[{name:'Images', extensions:['png','jpg','jpeg','webp','gif','bmp','avif']}] })`)
   → read the file → `editor.load(dataUrl)` → status "Opened <name>".

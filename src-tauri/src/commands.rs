@@ -9,7 +9,7 @@
 //! | `copy_png`           | `dataUrl`                            | `void`                                   |
 //! | `get_version`        | —                                    | crate version (`string`)                 |
 //! | `set_fullscreen`     | `full`                               | `void`                                   |
-//! | `default_save_dir`   | —                                    | `<pictures>/Capicorn` (`string`)         |
+//! | `default_save_dir`   | —                                    | `<pictures>/SnagCraft` (`string`)         |
 //! | `pick_save_dir`      | —                                    | chosen folder (`string`)                 |
 //! | `save_png_to_dir`    | `dataUrl`, `dir`, `filename`         | saved path (`string`)                    |
 //! | `save_image_as`      | `dataUrl`, `suggestedName`, `format`, `quality` | saved path (`string`)         |
@@ -41,7 +41,7 @@ pub struct CaptureResult {
 const HIDE_SETTLE_MS: u64 = 220;
 
 /// Hide the app's own windows (main + floating widget) while a capture runs, so
-/// neither ends up in the shot — and so the widget can't be the only Capicorn
+/// neither ends up in the shot — and so the widget can't be the only SnagCraft
 /// window left on screen (which made it look like it "popped up" during a window
 /// pick). Returns whether the widget was visible so it can be restored after.
 fn hide_app_windows(app: &tauri::AppHandle) -> bool {
@@ -155,7 +155,7 @@ pub async fn save_png(
     image::load_from_memory(&png).map_err(|e| format!("invalid PNG payload: {e}"))?;
 
     let file_name = if suggested_name.trim().is_empty() {
-        "capicorn.png".to_string()
+        "snagcraft.png".to_string()
     } else {
         suggested_name
     };
@@ -198,7 +198,7 @@ pub async fn save_image_as(
     // extension in; `safe_filename` reduces it to a bare name that agrees with
     // the encoded bytes. Either way the chosen path is re-checked below.
     let suggested = if suggested_name.trim().is_empty() {
-        format!("capicorn.{}", encoded.format.extension())
+        format!("snagcraft.{}", encoded.format.extension())
     } else {
         crate::export::safe_filename(&suggested_name, encoded.format)
     };
@@ -224,7 +224,7 @@ pub async fn save_image_as(
 }
 
 /// The folder a screenshot lands in when the user picks "default save location":
-/// `<Pictures>/Capicorn`. Purely a suggestion — nothing is created here, because
+/// `<Pictures>/SnagCraft`. Purely a suggestion — nothing is created here, because
 /// `save_png_to_dir` does the `create_dir_all` once a save actually happens.
 #[tauri::command]
 pub fn default_save_dir(app: tauri::AppHandle) -> Result<String, String> {
@@ -236,7 +236,14 @@ pub fn default_save_dir(app: tauri::AppHandle) -> Result<String, String> {
         .or_else(|_| resolver.home_dir().map(|home| home.join("Pictures")))
         .map_err(|e| format!("cannot resolve a pictures directory: {e}"))?;
 
-    Ok(pictures.join("Capicorn").to_string_lossy().into_owned())
+    let dir = pictures.join("SnagCraft");
+    // The app was renamed from Capicorn: adopt the old capture folder once so the
+    // user's screenshots don't look lost. Same parent, so the rename is atomic.
+    let legacy = pictures.join("Capicorn");
+    if !dir.exists() && legacy.is_dir() {
+        let _ = std::fs::rename(&legacy, &dir);
+    }
+    Ok(dir.to_string_lossy().into_owned())
 }
 
 /// Ask the user for a folder (no file selection) and hand the path back.
@@ -279,7 +286,7 @@ pub async fn read_image_file(path: String) -> Result<String, String> {
     let path = std::path::PathBuf::from(path.trim());
     let bytes = std::fs::read(&path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
     let image = image::load_from_memory(&bytes)
-        .map_err(|e| format!("{} is not an image Capicorn can read: {e}", path.display()))?;
+        .map_err(|e| format!("{} is not an image SnagCraft can read: {e}", path.display()))?;
     let mut png = Vec::new();
     image
         .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
@@ -326,10 +333,10 @@ pub fn set_fullscreen(app: tauri::AppHandle, full: bool) -> Result<(), String> {
 pub fn recording_diagnostics(app: tauri::AppHandle) -> String {
     use tauri::Manager as _;
 
-    let mut out = String::from("=== Capicorn recording diagnostics ===\n");
+    let mut out = String::from("=== SnagCraft recording diagnostics ===\n");
 
     let home = app.path().home_dir().ok().unwrap_or_default();
-    let portal = home.join(".cache").join("capicorn-portal.log");
+    let portal = home.join(".cache").join("snagcraft-portal.log");
     out.push_str(&format!("\n--- portal log ({}) ---\n", portal.display()));
     match std::fs::read_to_string(&portal) {
         Ok(s) => out.push_str(s.trim_end()),

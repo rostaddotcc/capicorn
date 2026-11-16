@@ -19,7 +19,7 @@ async fn main() -> anyhow::Result<()> {
     let img = image::load_from_memory(&bytes)?;
     let (w, h) = (img.width(), img.height());
     let _b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
-    let out = std::env::temp_dir().join("capicorn-probe.png");
+    let out = std::env::temp_dir().join("snagcraft-probe.png");
     std::fs::write(&out, &bytes)?;
     println!(
         "PROBE_OK {w}x{h} bytes={} saved={}",

@@ -1,6 +1,6 @@
 //! Scrolling capture (Wave 9, track R) — manual-scroll stitching.
 //!
-//! The user selects a region once, Capicorn casts that monitor through the
+//! The user selects a region once, SnagCraft casts that monitor through the
 //! ScreenCast portal, and while the user scrolls the app grabs the newest frame,
 //! aligns it against the last accepted one and appends only the rows that are
 //! new. One tall PNG comes out. No synthetic input, no new permission
@@ -384,7 +384,7 @@ mod imp {
             let out = out.clone();
             let stop = stop.clone();
             std::thread::Builder::new()
-                .name("capicorn-scrolling-stitch".to_string())
+                .name("snagcraft-scrolling-stitch".to_string())
                 .spawn(move || {
                     let outcome = run(app, latest, stop, region, out.clone());
                     if let Ok(mut slot) = out.lock() {

@@ -4,7 +4,7 @@ Thanks for helping! A couple of practical notes.
 
 ## License of contributions
 
-Capicorn is dual-licensed: **GPL-3.0-or-later** for the public, plus a **commercial
+SnagCraft is dual-licensed: **GPL-3.0-or-later** for the public, plus a **commercial
 license** the author can offer for closed-source use. For that to be possible, every
 contribution must be usable under both. By opening a pull request you confirm that:
 

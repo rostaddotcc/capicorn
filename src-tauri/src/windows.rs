@@ -228,7 +228,7 @@ fn widget_window(app: &AppHandle) -> Option<WebviewWindow> {
 fn build_widget(app: &AppHandle) -> Result<WebviewWindow, String> {
     let builder =
         WebviewWindowBuilder::new(app, WIDGET_LABEL, WebviewUrl::App("widget.html".into()))
-            .title("Capicorn")
+            .title("SnagCraft")
             // Starts folded: an idle widget is a small tab, never a parked pill.
             .inner_size(WIDGET_TAB_WIDTH, WIDGET_TAB_HEIGHT)
             .decorations(false)
@@ -252,7 +252,7 @@ fn build_widget(app: &AppHandle) -> Result<WebviewWindow, String> {
     // Best-effort on Wayland (see module comment above).
     if let Err(err) = window.set_always_on_top(true) {
         eprintln!(
-            "capicorn: widget always-on-top not supported here ({err}); normal stacking applies"
+            "snagcraft: widget always-on-top not supported here ({err}); normal stacking applies"
         );
     }
     place_top_right(&window, WIDGET_TAB_WIDTH);
@@ -408,7 +408,7 @@ fn widget_resize(app: &AppHandle, expanded: bool) -> Result<(), String> {
     };
     if let Err(err) = widget_apply_size(&window, expanded) {
         eprintln!(
-            "capicorn: widget resize to {} refused ({err}); keeping the current size",
+            "snagcraft: widget resize to {} refused ({err}); keeping the current size",
             if expanded { "the pill" } else { "the tab" }
         );
     }

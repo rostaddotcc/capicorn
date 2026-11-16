@@ -1,7 +1,7 @@
 //! Generic image upload: POST a PNG to a user-configured endpoint and hand back
 //! whatever link the server replies with.
 //!
-//! Deliberately provider-agnostic. Capicorn ships no credentials and hardcodes no
+//! Deliberately provider-agnostic. SnagCraft ships no credentials and hardcodes no
 //! service: the user points it at their own endpoint (a small HTTP handler, an
 //! S3 presign proxy, a self-hosted image host …) and copies the returned link.
 //!
@@ -27,7 +27,7 @@ pub async fn upload_image(data_url: String, endpoint: String) -> Result<String, 
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis())
         .unwrap_or(0);
-    let tmp = std::env::temp_dir().join(format!("capicorn-upload-{stamp}.png"));
+    let tmp = std::env::temp_dir().join(format!("snagcraft-upload-{stamp}.png"));
     std::fs::write(&tmp, &png).map_err(|e| format!("cannot stage the upload: {e}"))?;
 
     let form = format!("file=@{};type=image/png", tmp.display());

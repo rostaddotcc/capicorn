@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=SnagCraft
+Exec=snagcraft
+Icon=snagcraft
+Type=Application
+Categories=Graphics;Utility;
+Comment=Capture, annotate, record — native Rust edition
+StartupWMClass=snagcraft

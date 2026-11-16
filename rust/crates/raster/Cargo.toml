@@ -1,0 +1,16 @@
+[package]
+name = "snagcraft-raster"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+image.workspace = true
+snagcraft-geom = { path = "../geom" }
+snagcraft-color = { path = "../color" }
+
+[lints]
+workspace = true

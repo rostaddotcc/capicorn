@@ -8,7 +8,7 @@ Baseline: Tauri v1.5.2 (commit d25adb1). Rebuild workspace: `rust/` (not yet cre
 | Wave | Scope | Status |
 |------|-------|--------|
 | W0 | egui editor spike + Wayland viewport probe | built + verified on pn53; KDE manual pass pending rostad |
-| W1 | workspace scaffold, doc model, engine, capture port | pending |
+| W1 | workspace scaffold, doc model, engine, capture port | in progress — scaffold + L0/doc/ops landed; tracks C1/C2/D/P dispatched |
 | W2 | editor tool parity | pending |
 | W3 | shell parity (tray/hotkeys/widget/settings) | pending |
 | W4 | recording, scrolling, OCR, timelapse | pending |
@@ -52,10 +52,26 @@ Baseline: Tauri v1.5.2 (commit d25adb1). Rebuild workspace: `rust/` (not yet cre
   drag feel, stacking; editor flow capture→annotate→save on his box. `--selftest
   --shot-out` works only in an unlocked session (see appendix).
 
+### 2026-11-16 — wake #2: W1 launched
+- Fresh check: W0 committed b39da91 + pushed; no KDE feedback yet; W1 next.
+- W1 plan with locked contracts: docs/plans/2026-11-16-w1-scaffold-engine-capture.md.
+- Parent landed: full workspace scaffold (15 crates L0–L6 + 3 apps + xtask, 21 members),
+  xtask layers (layer map + cycle detection + UI ban below L6) + ci, .cargo alias,
+  packaging/ (desktop + icon + appimage.sh), .github/workflows/rust.yml (gates + AppImage
+  artifact). ashpd 0.14.0 + xcap 0.9.10 + tokio/clap/cargo_metadata verified compiling.
+- Parent landed L0 geom/color/raster + L1 doc (8 object kinds, serde, hit-test/shift) +
+  L2 ops (bounded history): 20 unit tests green, clippy -D warnings clean, layers legal.
+- Dispatched 4 parallel tracks (deleg_6ba30a31): C1 algo+compose, C2 format+io,
+  D capture (ashpd Screenshot port; ScreenCast/PipeWire deferred to W4), P parity
+  checklist from live v1.5.3 source → docs/plans/rust-rebuild-parity.md.
+- Next: integrate children → engine (Session + command registry) → ui-egui shell
+  (capture→editor) → apps/snagcraft + cli → gates → AppImage → deliver.
+
 ## Appendix — measured reality
 
 | Claim | Measured | What changed |
 |---|---|---|
+| photocraft layering forbids ALL same-layer deps | L0 foundation (raster→geom/color) needs same-layer edges | xtask layers allows same-layer edges but rejects cycles (DFS) + any upward edge; UI ban below L6 unchanged |
 | egui main-branch docs match crates.io 0.37 | 0.37 renamed APIs: `Panel::top/bottom` (unified, `.show(ui,…)` not `.show(ctx,…)`), `eframe::App::ui` replaces `update`, `Ui::id`→`scope_id`, `Id::new` deprecated, `DroppedFile` is a trait (`.path()`), `FontData.font` is a `Blob`, `TextEdit::frame` takes `Frame` not bool, ab_glyph `Scale`→`PxScale`, `ascent_unscaled()` takes no args | All fixed against the vendored 0.37 registry source; briefs for W1+ must cite 0.37, not main |
 | `EFRAME_SCREENSHOT_TO` usable for headless shots | Asserts "not yet implemented for wgpu backend" (wgpu_integration.rs:143) | Use `ctx.request_screenshot(cb)` (wgpu-supported) or egui_kittest offscreen |
 | `--selftest` screenshots on pn53 | Locked GNOME session delivers no frame callbacks → frame counter never advances → no shot, no auto-exit (timeout 124) | kittest headless snapshot is the pn53 visual gate; selftest expected to work on unlocked KDE |

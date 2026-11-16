@@ -102,20 +102,20 @@ Effects are applied to the **image layer at export resolution** (scene px × exp
 
 | Feature | Evidence | rust |
 |---|---|---|
-| **Floating widget** — frameless always-on-top window, two states: folded tab **58×74**, expanded pill **292×50** (window 304×60) | `windows.rs:186-260` (sizes doc :205-213, `WIDGET_LABEL` :203, `build_widget` :228, always-on-top :259), `widget.css` | pending |
+| **Floating widget** — frameless always-on-top window, two states: folded tab **58×74**, expanded pill **292×50** (window 304×60) | `windows.rs:186-260` (sizes doc :205-213, `WIDGET_LABEL` :203, `build_widget` :228, always-on-top :259), `widget.css` | W3 |
 | Widget buttons: Full, Region, **Rec** (red dot → Stop square mid-take), fold, close, drag grip; `Rec` tooltip "Record the screen (V)" | `widget-main.ts:9-27` (invoke modes :26-27), buttons :210-245, rec icon :104-105, tip :226 | pending |
 | Widget `V` shortcut → recording; mirrors `recording-state` broadcast from any window | `widget-main.ts:412-416`, tip :226 | pending |
-| Widget keyboard: Enter/Space activate the tab (a11y) | `widget-main.ts:336-339` | pending |
-| Widget parks top-right, kept in place across states | `windows.rs:270-287` (`widget_apply_size` :288) | pending |
-| **Tray**: left/double click restores+focuses main window; menu Show SnagCraft / Capture / Floating widget / ─ / Quit; right-click menu, secondary-activate = middle click | `tray.rs:6-25` (docs), `init_tray` :55-100 (items :56-63, `show_menu_on_left_click(false)` :74, ID_SHOW :76, capture emit :80, quit :85) | pending |
-| **Global hotkeys** via `org.freedesktop.portal.GlobalShortcuts` (Wayland-only path); actions `capture-full`, `capture-region`; default triggers `Print` / `SHIFT+Print` | `hotkeys.rs:1-28` (module doc), status enum :45-75, `xdg_trigger` :156-196, `normalize_key` :197, `description_for` :234-237; defaults `settings.ts:66-67`; frontend listen `app.ts:5265-5269` | pending |
-| Re-binding allowed only per new portal session (one BindShortcuts per session) | `hotkeys.rs:28` | pending |
-| **Close guard** — `CloseRequested` is always prevented, then a decision tree runs: force-quit flag → exit; **dirty document** → emit `close-requested` so the frontend shows its own non-blocking save modal (which calls `force_close`); widget visible → hide main, keep the pill; "Minimize to tray" + a real tray present → hide + `window-hidden-to-tray`; otherwise exit | `windows.rs:26-28` (flags), `request_quit` `:89-94`, `handle_close` `:96-140` (`:100`, `:105-110`, `:112-122`, `:126-137`), `register_close_guard` `:142-154`, `force_close` `:156-160`; setting `app.ts:1657` | pending |
-| **Single instance** — a second launch forwards argv to the running app, which re-dispatches it | `lib.rs:30-33` (`tauri_plugin_single_instance::init`), `cli.rs:5` | pending |
-| **Start at login** via `tauri-plugin-autostart` (XDG autostart on Linux, Run key on Windows) | `lib.rs:35-39`, UI `settings.ts:804-806`, README:127 | pending |
-| **File associations** — open images with SnagCraft from the file manager | `tauri.conf.json:47` (`fileAssociations`), `cli.rs:45-57` (path in argv → `file`) | pending |
-| **CLI** `snagcraft --capture` / `--capture-full` / `--region` / `--capture-region`, `--help` early exit, image path as arg | `cli.rs:45-60` (`parse_args`), `early_exit` :82-95, `dispatch` :62-75, `launch_request` :77-80 | pending |
-| Frontend glue: `tray-capture`, `cli-capture`, `cli-open`, first-launch `launch_request` poll, `hotkey-activated` | `app.ts:5222-5269` | pending |
+| Widget keyboard: Enter/Space activate the tab (a11y) | `widget-main.ts:336-339` | W3 |
+| Widget parks top-right, kept in place across states | `windows.rs:270-287` (`widget_apply_size` :288) | W3 |
+| **Tray**: left/double click restores+focuses main window; menu Show SnagCraft / Capture / Floating widget / ─ / Quit; right-click menu, secondary-activate = middle click | `tray.rs:6-25` (docs), `init_tray` :55-100 (items :56-63, `show_menu_on_left_click(false)` :74, ID_SHOW :76, capture emit :80, quit :85) | W3 |
+| **Global hotkeys** via `org.freedesktop.portal.GlobalShortcuts` (Wayland-only path); actions `capture-full`, `capture-region`; default triggers `Print` / `SHIFT+Print` | `hotkeys.rs:1-28` (module doc), status enum :45-75, `xdg_trigger` :156-196, `normalize_key` :197, `description_for` :234-237; defaults `settings.ts:66-67`; frontend listen `app.ts:5265-5269` | W3 |
+| Re-binding allowed only per new portal session (one BindShortcuts per session) | `hotkeys.rs:28` | W3 |
+| **Close guard** — `CloseRequested` is always prevented, then a decision tree runs: force-quit flag → exit; **dirty document** → emit `close-requested` so the frontend shows its own non-blocking save modal (which calls `force_close`); widget visible → hide main, keep the pill; "Minimize to tray" + a real tray present → hide + `window-hidden-to-tray`; otherwise exit | `windows.rs:26-28` (flags), `request_quit` `:89-94`, `handle_close` `:96-140` (`:100`, `:105-110`, `:112-122`, `:126-137`), `register_close_guard` `:142-154`, `force_close` `:156-160`; setting `app.ts:1657` | W3 |
+| **Single instance** — a second launch forwards argv to the running app, which re-dispatches it | `lib.rs:30-33` (`tauri_plugin_single_instance::init`), `cli.rs:5` | W3 |
+| **Start at login** via `tauri-plugin-autostart` (XDG autostart on Linux, Run key on Windows) | `lib.rs:35-39`, UI `settings.ts:804-806`, README:127 | W3 |
+| **File associations** — open images with SnagCraft from the file manager | `tauri.conf.json:47` (`fileAssociations`), `cli.rs:45-57` (path in argv → `file`) | W3 |
+| **CLI** `snagcraft --capture` / `--capture-full` / `--region` / `--capture-region`, `--help` early exit, image path as arg | `cli.rs:45-60` (`parse_args`), `early_exit` :82-95, `dispatch` :62-75, `launch_request` :77-80 | W3 |
+| Frontend glue: `tray-capture`, `cli-capture`, `cli-open`, first-launch `launch_request` poll, `hotkey-activated` | `app.ts:5222-5269` | W3 |
 | PrintScreen = full, Shift+PrintScreen = region (in-app fallback) | `app.ts:5128-5132` | pending |
 
 ---
@@ -203,11 +203,11 @@ Sections rendered: General, Capture, Recording audio, Global hotkeys, Save locat
 
 | Item | Default | Evidence | rust |
 |---|---|---|---|
-| Minimize to tray | off | `settings.ts:799-802`, `TRAY_KEY` `:43` | pending |
-| Start at login (hidden if unsupported) | off | `settings.ts:804-806` | pending |
-| Show floating widget | — | `settings.ts:813-816` | pending |
-| Auto-save captures | **on** | `settings.ts:820-823`, `AUTOSAVE_KEY` `:50`, default `:237` | pending |
-| Capture delay (seconds pills) | 0 | `settings.ts:830-836`, `:64` | pending |
+| Minimize to tray | off | `settings.ts:799-802`, `TRAY_KEY` `:43` | W3 |
+| Start at login (hidden if unsupported) | off | `settings.ts:804-806` | W3 |
+| Show floating widget | — | `settings.ts:813-816` | W3 |
+| Auto-save captures | **on** | `settings.ts:820-823`, `AUTOSAVE_KEY` `:50`, default `:237` | W3 |
+| Capture delay (seconds pills) | 0 | `settings.ts:830-836`, `:64` | W3 |
 | Interval capture period | 30 s | `settings.ts:837-842`, `:69` | pending |
 | Microphone source | None | `settings.ts:855-863` | pending |
 | System audio (output monitor) | off | `settings.ts:866-870` | pending |
@@ -234,10 +234,10 @@ Sections rendered: General, Capture, Recording audio, Global hotkeys, Save locat
 
 | Feature | Evidence | rust |
 |---|---|---|
-| Two themes, **light** (default) and **dark**, persisted under `snagcraft:theme`, applied as `data-theme` + `color-scheme` on `<html>` | `settings.ts:11` (`Theme`), `:14` (`THEME_KEY`), `readTheme` `:18-24`, `applyTheme` `:26-38` | pending |
-| Accent light `#2266b3`, dark `#3d7ec2` | `src/style.css:133` (`--accent-solid: #2266b3`), `src/style.css:178` (`#3d7ec2`) | pending |
-| Widget accent: dark `#6fa3dc`/`#9cc0ef`, light `#2266b3`/`#1a5296` + soft/press alphas | `src/widget.css:14-17`, `:42-45` | pending |
-| Theme switch from the settings panel and the shell | `settings.ts:341` (`setTheme` option), wired `app.ts:4443`, `settings.ts:1005-1010` | pending |
+| Two themes, **light** (default) and **dark**, persisted under `snagcraft:theme`, applied as `data-theme` + `color-scheme` on `<html>` | `settings.ts:11` (`Theme`), `:14` (`THEME_KEY`), `readTheme` `:18-24`, `applyTheme` `:26-38` | W3 |
+| Accent light `#2266b3`, dark `#3d7ec2` | `src/style.css:133` (`--accent-solid: #2266b3`), `src/style.css:178` (`#3d7ec2`) | W3 |
+| Widget accent: dark `#6fa3dc`/`#9cc0ef`, light `#2266b3`/`#1a5296` + soft/press alphas | `src/widget.css:14-17`, `:42-45` | W3 |
+| Theme switch from the settings panel and the shell | `settings.ts:341` (`setTheme` option), wired `app.ts:4443`, `settings.ts:1005-1010` | W3 |
 
 ---
 

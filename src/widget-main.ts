@@ -2,8 +2,9 @@
 //
 // Two states in one frameless, transparent window:
 //
-//   COLLAPSED  a 44x44 glass tab ("flärp") at the window's left edge — idle,
-//              unobtrusive, only 56x54 of screen taken.
+//   COLLAPSED  a 46x64 glass tab ("flärp") — a vertical bookmark with the
+//              unicorn mark and a breathing accent spine; idle, findable,
+//              only 58x74 of screen taken.
 //   EXPANDED   the full pill: drag grip + Full + Region + fold + close.
 //
 // Hover (or click) on the tab expands it; leaving the widget collapses it after
@@ -68,11 +69,22 @@ const svg = (body: string): string =>
   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" ` +
   `stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${body}</svg>`;
 
-// The SnagCraft sparkle: the tab's whole identity in 22px.
-const ICON_SPARK = svg(
-  `<path d="M10.6 3.4c.8 3.7 2.3 5.2 6 6-3.7.8-5.2 2.3-6 6-.8-3.7-2.3-5.2-6-6 3.7-.8 5.2-2.3 6-6z"/>` +
-    `<path d="M17.4 14.6c.35 1.55.95 2.15 2.5 2.5-1.55.35-2.15.95-2.5 2.5-.35-1.55-.95-2.15-2.5-2.5 1.55-.35 2.15-.95 2.5-2.5z"/>`
-);
+// The SnagCraft unicorn — the exact mark used by the File trigger and the app
+// icon (fill-based, 32x32). The tab's whole identity in 24px.
+const ICON_UNICORN =
+  `<svg viewBox="0 0 32 32" fill="currentColor" aria-hidden="true" focusable="false">` +
+  `<path fill-rule="evenodd" d="M17.6 9.3 C 22.2 9.4 26 11.9 27.4 15.6 C 28 17.4 28.1 19.1 27.4 20.4 C 26.6 21.9 24.9 22.5 23.2 21.9 C 21.6 22.5 20.4 23.9 19.8 25.9 L 19.3 28.7 L 10.5 28.7 C 10.3 24.5 10.2 20.3 11.4 16.3 C 12.3 13.3 14.5 10.7 17.6 9.3 Z M 22.5 16.1 a 1.1 1.1 0 1 1 -2.2 0 a 1.1 1.1 0 1 1 2.2 0 Z"/>` +
+  `<path d="M13.4 10.2 C 12.7 8.1 12.4 6.2 12.7 4.9 C 14.1 6.5 15.6 8.0 16.7 9.2 Z"/>` +
+  `<path d="M17.9 9.5 L22.4 1.9 L20.1 10.4 Z"/></svg>`;
+
+/** The accent spine shared by tab and pill (see widget.css). Pure decoration:
+ *  pointer-events:none, so the surface underneath stays the drag handle. */
+function spine(): HTMLSpanElement {
+  const el = document.createElement("span");
+  el.className = "w-spine";
+  el.setAttribute("aria-hidden", "true");
+  return el;
+}
 
 const ICON_FULL = svg(
   `<rect x="2.5" y="4" width="19" height="12.5" rx="1.8"/>` +
@@ -150,7 +162,11 @@ function mount(): void {
   tab.setAttribute("aria-expanded", "false");
   tab.setAttribute("aria-label", "Expand SnagCraft capture");
   tab.title = "Drag to move · click to expand";
-  tab.innerHTML = `<span class="w-icon w-tab__glyph">${ICON_SPARK}</span>`;
+  tab.append(spine());
+  const glyph = document.createElement("span");
+  glyph.className = "w-tab__glyph";
+  glyph.innerHTML = ICON_UNICORN;
+  tab.append(glyph);
 
   /* ------------------------------------------------------------ the pill */
 
@@ -211,7 +227,7 @@ function mount(): void {
   });
   close.classList.add("w-btn--close");
 
-  bar.append(grip, full, region, sep, fold, close);
+  bar.append(spine(), grip, full, region, sep, fold, close);
   root.append(tab, bar);
 
   /* -------------------------------------------------- collapse / expand */

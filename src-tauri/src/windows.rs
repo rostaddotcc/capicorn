@@ -207,7 +207,7 @@ pub const WIDGET_LABEL: &str = "widget";
 ///
 /// | state    | window | drawn surface           |
 /// |----------|--------|-------------------------|
-/// | folded   | 56x54  | 44x44 tab ("flärp")     |
+/// | folded   | 58x74  | 46x64 tab ("flärp")     |
 /// | expanded | 252x60 | 240x50 capture pill     |
 ///
 /// The window genuinely changes size (see [`widget_apply_size`]) rather than
@@ -216,16 +216,16 @@ pub const WIDGET_LABEL: &str = "widget";
 /// clicks around a collapsed tab.
 const WIDGET_WIDTH: f64 = 252.0;
 const WIDGET_HEIGHT: f64 = 60.0;
-const WIDGET_TAB_WIDTH: f64 = 56.0;
-const WIDGET_TAB_HEIGHT: f64 = 54.0;
+const WIDGET_TAB_WIDTH: f64 = 58.0;
+const WIDGET_TAB_HEIGHT: f64 = 74.0;
 
-fn widget_window(app: &AppHandle) -> Option<WebviewWindow> {
+fn widget_window<R: Runtime>(app: &AppHandle<R>) -> Option<WebviewWindow<R>> {
     app.get_webview_window(WIDGET_LABEL)
 }
 
 /// Create the widget window. Returns the live window; the caller decides
 /// whether to show it.
-fn build_widget(app: &AppHandle) -> Result<WebviewWindow, String> {
+fn build_widget<R: Runtime>(app: &AppHandle<R>) -> Result<WebviewWindow<R>, String> {
     let builder =
         WebviewWindowBuilder::new(app, WIDGET_LABEL, WebviewUrl::App("widget.html".into()))
             .title("SnagCraft")
@@ -339,9 +339,10 @@ pub fn close_widget(app: AppHandle) -> Result<(), String> {
 }
 
 /// Toggle the widget; returns whether it is visible afterwards.
-#[tauri::command]
-pub fn toggle_widget(app: AppHandle) -> Result<bool, String> {
-    match widget_window(&app) {
+/// Generic over the runtime so the tray (which is built for any `R: Runtime`)
+/// can call it directly — the command wrapper below pins `Wry`.
+pub fn toggle_widget_for<R: Runtime>(app: &AppHandle<R>) -> Result<bool, String> {
+    match widget_window(app) {
         Some(window) => {
             if window.is_visible().unwrap_or(false) {
                 window
@@ -354,11 +355,17 @@ pub fn toggle_widget(app: AppHandle) -> Result<bool, String> {
             }
         }
         None => {
-            let window = build_widget(&app)?;
+            let window = build_widget(app)?;
             show_widget(&window)?;
             Ok(true)
         }
     }
+}
+
+/// Toggle the widget; returns whether it is visible afterwards.
+#[tauri::command]
+pub fn toggle_widget(app: AppHandle) -> Result<bool, String> {
+    toggle_widget_for(&app)
 }
 
 /// The widget's single channel to the backend.
@@ -510,16 +517,17 @@ mod tests {
 
     #[test]
     fn widget_folds_tighter_than_it_expands() {
-        // Collapsed must be strictly smaller than expanded, or the window resize
-        // would be a no-op and the widget would keep blocking desktop clicks
-        // around the tab.
-        assert!(WIDGET_TAB_WIDTH < WIDGET_WIDTH);
-        assert!(WIDGET_TAB_HEIGHT < WIDGET_HEIGHT);
+        // Collapsed must block strictly less desktop than expanded. The flärp
+        // is a vertical bookmark: intentionally TALLER than the pill, but far
+        // smaller in area — and on Wayland the whole window surface is the
+        // input region, so area is the invariant that matters.
+        const { assert!(WIDGET_TAB_WIDTH < WIDGET_WIDTH) };
+        const { assert!(WIDGET_TAB_WIDTH * WIDGET_TAB_HEIGHT < WIDGET_WIDTH * WIDGET_HEIGHT) };
 
         // Content boxes must match src/widget.css exactly:
         //   window − (6px + 6px horizontal, 5px + 5px vertical padding)
-        assert_eq!(WIDGET_TAB_WIDTH - 12.0, 44.0, "tab width");
-        assert_eq!(WIDGET_TAB_HEIGHT - 10.0, 44.0, "tab height");
+        assert_eq!(WIDGET_TAB_WIDTH - 12.0, 46.0, "tab width");
+        assert_eq!(WIDGET_TAB_HEIGHT - 10.0, 64.0, "tab height");
         assert_eq!(WIDGET_WIDTH - 12.0, 240.0, "pill width");
         assert_eq!(WIDGET_HEIGHT - 10.0, 50.0, "pill height");
     }

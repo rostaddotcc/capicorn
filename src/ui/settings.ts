@@ -354,6 +354,10 @@ export interface SettingsOptions {
   copyDiagnostics?(): Promise<void>;
   /** Microphone devices the backend can record from (Tauri stays in the shell). */
   listAudioSources?(): Promise<AudioSource[]>;
+  /** Launch-at-login state, read from the OS (Tauri stays in the shell). */
+  getAutostart?(): Promise<boolean>;
+  /** Register / unregister SnagCraft as a login item. */
+  setAutostart?(enabled: boolean): Promise<void>;
 }
 
 /** One microphone the recorder can capture. */
@@ -431,6 +435,9 @@ export class SettingsPanel {
   private traySwitch!: HTMLButtonElement;
   private widgetSwitch!: HTMLButtonElement;
   private autosaveSwitch!: HTMLButtonElement;
+  private autostartRow!: HTMLElement;
+  private autostartSwitch!: HTMLButtonElement;
+  private autostartBusy = false;
   private hotkeySwitch!: HTMLButtonElement;
   private hotkeyFullInput!: HTMLInputElement;
   private hotkeyRegionInput!: HTMLInputElement;
@@ -474,6 +481,44 @@ export class SettingsPanel {
     root.hidden = true;
     this.lastFocus?.focus({ preventScroll: true });
     this.lastFocus = null;
+  }
+
+  /** Paint the launch-at-login switch from a known state. */
+  private paintAutostart(on: boolean): void {
+    this.autostartSwitch.classList.toggle("is-on", on);
+    this.autostartSwitch.setAttribute("aria-checked", String(on));
+    this.autostartSwitch.title = on
+      ? "SnagCraft starts when you log in"
+      : "SnagCraft does not start at login";
+  }
+
+  /** The OS owns this state, so every refresh asks it instead of guessing. */
+  private async refreshAutostart(): Promise<void> {
+    const get = this.opts.getAutostart;
+    if (!get) return;
+    try {
+      this.paintAutostart((await get()) === true);
+    } catch {
+      // Unreadable state must not break the rest of the panel.
+    }
+  }
+
+  private async toggleAutostart(): Promise<void> {
+    const get = this.opts.getAutostart;
+    const set = this.opts.setAutostart;
+    if (!get || !set || this.autostartBusy) return;
+    this.autostartBusy = true;
+    const next = this.autostartSwitch.getAttribute("aria-checked") !== "true";
+    try {
+      await set(next);
+      this.paintAutostart(next);
+    } catch (err) {
+      // Revert and say why — a silent snap-back reads as a broken switch.
+      this.paintAutostart(!next);
+      this.autostartSwitch.title = `Could not change start-at-login: ${String(err)}`;
+    } finally {
+      this.autostartBusy = false;
+    }
   }
 
   /** Re-render the whole panel from the shell's live state (idempotent). */
@@ -555,6 +600,8 @@ export class SettingsPanel {
     this.traySwitch.classList.toggle("is-on", settings.minimizeToTray);
     this.traySwitch.setAttribute("aria-checked", String(settings.minimizeToTray));
     this.traySwitch.title = settings.minimizeToTray ? "Minimize to tray is on" : "Minimize to tray is off";
+
+    if (!this.autostartRow.hidden) void this.refreshAutostart();
 
     this.widgetSwitch.classList.toggle("is-on", settings.widget);
     this.widgetSwitch.setAttribute("aria-checked", String(settings.widget));
@@ -753,6 +800,13 @@ export class SettingsPanel {
                 <span class="setting-sub">Closing the window keeps SnagCraft running in the tray.</span>
               </div>
               <button type="button" class="switch" id="settings-tray" role="switch" aria-checked="false" aria-labelledby="tray-label"><span class="switch-knob" aria-hidden="true"></span></button>
+            </div>
+            <div class="setting-row" id="settings-autostart-row" hidden>
+              <div class="setting-row-text">
+                <span class="setting-label" id="autostart-label">Start at login</span>
+                <span class="setting-sub">Launch SnagCraft automatically when you log in, so capture is always one click away.</span>
+              </div>
+              <button type="button" class="switch" id="settings-autostart" role="switch" aria-checked="false" aria-labelledby="autostart-label"><span class="switch-knob" aria-hidden="true"></span></button>
             </div>
             <div class="setting-row">
               <div class="setting-row-text">
@@ -999,6 +1053,11 @@ export class SettingsPanel {
     this.traySwitch = root.querySelector<HTMLButtonElement>("#settings-tray")!;
     this.widgetSwitch = root.querySelector<HTMLButtonElement>("#settings-widget")!;
     this.autosaveSwitch = root.querySelector<HTMLButtonElement>("#settings-autosave")!;
+    this.autostartRow = root.querySelector<HTMLElement>("#settings-autostart-row")!;
+    this.autostartSwitch = root.querySelector<HTMLButtonElement>("#settings-autostart")!;
+    // Launch-at-login needs the shell's OS bridge; without it (plain-browser
+    // tests) the row simply does not exist.
+    this.autostartRow.hidden = !this.opts.getAutostart || !this.opts.setAutostart;
     this.hotkeySwitch = root.querySelector<HTMLButtonElement>("#settings-hotkeys")!;
     this.hotkeyFullInput = root.querySelector<HTMLInputElement>("#hotkey-full")!;
     this.hotkeyRegionInput = root.querySelector<HTMLInputElement>("#hotkey-region")!;
@@ -1027,6 +1086,8 @@ export class SettingsPanel {
       this.opts.updateSettings({ minimizeToTray: next });
       this.refresh();
     });
+
+    this.autostartSwitch.addEventListener("click", () => void this.toggleAutostart());
 
     this.widgetSwitch.addEventListener("click", () => {
       const next = !this.opts.getSettings().widget;

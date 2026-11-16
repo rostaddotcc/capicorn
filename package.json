@@ -1,7 +1,7 @@
 {
   "name": "snagcraft",
   "private": true,
-  "version": "1.0.2",
+  "version": "1.1.0",
   "license": "GPL-3.0-or-later",
   "type": "module",
   "scripts": {
@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@tauri-apps/api": "^2.0.0",
+    "@tauri-apps/plugin-autostart": "^2.0.0",
     "@tauri-apps/plugin-dialog": "^2.0.0",
     "fabric": "^6.0.0",
     "stackblur-canvas": "^3.0.0"

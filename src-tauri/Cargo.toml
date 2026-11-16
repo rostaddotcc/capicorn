@@ -1,6 +1,6 @@
 [package]
 name = "snagcraft"
-version = "1.0.2"
+version = "1.1.0"
 description = "Open-source Snagit-style screen capture and annotation"
 authors = ["rostad"]
 license = "GPL-3.0-or-later"
@@ -16,6 +16,12 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = ["tray-icon", "image-png"] }
 tauri-plugin-dialog = "2"
+tauri-plugin-autostart = "2"
+# tray-icon's default Linux backend (libappindicator) emits NO mouse events.
+# The ksni backend speaks StatusNotifierItem natively and DOES emit left/middle
+# clicks — that is what makes click/double-click-to-restore work on KDE Wayland.
+# Feature unification with tauri's own tray-icon dependency switches the backend.
+tray-icon = { version = "0.25", features = ["ksni"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 anyhow = "1"

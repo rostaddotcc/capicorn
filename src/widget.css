@@ -1,10 +1,11 @@
 /* SnagCraft — floating quick-capture widget.
    Two visual states inside one transparent, frameless window:
 
-     collapsed  → a 44x44 glass "flärp" parked at the window's left edge
+     collapsed  → a 46x64 glass "flärp" — a vertical bookmark tab with the
+                  unicorn mark and a breathing accent spine
      expanded   → the 240x50 capture pill (grip + Full + Region + fold + close)
 
-   The WINDOW size changes with the state (56x54 ↔ 252x60, driven from Rust;
+   The WINDOW size changes with the state (58x74 ↔ 252x60, driven from Rust;
    see `windows.rs`), so nothing invisible ever blocks the desktop behind it.
    Both the tab and the pill are drag surfaces (`data-tauri-drag-region`,
    applied in `widget-main.ts`); buttons sit on top as ordinary controls. */
@@ -14,6 +15,7 @@
   --accent-bright: #a99bff;
   --accent-soft: rgba(139, 124, 246, 0.18);
   --accent-press: rgba(139, 124, 246, 0.30);
+  --spine-glow: rgba(139, 124, 246, 0.55);
 
   --surface: linear-gradient(180deg, rgba(38, 35, 54, 0.84), rgba(22, 20, 33, 0.88));
   --surface-edge: rgba(255, 255, 255, 0.14);
@@ -39,6 +41,7 @@
   --press: rgba(30, 24, 60, 0.12);
   --accent-soft: rgba(139, 124, 246, 0.15);
   --accent-press: rgba(139, 124, 246, 0.26);
+  --spine-glow: rgba(139, 124, 246, 0.40);
 }
 
 * { box-sizing: border-box; }
@@ -55,7 +58,7 @@ html, body {
 
 /* The window is only a hair larger than the drawn surface; the padding is the
    shadow's breathing room. Must match `WIDGET_*` in src-tauri/src/windows.rs:
-     collapsed 56x54 − (6px + 6px, 5px + 5px) = 44x44 tab
+     collapsed 58x74 − (6px + 6px, 5px + 5px) = 46x64 tab
      expanded 252x60 − (6px + 6px, 5px + 5px) = 240x50 pill */
 .widget-body {
   padding: 5px 6px;
@@ -71,17 +74,25 @@ html, body {
 
 /* --------------------------------------------------------------- the tab */
 
+/* The "flärp" is a vertical bookmark tab, not a generic glass square:
+   - a 3px accent SPINE on the left edge — the brand's horn-line, and the
+     thing that makes the tab findable on any wallpaper;
+   - the unicorn mark (same silhouette as the File trigger and app icon);
+   - one tight corner (bottom-left) so the shape reads as a tab, not a button;
+   - a slow, quiet breath on the spine while idle. It never moves, never
+     blinks hard — it just refuses to be invisible. */
+
 .w-tab {
   position: absolute;
   left: 0;
   top: 0;
   display: grid;
   place-items: center;
-  width: 44px;
-  height: 44px;
+  width: 46px;
+  height: 64px;
   padding: 0;
   border: 1px solid var(--stroke);
-  border-radius: 14px;
+  border-radius: 13px 13px 13px 5px;
   background: var(--surface);
   box-shadow: var(--shade-tab), inset 0 1px 0 var(--surface-edge);
   color: var(--accent-bright);
@@ -101,11 +112,39 @@ html, body {
   outline: none;
   box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px var(--accent-soft);
 }
-.w-tab svg { display: block; width: 22px; height: 22px; pointer-events: none; }
+/* The tab glyph is NOT a `.w-icon` (that class pins pill-button icons to
+   17px and used to win the cascade here, shrinking the flärp's mark). */
+.w-tab__glyph { display: block; transform: translateX(1.5px); }
+.w-tab__glyph svg { display: block; width: 26px; height: 26px; pointer-events: none; }
 
 /* The glyph must not be a hit target: the tab itself has to receive the
    pointer so the native drag region (and the expand-on-hover) works. */
 .w-tab > * { pointer-events: none; }
+
+/* The accent spine — shared by tab and pill so the two states read as one
+   object. Absolutely positioned: it never joins the flex layout or the hit
+   testing, the surface underneath stays the drag handle. */
+.w-spine {
+  position: absolute;
+  left: 4px;
+  top: 9px;
+  bottom: 9px;
+  width: 3px;
+  border-radius: 2px;
+  background: linear-gradient(180deg, var(--accent-bright), var(--accent));
+  pointer-events: none;
+}
+.w-tab .w-spine { animation: w-breathe 4.5s ease-in-out infinite; }
+.w-tab:hover .w-spine {
+  animation: none;
+  opacity: 1;
+  box-shadow: 0 0 12px var(--spine-glow);
+}
+
+@keyframes w-breathe {
+  0%, 100% { opacity: 0.55; box-shadow: 0 0 0 rgba(139, 124, 246, 0); }
+  50%      { opacity: 1;    box-shadow: 0 0 10px var(--spine-glow); }
+}
 
 .w-widget[data-state="expanded"] .w-tab {
   opacity: 0;
@@ -136,6 +175,16 @@ html, body {
   transition: opacity 130ms ease, transform 170ms cubic-bezier(0.2, 0.75, 0.3, 1);
 }
 .w-bar:active { cursor: grabbing; }
+
+/* The pill carries the same spine, thinner — family resemblance with the tab
+   it folds into. Sits inside the 6px padding, left of the grip. */
+.w-bar .w-spine {
+  left: 3px;
+  top: 10px;
+  bottom: 10px;
+  width: 2px;
+  opacity: 0.8;
+}
 
 .w-widget[data-state="collapsed"] .w-bar {
   opacity: 0;
@@ -258,4 +307,5 @@ html, body {
   .w-tab, .w-bar, .w-btn, .w-grip,
   .w-btn:not(.w-btn--ghost)::after { transition: none; }
   .w-tab:hover, .w-tab:active, .w-bar { transform: none; }
+  .w-tab .w-spine { animation: none; opacity: 0.9; }
 }

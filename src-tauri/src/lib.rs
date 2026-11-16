@@ -19,6 +19,13 @@ mod windows;
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        // Launch-at-login (Settings → General). Linux uses XDG autostart and
+        // resolves the AppImage path via $APPIMAGE, so the .desktop entry keeps
+        // pointing at the real file, not the temporary FUSE mount.
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
         // Close-guard state: force-quit flag, editor-dirty flag, minimize-to-tray
         // preference. All three are driven by the commands in `windows.rs`.
         .manage(windows::AppFlags::new())

@@ -57,7 +57,12 @@ share* flow in one lightweight app. SnagCraft fills that gap.
 - **Pause/resume** a take without starting a new file
 
 **Desktop integration**
-- System tray, minimise-to-tray, and a collapsible floating capture widget ("flärp")
+- System tray with **click-to-restore** (left click or double click opens the window,
+  middle click toggles the widget, right click is the menu) and minimise-to-tray
+- **Start at login** — Settings → General registers SnagCraft as a login item
+  (XDG autostart on Linux, AppImage-aware; registry on Windows; LaunchAgent on macOS)
+- A collapsible floating capture widget (the "flärp") — a glass bookmark tab with the
+  unicorn mark and a breathing accent spine; hover to open, drag to park anywhere
 - Global hotkeys via the Wayland GlobalShortcuts portal (KDE)
 - Light / dark themes, and a "save before closing?" guard
 
@@ -97,6 +102,7 @@ share* flow in one lightweight app. SnagCraft fills that gap.
 | Editor (annotations, blur, shadows, fonts) | ✅ | ⚠️ |
 | Copy / save (PNG / JPEG / WebP) | ✅ | ⚠️ |
 | System tray + floating widget | ✅ | ⚠️ |
+| Start at login | ✅ XDG autostart | ⚠️ registry Run key |
 | Screen recording | ✅ ScreenCast portal (needs `ffmpeg`) | ⚠️ ffmpeg `gdigrab` (needs `ffmpeg`) |
 | Scrolling capture | ✅ | 🔜 |
 | Global hotkeys | ✅ GlobalShortcuts portal | 🔜 |

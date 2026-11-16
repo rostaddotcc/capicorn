@@ -3,6 +3,11 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
+import {
+  enable as autostartEnable,
+  disable as autostartDisable,
+  isEnabled as autostartIsEnabled,
+} from "@tauri-apps/plugin-autostart";
 import { Editor, type ToolId } from "../editor/editor";
 import { cropDataUrl, selectRegion, type Box } from "./region";
 import {
@@ -4331,6 +4336,11 @@ export function mountApp(root: HTMLElement): void {
         ? raw.map((src) => ({ id: String(src.id), name: String(src.name ?? src.id) }))
         : [];
     },
+    // Launch-at-login: the official plugin owns the OS registration (XDG
+    // autostart on Linux — AppImage-aware —, registry Run key on Windows,
+    // LaunchAgent on macOS). The panel only ever sees these two callbacks.
+    getAutostart: () => autostartIsEnabled(),
+    setAutostart: (enabled) => (enabled ? autostartEnable() : autostartDisable()),
   });
 
   guardSaveBtn.addEventListener("click", () => void onGuardSave());

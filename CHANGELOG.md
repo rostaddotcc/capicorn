@@ -3,6 +3,20 @@
 All notable changes to SnagCraft, newest first. Full release notes for every tag live on
 the [releases page](https://github.com/rostaddotcc/snagcraft/releases).
 
+## v1.1.0
+- **The tray icon answers clicks.** SnagCraft now uses tray-icon's native StatusNotifierItem
+  (ksni) backend on Linux instead of libappindicator, which never emitted mouse events:
+  **left click (or double click) restores the window**, middle click toggles the floating
+  widget, right click opens the menu. The menu gains a *Floating widget* item.
+- **Start at login.** Settings → General gains a *Start at login* switch, backed by the
+  official `tauri-plugin-autostart` — XDG autostart on Linux (AppImage-aware, so the entry
+  points at the real file), the registry Run key on Windows, a LaunchAgent on macOS.
+- **The flärp has a face.** The floating widget's collapsed tab is redesigned from a generic
+  glass square into a vertical bookmark tab: the SnagCraft unicorn mark (the same silhouette
+  as the File trigger and app icon), a breathing accent spine on the left edge, and one tight
+  corner so it reads as a tab. The expanded pill carries the same spine. Also fixes a cascade
+  bug that silently shrank the tab glyph to 17px, and honours `prefers-reduced-motion`.
+
 ## v1.0.2
 - **Separate recording folder (optional).** Settings → Save location gains a *Separate recording folder* switch. Off (the default): recordings land with the screenshots, exactly as before. On: pick a folder just for recordings, or reset to follow the save folder again. The Recent strip scans both folders and merges them, newest first.
 

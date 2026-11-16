@@ -10,7 +10,7 @@ Baseline: Tauri v1.5.2 (commit d25adb1). Rebuild workspace: `rust/` (not yet cre
 | W0 | egui editor spike + Wayland viewport probe | KDE-approved by rostad 2026-11-16 ("appen lirar") |
 | W1 | workspace scaffold, doc model, engine, capture port | KDE-approved by rostad 2026-11-16 |
 | W2 | editor tool parity | KDE-approved by rostad 2026-11-16; UI polish pass landed (sliders) |
-| W3 | shell parity (tray/hotkeys/widget/settings) | pending |
+| W3 | shell parity (tray/hotkeys/widget/settings) | in progress — W3a tracks T1 (platform) + T2 (settings/engine) dispatched |
 | W4 | recording, scrolling, OCR, timelapse | pending |
 | W5 | CLI/JSON/MCP automation + WASM web | pending |
 | W6 | packaging, docs, suite dossier | pending |
@@ -232,6 +232,23 @@ Baseline: Tauri v1.5.2 (commit d25adb1). Rebuild workspace: `rust/` (not yet cre
   launch-tested (exit 124). Delivered to rostad.
 - Next: W3 shell parity (tray, global hotkeys, widget, settings, close-guard,
   single-instance, autostart, file associations) unless rostad redirects.
+
+### 2026-11-16 — wake #9: W3 launched (shell parity)
+- Fresh check: W0–W2 KDE-approved, polish delivered (c8f6714). Next: W3.
+- W3 plan: docs/plans/2026-11-16-w3-shell-parity.md. Recon: live tray.rs
+  (ksni load-bearing, left=restore/middle=widget/menu), hotkeys.rs
+  (GlobalShortcuts portal, one BindShortcuts/session, Print/SHIFT+Print),
+  close-guard tree (windows.rs:96-140), widget 58×74 ↔ 292×50.
+- Parent scaffolded crates/platform (L6, tray-icon 0.25 ksni + ashpd
+  global_shortcuts feature added workspace-wide), registered in xtask layers
+  (22 crates), compile-verified before dispatch.
+- Dispatched W3a (deleg_ff01afff): T1 platform (tray/hotkeys/autostart/
+  single-instance socket, ported from live code, offline tests), T2 io::settings
+  (Settings struct, XDG path, atomic save, corrupt-safe load) + engine
+  settings.get/set commands.
+- Next: W3b — settings panel UI, dark theme, close-guard modal, widget
+  viewport, apps/snagcraft wiring (tray/hotkeys/CLI/launch_request/autostart/
+  file associations), gates, AppImage.
 
 ## Appendix — measured reality
 

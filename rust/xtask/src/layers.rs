@@ -20,6 +20,7 @@ const LAYERS: &[(&str, u8)] = &[
     ("snagcraft-io", 4),
     ("snagcraft-capture", 4),
     ("snagcraft-engine", 5),
+    ("snagcraft-platform", 6),
     ("snagcraft-ui-egui", 6),
     ("snagcraft-automation", 6),
     ("snagcraft", 7),

@@ -199,6 +199,9 @@ const ICONS = {
   openFile: icon(
     `<path d="M2.4 4.9a1.2 1.2 0 0 1 1.2-1.2h2.7l1.5 1.7h4.6a1.2 1.2 0 0 1 1.2 1.2v.7"/><path d="M2.4 7.3h9.8a1 1 0 0 1 1 1.2l-.8 4.3a1.2 1.2 0 0 1-1.2 1H3.2a1.2 1.2 0 0 1-1.2-1z"/>`,
   ),
+  newFile: icon(
+    `<path d="M4 2.6h5.2L13 6.4v7H4z"/><path d="M9.2 2.8v3.6H13"/><path d="M8.5 8.2v3.2M6.9 9.8h3.2"/>`,
+  ),
   saveAs: icon(
     `<path d="M2.4 5.6a1.4 1.4 0 0 1 1.4-1.4h2.2l1.2 1.5h5.4a1.4 1.4 0 0 1 1.4 1.4v4.3a1.4 1.4 0 0 1-1.4 1.4H3.8a1.4 1.4 0 0 1-1.4-1.4z"/><path d="M8 7.6v3.5M6.5 9.6 8 11.1l1.5-1.5"/>`,
   ),
@@ -784,6 +787,7 @@ export function mountApp(root: HTMLElement): void {
             <span class="file-caret" aria-hidden="true">${ICONS.caret}</span>
           </button>
           <div class="capture-menu file-menu" id="file-menu" role="menu" aria-label="File" hidden>
+            <button type="button" class="menu-item" data-file="new" title="New blank canvas — pick a resolution"><span class="menu-icon">${ICONS.newFile}</span><span class="menu-label">New…</span><span class="menu-check"></span><kbd class="menu-key">Ctrl+N</kbd></button>
             <button type="button" class="menu-item" data-file="open" title="Open an image from disk and annotate it"><span class="menu-icon">${ICONS.openFile}</span><span class="menu-label">Open…</span><span class="menu-check"></span><kbd class="menu-key">Ctrl+O</kbd></button>
             <button type="button" class="menu-item" data-file="save-as" title="Choose a name, folder and format"><span class="menu-icon">${ICONS.saveAs}</span><span class="menu-label">Save As…</span><span class="menu-check"></span><kbd class="menu-key">Ctrl+Shift+S</kbd></button>
             <button type="button" class="menu-item" data-file="save" title="Save a copy at the default format"><span class="menu-icon">${ICONS.save}</span><span class="menu-label">Save</span><span class="menu-check"></span><kbd class="menu-key">Ctrl+S</kbd></button>
@@ -1206,6 +1210,8 @@ export function mountApp(root: HTMLElement): void {
             <div><dt><kbd>K</kbd></dt><dd>Callout tool</dd></div>
             <div><dt><kbd>S</kbd></dt><dd>Step numbers tool</dd></div>
             <div><dt><kbd>M</kbd></dt><dd>Magnify tool</dd></div>
+            <div><dt><kbd>Ctrl</kbd> + <kbd>N</kbd></dt><dd>New blank canvas</dd></div>
+            <div><dt><kbd>Ctrl</kbd> + <kbd>O</kbd></dt><dd>Open an image</dd></div>
             <div><dt><kbd>Ctrl</kbd> + <kbd>S</kbd></dt><dd>Save</dd></div>
             <div><dt><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>S</kbd></dt><dd>Save As…</dd></div>
             <div><dt><kbd>Ctrl</kbd> + <kbd>,</kbd></dt><dd>Settings</dd></div>
@@ -1214,6 +1220,38 @@ export function mountApp(root: HTMLElement): void {
             <div><dt><kbd>?</kbd></dt><dd>This help</dd></div>
           </dl>
         </div>
+      </div>
+    </div>
+
+    <div class="modal-backdrop" id="new-modal" hidden>
+      <div class="modal modal-sm" role="dialog" aria-modal="true" aria-labelledby="new-title" tabindex="-1">
+        <header class="modal-head">
+          <div class="modal-heading">
+            <h2 class="modal-title" id="new-title">New canvas</h2>
+            <p class="modal-desc">A blank canvas to draw on — pick a size or type your own.</p>
+          </div>
+          <button type="button" class="icon-btn modal-x" id="new-close" aria-label="Close" title="Close (Esc)">${ICONS.close}</button>
+        </header>
+        <div class="modal-body">
+          <div class="new-presets" id="new-presets" role="radiogroup" aria-label="Resolution presets"></div>
+          <div class="new-custom">
+            <label class="new-dim">Width<input type="number" id="new-w" min="16" max="8192" step="1" inputmode="numeric"></label>
+            <span class="new-x" aria-hidden="true">×</span>
+            <label class="new-dim">Height<input type="number" id="new-h" min="16" max="8192" step="1" inputmode="numeric"></label>
+            <span class="new-unit">px</span>
+          </div>
+          <div class="new-bg-row">
+            <span class="new-bg-label" id="new-bg-label">Background</span>
+            <div class="segmented" role="radiogroup" aria-labelledby="new-bg-label">
+              <button type="button" role="radio" data-bg="white" aria-checked="true">White</button>
+              <button type="button" role="radio" data-bg="transparent" aria-checked="false" tabindex="-1">Transparent</button>
+            </div>
+          </div>
+        </div>
+        <footer class="modal-foot">
+          <button type="button" class="btn-secondary" id="new-cancel">Cancel</button>
+          <button type="button" class="btn-primary" id="new-create">Create</button>
+        </footer>
       </div>
     </div>
 
@@ -4509,6 +4547,9 @@ export function mountApp(root: HTMLElement): void {
       setFileMenuOpen(false);
       fileBtn.focus({ preventScroll: true });
       switch (action) {
+        case "new":
+          openNewCanvas();
+          break;
         case "open":
           void openImage();
           break;
@@ -4877,6 +4918,158 @@ export function mountApp(root: HTMLElement): void {
     }
   }
 
+  /* ------------------------------------------------------- new blank canvas */
+
+  const NEW_PRESETS: ReadonlyArray<{ label: string; w: number; h: number }> = [
+    { label: "Default", w: 1280, h: 800 },
+    { label: "HD", w: 1280, h: 720 },
+    { label: "Full HD", w: 1920, h: 1080 },
+    { label: "QHD", w: 2560, h: 1440 },
+    { label: "4K UHD", w: 3840, h: 2160 },
+    { label: "Square", w: 1080, h: 1080 },
+    { label: "Story", w: 1080, h: 1920 },
+    { label: "Small", w: 800, h: 600 },
+  ];
+  const NEW_CANVAS_KEY = "snagcraft.newCanvas";
+  const clampDim = (n: number): number => Math.max(16, Math.min(8192, Math.round(n)));
+
+  /** A blank canvas is just a generated PNG — every downstream path (export,
+      resize, blur snapshots, crop) keeps working unchanged. */
+  function blankCanvasDataUrl(w: number, h: number, bg: "white" | "transparent"): string {
+    const c = document.createElement("canvas");
+    c.width = w;
+    c.height = h;
+    if (bg === "white") {
+      const ctx = c.getContext("2d");
+      if (ctx) {
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(0, 0, w, h);
+      }
+    }
+    return c.toDataURL("image/png");
+  }
+
+  /** Replace the document with a blank canvas. Unsaved edits are auto-saved as
+      a copy first — the same no-prompt, no-work-loss semantics as browsing Recent. */
+  async function newCanvas(w: number, h: number, bg: "white" | "transparent"): Promise<void> {
+    w = clampDim(w);
+    h = clampDim(h);
+    if (hasImage && isDirty()) await saveEdited();
+    await editor.load(blankCanvasDataUrl(w, h, bg));
+    loadedRecentId = null;
+    setImageState(true);
+    syncDirty();
+    setStatus(`New canvas ${w}×${h} — draw away, or press PrintScreen to capture.`, "success");
+  }
+
+  const newModalEl = $<HTMLDivElement>("#new-modal");
+  const newPresetsEl = $<HTMLDivElement>("#new-presets");
+  const newWEl = $<HTMLInputElement>("#new-w");
+  const newHEl = $<HTMLInputElement>("#new-h");
+  let newBg: "white" | "transparent" = "white";
+
+  newPresetsEl.innerHTML = NEW_PRESETS.map(
+    (p, i) =>
+      `<button type="button" class="new-preset" role="radio" aria-checked="false" data-preset="${i}" tabindex="-1"><span class="new-preset-name">${p.label}</span><span class="new-preset-dims">${p.w} × ${p.h}</span></button>`,
+  ).join("");
+
+  function readNewPrefs(): { w: number; h: number; bg: "white" | "transparent" } {
+    try {
+      const raw = localStorage.getItem(NEW_CANVAS_KEY);
+      if (raw) {
+        const p = JSON.parse(raw) as { w?: number; h?: number; bg?: string };
+        if (Number.isFinite(p.w) && Number.isFinite(p.h)) {
+          return {
+            w: clampDim(p.w as number),
+            h: clampDim(p.h as number),
+            bg: p.bg === "transparent" ? "transparent" : "white",
+          };
+        }
+      }
+    } catch {
+      /* corrupt prefs — fall back to the default */
+    }
+    return { w: 1280, h: 800, bg: "white" };
+  }
+
+  function syncNewSelection(): void {
+    const w = Number(newWEl.value);
+    const h = Number(newHEl.value);
+    for (const b of newPresetsEl.querySelectorAll<HTMLButtonElement>(".new-preset")) {
+      const p = NEW_PRESETS[Number(b.dataset.preset)];
+      const hit = p.w === w && p.h === h;
+      b.classList.toggle("is-active", hit);
+      b.setAttribute("aria-checked", String(hit));
+      b.tabIndex = hit ? 0 : -1;
+    }
+    for (const b of newModalEl.querySelectorAll<HTMLButtonElement>("[data-bg]")) {
+      const hit = b.dataset.bg === newBg;
+      b.classList.toggle("is-active", hit);
+      b.setAttribute("aria-checked", String(hit));
+      b.tabIndex = hit ? 0 : -1;
+    }
+  }
+
+  const openNewCanvas = (): void => {
+    if (!newModalEl.hidden) return;
+    const prefs = readNewPrefs();
+    newWEl.value = String(prefs.w);
+    newHEl.value = String(prefs.h);
+    newBg = prefs.bg;
+    syncNewSelection();
+    newModalEl.hidden = false;
+    void newModalEl.offsetWidth;
+    newModalEl.classList.add("is-open");
+    newWEl.focus({ preventScroll: true });
+    newWEl.select();
+  };
+  const closeNewCanvas = (): void => {
+    if (newModalEl.hidden) return;
+    newModalEl.classList.remove("is-open");
+    newModalEl.hidden = true;
+    fileBtn.focus({ preventScroll: true });
+  };
+  const createFromModal = (): void => {
+    const w = clampDim(Number(newWEl.value) || 1280);
+    const h = clampDim(Number(newHEl.value) || 800);
+    try {
+      localStorage.setItem(NEW_CANVAS_KEY, JSON.stringify({ w, h, bg: newBg }));
+    } catch {
+      /* storage unavailable — the canvas still gets created */
+    }
+    closeNewCanvas();
+    void newCanvas(w, h, newBg);
+  };
+
+  $<HTMLButtonElement>("#new-create").addEventListener("click", createFromModal);
+  $<HTMLButtonElement>("#new-cancel").addEventListener("click", closeNewCanvas);
+  $<HTMLButtonElement>("#new-close").addEventListener("click", closeNewCanvas);
+  newModalEl.addEventListener("pointerdown", (ev) => {
+    if (ev.target === newModalEl) closeNewCanvas();
+  });
+  newPresetsEl.addEventListener("click", (ev) => {
+    const b = (ev.target as HTMLElement).closest<HTMLButtonElement>(".new-preset");
+    if (!b) return;
+    const p = NEW_PRESETS[Number(b.dataset.preset)];
+    newWEl.value = String(p.w);
+    newHEl.value = String(p.h);
+    syncNewSelection();
+  });
+  newWEl.addEventListener("input", syncNewSelection);
+  newHEl.addEventListener("input", syncNewSelection);
+  for (const b of newModalEl.querySelectorAll<HTMLButtonElement>("[data-bg]")) {
+    b.addEventListener("click", () => {
+      newBg = b.dataset.bg === "transparent" ? "transparent" : "white";
+      syncNewSelection();
+    });
+  }
+  newModalEl.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter" && (ev.target === newWEl || ev.target === newHEl)) {
+      ev.preventDefault();
+      createFromModal();
+    }
+  });
+
   document.addEventListener("paste", (ev) => {
     const items = ev.clipboardData?.items;
     if (!items) return;
@@ -4904,6 +5097,11 @@ export function mountApp(root: HTMLElement): void {
   });
 
   const onKeyDown = (ev: KeyboardEvent): void => {
+    if (ev.key === "Escape" && !newModalEl.hidden) {
+      ev.preventDefault();
+      closeNewCanvas();
+      return;
+    }
     if (ev.key === "Escape" && !resizePop.hidden) {
       ev.preventDefault();
       closeResize();
@@ -4999,6 +5197,9 @@ export function mountApp(root: HTMLElement): void {
     } else if (key === "o") {
       ev.preventDefault();
       void openImage();
+    } else if (key === "n") {
+      ev.preventDefault();
+      openNewCanvas();
     }
   };
   window.addEventListener("keydown", onKeyDown);
@@ -5134,6 +5335,8 @@ export function mountApp(root: HTMLElement): void {
 
   selectTool("select", false);
   setImageState(false);
+  // Start on a white canvas so drawing works immediately — never edit "on nothing".
+  void newCanvas(1280, 800, "white");
   setMode(mode, false);
   setRecMode(recMode, false);
   setTheme(theme, false);

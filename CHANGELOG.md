@@ -3,6 +3,17 @@
 All notable changes to SnagCraft, newest first. Full release notes for every tag live on
 the [releases page](https://github.com/rostaddotcc/snagcraft/releases).
 
+## v1.4.0
+- **Draw from the first second.** SnagCraft now opens on a white 1280×800 canvas instead of
+  an empty workspace — no more annotating "on nothing". Tools, Save and Copy are ready
+  immediately; a capture still replaces the canvas exactly as before.
+- **File → New… (`Ctrl+N`)** — a classic new-document dialog with resolution presets
+  (Default 1280×800, HD, Full HD, QHD, 4K UHD, Square, Story, Small), custom width/height
+  (16–8192 px) and a White / Transparent background choice. Your last pick is remembered.
+- **No work lost on New.** Creating a canvas over unsaved edits auto-saves a copy first —
+  the same no-prompt semantics as browsing Recent.
+- Shortcuts overlay and README document `Ctrl+N` / `Ctrl+O`.
+
 ## v1.3.2
 - **Tool shortcuts fixed.** The keys promised in the tooltips now actually work: `G` fill
   bucket, `L` spotlight, `K` callout (previously unmapped!), `E` brush — the handler had

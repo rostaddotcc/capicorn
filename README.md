@@ -58,6 +58,9 @@ share* flow in one lightweight app. SnagCraft fills that gap.
 - Recent-captures filmstrip — **resizable**: drag its top edge for bigger thumbnails
 
 **Open & record**
+- **New canvas** (`Ctrl+N`) — start drawing immediately on a white canvas; pick a preset
+  resolution (HD → 4K, square, story) or type your own, white or transparent background.
+  SnagCraft opens on a default 1280×800 white canvas, ready to draw
 - **File → Open…** (`Ctrl+O`) to annotate any image on disk; drag-and-drop and `Ctrl+V` too
 - **Audio in recordings** — microphone and/or system audio, mixed into AAC
 - **Pause/resume** a take without starting a new file
@@ -90,6 +93,8 @@ share* flow in one lightweight app. SnagCraft fills that gap.
 | `Ctrl` / `Cmd` + `C` | Copy to clipboard |
 | `Ctrl` / `Cmd` + scroll | Zoom in / out |
 | `V` `C` `A` `T` `R` `B` `E` `G` `L` `H` `K` `S` `M` | Tools: Select, Crop, Arrow, Text, Shapes, Blur, Brush, Fill, Spotlight, Highlighter, Callout, Step, Magnify |
+| `Ctrl` / `Cmd` + `N` | New blank canvas (resolution presets) |
+| `Ctrl` / `Cmd` + `O` | Open an image |
 | `Ctrl` / `Cmd` + `S` | Save |
 | `Ctrl` / `Cmd` + `Shift` + `S` | Save As… |
 | `Ctrl` / `Cmd` + `,` | Settings |

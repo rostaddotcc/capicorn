@@ -202,11 +202,25 @@ Baseline: Tauri v1.5.2 (commit d25adb1). Rebuild workspace: `rust/` (not yet cre
 - Parity: 15 more rows ticked (13 tools + copy + paste) → 26 W2 rows total.
 - Delivered W2 AppImage to rostad for the KDE pass (capture → annotate →
   right-click Copy → paste into chat is the acceptance flow).
+- UI child completion report reconciled (all already integrated in 6b57dab):
+  * APPROVED deviation: callout font size uses the LIVE formula
+    min(rail, round(w/4)) clamp 12–120 (tools.ts:1387-1391), not the brief's
+    clamp(w/10,12,48) — live parity wins; table-tested.
+  * Child caught a real W1 bug en route: drag-start read hover_pos (already
+    the moved point on egui's first drag frame) → every drag-create was 0px;
+    fixed with pointer.press_origin(). W1 snapshots never caught it (seeded
+    via commands, not drags) — parity.rs drag gates did.
+  * Stale w1_shell.png removed (unreferenced after test rename); 18 ui-egui
+    tests green.
+  * W2 gaps logged for W3/polish: re-grab/move an existing crop frame (new
+    drag replaces it), inline caption editing of existing callouts (created
+    with default text), brush nib cursor preview.
 
 ## Appendix — measured reality
 
 | Claim | Measured | What changed |
 |---|---|---|
+| W1 drag-create worked (spike pattern) | egui's hover_pos on the first drag frame is already the MOVED point → every drag-created object was 0px | UI child's parity.rs drag gates caught it; fixed with pointer.press_origin(). Lesson: seeded-command snapshots cannot catch pointer-path bugs — drag gates are mandatory |
 | ab_glyph `ascent_unscaled() * scale` gives pixel ascent (W0 spike pattern) | Returns RAW font units (Ubuntu-Light ascent=932, upem 1000) → baseline 26 000 px off-canvas → silent text loss in CPU composite | compose uses `font.as_scaled(scale).ascent()` / `.h_advance(gid)` (ScaleFont trait); W0 spike export had the same latent bug (its on-screen text came from egui painter, which masked it) |
 | egui = "0.37" bundles fonts by default | egui's own `default = []`; `default_fonts` is enabled via eframe — CLI (egui-only) got EMPTY FontDefinitions | workspace egui enables `default_fonts` explicitly; CLI text export verified pixel-wise |
 | Child "tests green" claims imply visual correctness | compose passed 7 unit tests yet rendered no text (no font-present pixel test existed) | parent vision + pixel probes are mandatory on render paths; added render_probe regression tests |

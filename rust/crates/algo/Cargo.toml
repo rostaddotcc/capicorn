@@ -1,0 +1,17 @@
+[package]
+name = "snagcraft-algo"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+snagcraft-raster = { path = "../raster" }
+snagcraft-geom = { path = "../geom" }
+snagcraft-color = { path = "../color" }
+snagcraft-doc = { path = "../doc" }
+
+[lints]
+workspace = true

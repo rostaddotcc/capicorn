@@ -1,0 +1,25 @@
+[package]
+name = "snagcraft-capture"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+snagcraft-raster = { path = "../raster" }
+snagcraft-geom = { path = "../geom" }
+thiserror.workspace = true
+tracing.workspace = true
+image.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+ashpd = { workspace = true }
+tokio = { workspace = true }
+
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+xcap = { workspace = true }
+
+[lints]
+workspace = true

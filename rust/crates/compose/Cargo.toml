@@ -1,0 +1,19 @@
+[package]
+name = "snagcraft-compose"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+snagcraft-doc = { path = "../doc" }
+snagcraft-raster = { path = "../raster" }
+snagcraft-geom = { path = "../geom" }
+snagcraft-color = { path = "../color" }
+snagcraft-algo = { path = "../algo" }
+ab_glyph.workspace = true
+
+[lints]
+workspace = true

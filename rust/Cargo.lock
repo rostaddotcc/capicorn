@@ -3943,11 +3943,9 @@ dependencies = [
 name = "snagcraft-engine"
 version = "0.1.0"
 dependencies = [
- "serde",
+ "ab_glyph",
  "serde_json",
- "snagcraft-algo",
  "snagcraft-capture",
- "snagcraft-color",
  "snagcraft-compose",
  "snagcraft-doc",
  "snagcraft-format",
@@ -3956,8 +3954,6 @@ dependencies = [
  "snagcraft-ops",
  "snagcraft-raster",
  "thiserror 2.0.21",
- "tokio",
- "tracing",
 ]
 
 [[package]]

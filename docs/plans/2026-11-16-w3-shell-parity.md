@@ -86,5 +86,54 @@ pub fn save(s: &Settings) -> Result<(), IoError>; // atomic: temp+rename
 6. Close-guard: dirty → modal; clean+tray → hide; force-quit bypasses.
 7. AppImage launch + rostad KDE pass.
 
+## W3b design (parent, after W3a lands) — mechanisms VERIFIED from vendored 0.37 source
+
+- **Widget viewport:** `ctx.show_viewport_immediate(ViewportId::from_hash("widget"),
+  ViewportBuilder::default().with_transparent(true).with_decorations(false)
+  .with_inner_size([304,60]).with_resizable(false), |ui, _class| widget_ui(ui, app))`
+  (context.rs:4662). Global `App::clear_color → [0,0,0,0]`; main window stays opaque
+  because its panels paint full-size fills. Widget states: folded tab 58×74 ↔
+  expanded pill 292×50 (window 304×60) via `ViewportCommand::InnerSize` +
+  `OuterPosition` (park top-right from `i.viewport().monitor_size`). Drag:
+  `StartDrag` on background drag (W0 probe proved it). Buttons: Full (capture.full),
+  Region (capture.full + tool=Crop), Rec (DISABLED, tooltip "Recording lands in W4"),
+  fold/unfold, close (hide widget + settings.show_widget=false). Enter/Space on the
+  tab expands (a11y). V shortcut = record (W4) — inert until then.
+- **Close guard (eframe 0.37 exact flow):** X-click pushes `ViewportEvent::Close`
+  into `ctx.input(|i| i.viewport().events)` (viewport_info.rs:35, helper :115).
+  App decision tree (live windows.rs:96-140 parity): force_quit → allow; dirty →
+  show save modal + `ViewportCommand::CancelClose`; widget visible → hide main
+  (`ViewportCommand::Visible(false)`) + CancelClose; minimize_to_tray && tray
+  available → Visible(false) + CancelClose; else allow (no CancelClose → eframe
+  closes, epi_integration.rs:428-435). Modal: plain copy "You have unsaved
+  annotations" + picture icon, Save / Discard / Cancel (skill rule). Dirty flag
+  app-level: set on successful edit.* dispatch, cleared on save/export/open/new/
+  capture. Tray Quit sets force_quit.
+- **Tray/hotkeys wiring (apps/snagcraft):** spawn_tray(icon_bytes, tx) +
+  spawn_hotkeys([capture-full: settings.hotkey_full, capture-region:
+  settings.hotkey_region], tx) at startup; drain channels each frame in app_ui →
+  Show → Visible(true)+Focus; Capture → capture flow; ToggleWidget → widget
+  toggle; Quit → force_quit+Close; HotkeyEvent::Activated{id} → capture full/region.
+  Icon bytes: include_bytes! from packaging/snagcraft.png (256px — ksni scales).
+  Headless/locked: spawn errors → status note, app continues (never panic).
+- **Settings panel:** egui::Window "Settings" (toolbar ⚙ button + Ctrl+,): sections
+  General (minimize-to-tray, start-at-login → platform::set_autostart, show-widget,
+  autosave, capture delay), Export (default format combo, quality slider), Save
+  location (dir picker via rfd, filename pattern), Hotkeys (two trigger text fields
+  + "Rebind" → respawn hotkeys), Theme (Light/Dark radio). Every change →
+  settings.set dispatch + io::settings::save + apply (theme visuals, autostart,
+  widget visibility). Dark theme: Visuals::dark() + accent #3d7ec2 + panel fills
+  (#1e2126-ish), same slider trailing fill.
+- **Single instance + CLI:** acquire_or_forward(argv) at main() start; Secondary →
+  exit 0; Primary → drain rx each frame: argv with --capture/--region → capture
+  flow; image path → doc.open. First-launch --capture honored directly.
+- **File associations:** packaging/snagcraft.desktop gains MimeType=image/png;
+  image/jpeg;image/webp; + Exec=snagcraft %F (deb/AppImage desktop file).
+- **Gates:** W3 gates per plan §Gates; kittest: settings window opens, theme swap
+  changes pixels, close-guard modal on dirty (inject ViewportEvent::Close via
+  input_mut), widget viewport renders in kittest (embedded mode note: kittest may
+  embed viewports — verify snapshot shows pill). Live tray/hotkeys/widget-drag =
+  rostad KDE pass.
+
 ## Appendix — measured reality
 (append rows as assumptions break)

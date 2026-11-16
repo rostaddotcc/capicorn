@@ -3,6 +3,14 @@
 All notable changes to SnagCraft, newest first. Full release notes for every tag live on
 the [releases page](https://github.com/rostaddotcc/snagcraft/releases).
 
+## v1.2.1
+- **Fix: the thin AppImage failed to start on Wayland desktops.** The ksni tray dependency
+  added in v1.1.0 accidentally re-enabled tray-icon's default features, which link
+  `libxdo.so.3` — an X11 library many Wayland systems don't have. The thin AppImage (system
+  libraries) died with a loader error; the full AppImage was unaffected. The dependency now
+  builds with `default-features = false`, the binary no longer needs libxdo, and the thin
+  AppImage starts everywhere v1.0.2 did. No behaviour changes.
+
 ## v1.2.0
 - **Shadows actually work now.** Two root causes fixed: fabric strips a shadow before
   stroking unless `affectStroke` is set — outline-only shapes (rects, ellipses, arrows, lines)

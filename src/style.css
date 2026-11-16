@@ -578,6 +578,13 @@ kbd {
   padding: 0;
 }
 
+/* Tool glyphs render a touch larger than the 16px source so the redesigned
+   silhouettes (brush, highlighter, spotlight, blur) stay legible in the row. */
+.chip.tool svg {
+  width: 18px;
+  height: 18px;
+}
+
 /* Classic icon toolbar: the tool name lives in the tooltip, the properties
    rail and the shortcuts overlay — not in a label that wraps the row.
    (The button carries an aria-label, so hiding the span loses nothing.) */

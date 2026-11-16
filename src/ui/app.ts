@@ -268,7 +268,7 @@ const TOOLS: ReadonlyArray<{ id: ShellToolId; label: string; hint: string; icon:
     label: "Blur",
     hint: "Blur sensitive areas (B)",
     icon: icon(
-      `<path d="M8 2.2c2.2 2.6 3.6 4.6 3.6 6.2a3.6 3.6 0 0 1-7.2 0c0-1.6 1.4-3.6 3.6-6.2z"/>`,
+      `<path d="M8 2c2.4 2.8 3.9 5 3.9 6.7a3.9 3.9 0 0 1-7.8 0C4.1 7 5.6 4.8 8 2z"/>`,
     ),
   },
   {
@@ -276,7 +276,7 @@ const TOOLS: ReadonlyArray<{ id: ShellToolId; label: string; hint: string; icon:
     label: "Brush",
     hint: "Freehand pen — size sets the nib (E)",
     icon: icon(
-      `<path d="M2.9 13.1l.8-3 6.9-6.9 2.2 2.2-6.9 6.9z"/><path d="M9.4 4.3 11.6 6.5"/><path d="M2.6 13.4h3.2"/>`,
+      `<path d="M13.5 2.5a1.5 1.5 0 0 1 0 2.1l-6 6-2.1-2.1 6-6a1.5 1.5 0 0 1 2.1 0z"/><path d="M5.4 8.5 2.6 11.3c-.6.6-.8 1.5-1.1 2.2.7-.3 1.6-.5 2.2-1.1l2.8-2.8z" fill="currentColor" stroke="none"/>`,
     ),
   },
   {
@@ -292,7 +292,7 @@ const TOOLS: ReadonlyArray<{ id: ShellToolId; label: string; hint: string; icon:
     label: "Spotlight",
     hint: "Dim everything outside a region (L)",
     icon: icon(
-      `<circle cx="8" cy="8" r="3.1"/><path d="M2.4 2.4 4.5 4.5M13.6 2.4 11.5 4.5M2.4 13.6 4.5 11.5M13.6 13.6 11.5 11.5"/>`,
+      `<circle cx="8" cy="2.3" r="1.2" fill="currentColor" stroke="none"/><path d="M7 3.6 4.6 9.4M9 3.6 11.4 9.4"/><ellipse cx="8" cy="12.6" rx="4.2" ry="1.4"/>`,
     ),
   },
   {
@@ -300,7 +300,7 @@ const TOOLS: ReadonlyArray<{ id: ShellToolId; label: string; hint: string; icon:
     label: "Highlight",
     hint: "Swipe a translucent highlighter (H)",
     icon: icon(
-      `<path d="M3.6 12.4 8.9 7.1l2 2-5.3 5.3-2.6.7z"/><path d="M8.9 7.1 10.7 5.3l2 2-1.8 1.8z"/><path d="M2.8 14.4h4.4"/>`,
+      `<rect x="1.8" y="11.8" width="12.4" height="2.6" rx="1" fill="currentColor" stroke="none" opacity="0.5"/><rect x="2.6" y="5.4" width="7" height="4.2" rx="0.9"/><path d="M9.6 6.4 13 7.5v1.2l-3.4 1.1z"/>`,
     ),
   },
   {

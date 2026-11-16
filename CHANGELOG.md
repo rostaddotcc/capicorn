@@ -3,6 +3,19 @@
 All notable changes to SnagCraft, newest first. Full release notes for every tag live on
 the [releases page](https://github.com/rostaddotcc/snagcraft/releases).
 
+## v1.5.3
+- **Distinct tool icons.** With the icon-only toolbar, four glyphs were hard to tell apart
+  at a glance. Redesigned for clarity at toolbar size:
+  - **Brush** is now a diagonal paintbrush with a filled bristle tip; **Highlight** a
+    *horizontal* marker over a bold swipe band — they differ by orientation, so they can't
+    be confused (they used to be the same diagonal pen).
+  - **Spotlight** is a light beam from a source dot down to a lit pool (was a sun-like ring
+    that read as "brightness").
+  - **Blur** keeps the classic droplet, redrawn cleaner.
+  - Tool glyphs render at 18 px (was 16) so the silhouettes stay legible.
+  Verified in the real toolbar: Brush vs Highlight unmistakable, all four consistent with
+  the rest of the row.
+
 ## v1.5.2
 - **CI green again.** The widget-size unit test still pinned the pre-v1.5.0 pill width
   (240 px) and failed the quality gate, so v1.5.0/v1.5.1 never got their Windows installers

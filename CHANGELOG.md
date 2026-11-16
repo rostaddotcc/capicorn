@@ -3,6 +3,9 @@
 All notable changes to SnagCraft, newest first. Full release notes for every tag live on
 the [releases page](https://github.com/rostaddotcc/snagcraft/releases).
 
+## v1.0.2
+- **Separate recording folder (optional).** Settings → Save location gains a *Separate recording folder* switch. Off (the default): recordings land with the screenshots, exactly as before. On: pick a folder just for recordings, or reset to follow the save folder again. The Recent strip scans both folders and merges them, newest first.
+
 ## v1.0.1
 - **The Recent strip now reads the save folder.** On launch, when the strip opens, after a save and whenever the folder changes it lists the images and recordings actually on disk — newest first, up to 60, with thumbnails — so captures from earlier sessions come back instead of only this session's. Clicking an image reads it from disk; recordings open in the system player. Unsaved in-session captures stay on top.
 - New Rust tests cover the folder scan (images kept, videos kept, other files and subfolders ignored) and the thumbnail encoder.

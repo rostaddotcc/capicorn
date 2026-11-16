@@ -55,6 +55,8 @@ export const WATERMARK_TEXT_KEY = "snagcraft:watermark-text";
 export const WATERMARK_OPACITY_KEY = "snagcraft:watermark-opacity";
 export const WATERMARK_CORNER_KEY = "snagcraft:watermark-corner";
 export const UPLOAD_ENDPOINT_KEY = "snagcraft:upload-endpoint";
+export const SPLIT_FOLDERS_KEY = "snagcraft:split-folders";
+export const REC_DIR_KEY = "snagcraft:rec-dir";
 
 export const DEFAULT_FORMAT: ExportFormat = "png";
 export const DEFAULT_REC_FORMAT: RecFormat = "mp4";
@@ -75,6 +77,10 @@ export const DEFAULT_WATERMARK_TEXT = "";
 export const DEFAULT_WATERMARK_OPACITY = 45;
 /** Corner the watermark sits in. */
 export const DEFAULT_WATERMARK_CORNER = "bottom-right";
+/** Recordings share the screenshot folder until the user opts out. */
+export const DEFAULT_SPLIT_FOLDERS = false;
+/** Empty means "follow the save folder". */
+export const DEFAULT_REC_DIR = "";
 export const WATERMARK_CORNERS = ["top-left", "top-right", "bottom-left", "bottom-right"] as const;
 /** Delays offered in Settings → Capture. */
 export const TIMER_CHOICES: ReadonlyArray<number> = [0, 3, 5, 10];
@@ -131,6 +137,10 @@ export interface ExportSettings {
   watermarkCorner: string;
   /** POST target for File → Upload…; empty hides the action. */
   uploadEndpoint: string;
+  /** Give recordings their own folder instead of sharing the save folder. */
+  splitFolders: boolean;
+  /** Recording folder when split; empty follows the save folder. */
+  recDir: string;
 }
 
 /**
@@ -237,6 +247,8 @@ export function readExportSettings(): ExportSettings {
       ? (store(WATERMARK_CORNER_KEY) as string)
       : DEFAULT_WATERMARK_CORNER,
     uploadEndpoint: (store(UPLOAD_ENDPOINT_KEY) ?? "").trim(),
+    splitFolders: store(SPLIT_FOLDERS_KEY) === "true",
+    recDir: (store(REC_DIR_KEY) ?? DEFAULT_REC_DIR).trim(),
   };
 }
 
@@ -261,6 +273,8 @@ export function saveExportSettings(settings: ExportSettings): void {
     localStorage.setItem(WATERMARK_OPACITY_KEY, String(settings.watermarkOpacity));
     localStorage.setItem(WATERMARK_CORNER_KEY, settings.watermarkCorner);
     localStorage.setItem(UPLOAD_ENDPOINT_KEY, settings.uploadEndpoint);
+    localStorage.setItem(SPLIT_FOLDERS_KEY, String(settings.splitFolders));
+    localStorage.setItem(REC_DIR_KEY, settings.recDir);
   } catch {
     /* storage unavailable — the preferences just aren't remembered */
   }
@@ -315,6 +329,12 @@ export interface SettingsOptions {
   changeSaveDir(): Promise<string | null>;
   /** Put the save folder back to the OS default; resolves to the folder (or null). */
   resetSaveDir(): Promise<string | null>;
+  /** Recording folder, or null when it follows the save folder. */
+  getRecDir(): string | null;
+  /** Pick a recording folder; resolves to the new folder (or null). */
+  changeRecDir(): Promise<string | null>;
+  /** Make recordings follow the save folder again. */
+  resetRecDir(): Promise<string | null>;
   /** Version string for the footer, when the shell has one. */
   getVersion(): string | null;
   /** Called when the user picks a theme inside the panel. */
@@ -397,6 +417,12 @@ export class SettingsPanel {
   private watermarkOpacityOut!: HTMLOutputElement;
   private watermarkCornerSelect!: HTMLSelectElement;
   private uploadInput!: HTMLInputElement;
+  private splitSwitch!: HTMLButtonElement;
+  private recRow!: HTMLElement;
+  private recActions!: HTMLElement;
+  private recDirEl!: HTMLElement;
+  private recChangeBtn!: HTMLButtonElement;
+  private recResetBtn!: HTMLButtonElement;
   private qualityField!: HTMLElement;
   private qualityInput!: HTMLInputElement;
   private qualityOut!: HTMLOutputElement;
@@ -457,6 +483,21 @@ export class SettingsPanel {
     this.dirPath.textContent = dir ?? "Not set yet";
     this.dirPath.title = dir ?? "";
     this.dirPath.classList.toggle("is-empty", !dir);
+
+    // Recording folder: only offered when the user splits the two.
+    const settingsNow = this.opts.getSettings();
+    const split = settingsNow.splitFolders;
+    this.splitSwitch.classList.toggle("is-on", split);
+    this.splitSwitch.setAttribute("aria-checked", String(split));
+    this.splitSwitch.title = split
+      ? "Recordings have their own folder"
+      : "Recordings share the save folder";
+    this.recRow.hidden = !split;
+    this.recActions.hidden = !split;
+    const recDir = this.opts.getRecDir();
+    this.recDirEl.textContent = recDir ?? "Same as the save folder";
+    this.recDirEl.title = recDir ?? "";
+    this.recDirEl.classList.toggle("is-empty", !recDir);
 
     const version = this.opts.getVersion();
     this.versionEl.textContent = version ? `SnagCraft ${version}` : "SnagCraft";
@@ -819,6 +860,22 @@ export class SettingsPanel {
               <button type="button" class="btn-secondary" id="settings-reset">Reset to default</button>
               <span class="token-hint">Puts the folder back to the OS default (usually Pictures).</span>
             </div>
+            <div class="setting-row">
+              <div class="setting-row-text">
+                <span class="setting-label" id="split-folders-label">Separate recording folder</span>
+                <span class="setting-sub">Off: recordings land with the screenshots. On: pick a folder just for recordings.</span>
+              </div>
+              <button type="button" class="switch" id="settings-split-folders" role="switch" aria-checked="false" aria-labelledby="split-folders-label"><span class="switch-knob" aria-hidden="true"></span></button>
+            </div>
+            <div class="dir-row" id="settings-rec-row" hidden>
+              <span class="dir-icon" aria-hidden="true">${ICONS.folder}</span>
+              <code class="dir-path" id="settings-rec-dir">Same as the save folder</code>
+              <button type="button" class="btn-secondary" id="settings-rec-change">Change…</button>
+            </div>
+            <div class="dir-actions" id="settings-rec-actions" hidden>
+              <button type="button" class="btn-secondary" id="settings-rec-reset">Use the save folder</button>
+              <span class="token-hint">Recordings follow the screenshot folder again.</span>
+            </div>
           </section>
 
           <section class="setting" data-section="export">
@@ -928,6 +985,12 @@ export class SettingsPanel {
     this.watermarkOpacityOut = root.querySelector<HTMLOutputElement>("#settings-watermark-opacity-out")!;
     this.watermarkCornerSelect = root.querySelector<HTMLSelectElement>("#settings-watermark-corner")!;
     this.uploadInput = root.querySelector<HTMLInputElement>("#settings-upload")!;
+    this.splitSwitch = root.querySelector<HTMLButtonElement>("#settings-split-folders")!;
+    this.recRow = root.querySelector<HTMLElement>("#settings-rec-row")!;
+    this.recActions = root.querySelector<HTMLElement>("#settings-rec-actions")!;
+    this.recDirEl = root.querySelector<HTMLElement>("#settings-rec-dir")!;
+    this.recChangeBtn = root.querySelector<HTMLButtonElement>("#settings-rec-change")!;
+    this.recResetBtn = root.querySelector<HTMLButtonElement>("#settings-rec-reset")!;
     this.qualityField = root.querySelector<HTMLElement>("#settings-quality-field")!;
     this.qualityInput = root.querySelector<HTMLInputElement>("#settings-quality")!;
     this.qualityOut = root.querySelector<HTMLOutputElement>("#settings-quality-out")!;
@@ -1086,6 +1149,18 @@ export class SettingsPanel {
     this.uploadInput.addEventListener("blur", () => {
       this.opts.updateSettings({ uploadEndpoint: this.uploadInput.value.trim() });
       this.refresh();
+    });
+
+    this.splitSwitch.addEventListener("click", () => {
+      const next = !this.opts.getSettings().splitFolders;
+      this.opts.updateSettings({ splitFolders: next });
+      this.refresh();
+    });
+    this.recChangeBtn.addEventListener("click", () => {
+      void this.opts.changeRecDir().then(() => this.refresh());
+    });
+    this.recResetBtn.addEventListener("click", () => {
+      void this.opts.resetRecDir().then(() => this.refresh());
     });
     this.qualityInput.addEventListener("input", () => {
       const quality = clampInt(this.qualityInput.value, DEFAULT_QUALITY, 1, 100);

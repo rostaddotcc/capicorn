@@ -1561,6 +1561,16 @@ export function mountApp(root: HTMLElement): void {
     ) {
       applyWatermark();
     }
+    if (patch.splitFolders !== undefined || patch.recDir !== undefined) {
+      void refreshRecentFromFolder();
+      if (!opts.silent && patch.splitFolders !== undefined) {
+        setStatus(
+          settings.splitFolders
+            ? "Recordings get their own folder"
+            : "Recordings share the save folder",
+        );
+      }
+    }
     if (!opts.silent) {
       if (patch.timer !== undefined) {
         setStatus(
@@ -1655,6 +1665,36 @@ export function mountApp(root: HTMLElement): void {
       }
       return saveDir;
     }
+  }
+
+  /** Pick a folder just for recordings (only used when the two are split). */
+  async function pickRecDir(): Promise<string | null> {
+    try {
+      const dir = await invoke<string>("pick_save_dir");
+      const trimmed = typeof dir === "string" ? dir.trim() : "";
+      if (!trimmed) return settings.recDir || null;
+      settings = { ...settings, recDir: trimmed };
+      saveExportSettings(settings);
+      setStatus(`Recording folder: ${trimmed}`);
+      panel?.refresh();
+      void refreshRecentFromFolder();
+      return trimmed;
+    } catch (e) {
+      const message = errText(e);
+      if (/cancel/i.test(message)) setStatus("Recording folder change cancelled");
+      else setStatus(`Could not change the recording folder: ${message}`, "error");
+      return settings.recDir || null;
+    }
+  }
+
+  /** Recordings follow the save folder again. */
+  async function resetRecDir(): Promise<string | null> {
+    settings = { ...settings, recDir: "" };
+    saveExportSettings(settings);
+    setStatus("Recording folder follows the save folder again.");
+    panel?.refresh();
+    void refreshRecentFromFolder();
+    return null;
   }
 
   /**
@@ -2248,7 +2288,11 @@ export function mountApp(root: HTMLElement): void {
       setStatus("Wait for the capture to finish before recording.");
       return;
     }
-    const dir = await ensureSaveDir();
+    // Recordings share the save folder unless the user split them off.
+    const dir =
+      settings.splitFolders && settings.recDir.trim()
+        ? settings.recDir.trim()
+        : await ensureSaveDir();
     if (!dir) {
       setStatus("Pick a save folder before recording.", "error");
       return;
@@ -3785,25 +3829,35 @@ export function mountApp(root: HTMLElement): void {
    * on disk yet (auto-save off) are kept on top.
    */
   async function refreshRecentFromFolder(): Promise<void> {
-    const dir = await ensureSaveDir();
-    if (!dir) return;
+    const dirs: string[] = [];
+    const primary = await ensureSaveDir();
+    if (primary) dirs.push(primary);
+    const rec = settings.splitFolders ? settings.recDir.trim() : "";
+    if (rec && !dirs.includes(rec)) dirs.push(rec);
+    if (!dirs.length) return;
     try {
-      const files = await invoke<FolderMedia[]>("list_folder_media", { dir });
-      const fromFolder: RecentShot[] = files.map((file) => {
-        const ext = (file.name.split(".").pop() ?? "").toLowerCase();
-        return {
-          id: `file-${file.path}`,
-          dataUrl: "",
-          thumb: file.thumb,
-          ts: file.modified,
-          format: settings.format,
-          label: file.kind === "video" ? "Recording" : "Image",
-          kind: file.kind,
-          path: file.path,
-          ext,
-          name: file.name,
-        };
-      });
+      const seen = new Set<string>();
+      const fromFolder: RecentShot[] = [];
+      for (const dir of dirs) {
+        const files = await invoke<FolderMedia[]>("list_folder_media", { dir });
+        for (const file of files) {
+          if (seen.has(file.path)) continue;
+          seen.add(file.path);
+          const ext = (file.name.split(".").pop() ?? "").toLowerCase();
+          fromFolder.push({
+            id: `file-${file.path}`,
+            dataUrl: "",
+            thumb: file.thumb,
+            ts: file.modified,
+            format: settings.format,
+            label: file.kind === "video" ? "Recording" : "Image",
+            kind: file.kind,
+            path: file.path,
+            ext,
+            name: file.name,
+          });
+        }
+      }
       const saved = new Set(fromFolder.map((entry) => entry.path));
       const sessionOnly = recent.filter((entry) => !entry.path || !saved.has(entry.path));
       recent = [...sessionOnly, ...fromFolder]
@@ -4257,6 +4311,9 @@ export function mountApp(root: HTMLElement): void {
     getSaveDir: () => saveDir,
     changeSaveDir: () => pickSaveDir(),
     resetSaveDir: () => resetSaveDir(),
+    getRecDir: () => (settings.splitFolders && settings.recDir ? settings.recDir : null),
+    changeRecDir: () => pickRecDir(),
+    resetRecDir: () => resetRecDir(),
     getVersion: () => (appVersion ? appVersion : null),
     setTheme: (next) => setTheme(next),
     getSettings: () => settings,

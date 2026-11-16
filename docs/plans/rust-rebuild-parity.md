@@ -47,7 +47,7 @@ Effects are applied to the **image layer at export resolution** (scene px × exp
 
 | Feature | Evidence | rust |
 |---|---|---|
-| Three modes `gaussian` / `pixelate` / `blackout`, persisted in `snagcraft:blur-mode` | `blur.ts:18`; `app.ts:117` (`BlurMode`), `:421` (key), `:570` (fallback to default) | pending — mode enum modeled `rust/crates/doc/src/lib.rs:31-35` |
+| Three modes `gaussian` / `pixelate` / `blackout`, persisted in `snagcraft:blur-mode` | `blur.ts:18`; `app.ts:117` (`BlurMode`), `:421` (key), `:570` (fallback to default) | W2 |
 | Gaussian via StackBlur convolution (same result on every WebEngine) | `blur.ts:6-11`, `gaussianBlur` `:174` | W2 |
 | Pixelate — block-size mosaic | `blur.ts:219`, block size shares the radius setting `:19` | W2 |
 | Blackout — solid ink `#111827`, no intensity slider | `blur.ts:32` (`BLACKOUT_INK`), `blackout` `:244`; UI `app.ts:3314` (`usesIntensity = blurMode !== "blackout"`), dimmed slider `app.ts:3480` | W2 |

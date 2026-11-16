@@ -1686,8 +1686,11 @@ pub fn widget_ui(ui: &mut egui::Ui, app: &mut SnagCraftApp, class: egui::Viewpor
         })
         .response
         .on_disabled_hover_text("Recording lands in W4");
-        // Red live dot next to the disabled Rec button, probe styling.
-        painter.circle_filled(pos2(pill.right() - 96.0, pill.center().y), 4.0, WIDGET_RED);
+        // Red live dot next to the disabled Rec button, probe styling (skipped
+        // when a narrow host would make it collide with the fold control).
+        if pill.width() > 240.0 {
+            painter.circle_filled(pos2(pill.right() - 96.0, pill.center().y), 4.0, WIDGET_RED);
+        }
 
         let fold_rect = Rect::from_min_size(pos2(pill.right() - 62.0, y), vec2(26.0, btn_h));
         if widget_button(ui, fold_rect, "»").clicked() {
@@ -1715,22 +1718,25 @@ pub fn widget_ui(ui: &mut egui::Ui, app: &mut SnagCraftApp, class: egui::Viewpor
             }
         }
     } else {
-        // Folded tab: wordmark, live dot, expand chevron.
+        // Folded tab: wordmark, live dot, expand chevron — laid out against the
+        // rect we actually got, so a host that hands us a shorter/wider area
+        // (embedded viewports do) still stacks cleanly instead of colliding.
+        let chevron_h = (pill.height() * 0.26).clamp(14.0, 20.0);
         painter.text(
-            pos2(pill.center().x, pill.top() + 15.0),
+            pos2(pill.center().x, pill.top() + chevron_h * 0.75),
             Align2::CENTER_CENTER,
             "S",
-            FontId::proportional(16.0),
+            FontId::proportional((pill.width() * 0.30).clamp(12.0, 16.0)),
             Color32::from_rgb(235, 238, 245),
         );
         painter.circle_filled(
-            pos2(pill.center().x, pill.center().y + 4.0),
-            4.5,
+            pos2(pill.center().x, pill.center().y + 2.0),
+            (pill.width() * 0.09).clamp(3.5, 5.0),
             WIDGET_RED,
         );
         let chevron = Rect::from_center_size(
-            pos2(pill.center().x, pill.bottom() - 13.0),
-            vec2(30.0, 20.0),
+            pos2(pill.center().x, pill.bottom() - chevron_h * 0.5 - 3.0),
+            vec2((pill.width() * 0.62).clamp(20.0, 30.0), chevron_h),
         );
         let expand = ui
             .put(

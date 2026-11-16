@@ -1160,6 +1160,134 @@ fn draw_text_centered<F: Font>(
     draw_text_at(img, font, left, baseline, text, color, run);
 }
 
+// ----------------------------------------------------------------- watermark
+
+/// Which corner an export watermark sits in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Corner {
+    BottomRight,
+    BottomLeft,
+    TopRight,
+    TopLeft,
+}
+
+/// Gap between the watermark and the image edge, in px.
+pub const WATERMARK_MARGIN: f32 = 16.0;
+/// Live default opacity (`src/editor/watermark.ts:30`, `DEFAULT_WATERMARK`).
+pub const DEFAULT_WATERMARK_OPACITY: f32 = 0.45;
+/// Live minimum opacity (`normalizeWatermark`: `Math.max(0.02, …)`).
+pub const MIN_WATERMARK_OPACITY: f32 = 0.02;
+/// Full opacity.
+pub const MAX_WATERMARK_OPACITY: f32 = 1.0;
+/// Live minimum size (`normalizeWatermark`).
+pub const MIN_WATERMARK_SIZE: f32 = 8.0;
+/// Hostile-input cap on the watermark size (the live UI tops out at 400 px on an
+/// export canvas; 200 keeps the mark readable without swallowing a screenshot).
+pub const MAX_WATERMARK_SIZE: f32 = 200.0;
+/// Live default size (`DEFAULT_WATERMARK.size`).
+pub const DEFAULT_WATERMARK_SIZE: f32 = 22.0;
+/// Live clamps watermark text to 120 characters (`normalizeWatermark`).
+pub const MAX_WATERMARK_TEXT: usize = 120;
+/// Shadow strength relative to the text alpha (live `rgba(0, 0, 0, 0.5)`).
+const WATERMARK_SHADOW_RATIO: f32 = 0.5;
+
+/// Burn a text watermark into `img` (export only — the editor stays clean).
+///
+/// Parity with the live canvas watermark (`src/editor/watermark.ts:62-90`):
+/// white 600-weight text, `opacity` applied to the text alpha, a soft dark
+/// shadow behind it (so light text stays readable on a light screenshot), and
+/// the mark tucked into `corner` with a fixed [`WATERMARK_MARGIN`] gutter.
+///
+/// Hostile input is clamped, never trusted: `opacity` to
+/// [`MIN_WATERMARK_OPACITY`]..=[`MAX_WATERMARK_OPACITY`] (non-finite → the live
+/// default), `size` to [`MIN_WATERMARK_SIZE`]..=[`MAX_WATERMARK_SIZE`]
+/// (non-finite → the live default), text to [`MAX_WATERMARK_TEXT`] chars.
+///
+/// A blank text or `font: None` is a no-op, exactly like the live
+/// `drawWatermark` early return — an export without a font must not lose the
+/// image, it just loses the mark.
+pub fn apply_watermark<F: Font>(
+    img: &mut Surface,
+    text: &str,
+    opacity: f32,
+    corner: Corner,
+    font: Option<&F>,
+    size: f32,
+) {
+    let text = text.trim();
+    if text.is_empty() {
+        return;
+    }
+    let Some(font) = font else {
+        return;
+    };
+    let (width, height) = img.dimensions();
+    if width == 0 || height == 0 {
+        return;
+    }
+
+    let opacity = if opacity.is_finite() {
+        opacity.clamp(MIN_WATERMARK_OPACITY, MAX_WATERMARK_OPACITY)
+    } else {
+        DEFAULT_WATERMARK_OPACITY
+    };
+    let size = if size.is_finite() {
+        size.clamp(MIN_WATERMARK_SIZE, MAX_WATERMARK_SIZE)
+    } else {
+        DEFAULT_WATERMARK_SIZE
+    };
+    let text: String = text.chars().take(MAX_WATERMARK_TEXT).collect();
+
+    let scale = PxScale::from(size);
+    let Some(text_w) = text_width(font, &text, scale) else {
+        return;
+    };
+    let ascent = font.as_scaled(scale).ascent();
+
+    let left = match corner {
+        Corner::BottomRight | Corner::TopRight => {
+            (width as f32 - WATERMARK_MARGIN - text_w).max(WATERMARK_MARGIN)
+        }
+        Corner::BottomLeft | Corner::TopLeft => WATERMARK_MARGIN,
+    };
+    let baseline = match corner {
+        Corner::TopRight | Corner::TopLeft => WATERMARK_MARGIN + ascent,
+        // Bottom corners sit on the baseline one gutter above the edge, and
+        // never climb into the top gutter on a short image.
+        Corner::BottomRight | Corner::BottomLeft => {
+            (height as f32 - WATERMARK_MARGIN).max(WATERMARK_MARGIN + ascent)
+        }
+    };
+
+    let run = Run { size, shear: 0.0 };
+    let text_alpha = (opacity * 255.0).round().clamp(0.0, 255.0) as u8;
+    let shadow_alpha = (opacity * WATERMARK_SHADOW_RATIO * 255.0)
+        .round()
+        .clamp(0.0, 255.0) as u8;
+    // Live: `shadowOffsetY = max(1, size * 0.04)`, no horizontal offset. A hair
+    // of x keeps the shadow visible under thin strokes too.
+    let shadow_offset = (size * 0.04).max(1.0);
+
+    draw_text_at(
+        img,
+        font,
+        left + 0.5,
+        baseline + shadow_offset,
+        &text,
+        Rgba::new(0, 0, 0, shadow_alpha),
+        run,
+    );
+    draw_text_at(
+        img,
+        font,
+        left,
+        baseline,
+        &text,
+        Rgba::new(255, 255, 255, text_alpha),
+        run,
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2253,5 +2381,273 @@ mod tests {
         });
         let out = composite::<ab_glyph::FontVec>(&doc, None);
         assert_eq!(out.dimensions(), (0, 0));
+    }
+
+    // ------------------------------------------------------------- watermark
+
+    fn gray(w: u32, h: u32) -> Surface {
+        snagcraft_raster::filled(Size::new(w, h), Rgba::new(70, 70, 70, 255))
+    }
+
+    /// Bounding box of the pixels the watermark changed.
+    fn ink_bbox(base: &Surface, out: &Surface) -> Option<(u32, u32, u32, u32)> {
+        let (w, h) = base.dimensions();
+        let (mut x0, mut y0, mut x1, mut y1) = (u32::MAX, u32::MAX, 0u32, 0u32);
+        let mut any = false;
+        for y in 0..h {
+            for x in 0..w {
+                if base.get_pixel(x, y) != out.get_pixel(x, y) {
+                    any = true;
+                    x0 = x0.min(x);
+                    y0 = y0.min(y);
+                    x1 = x1.max(x);
+                    y1 = y1.max(y);
+                }
+            }
+        }
+        any.then_some((x0, y0, x1, y1))
+    }
+
+    fn brightest(img: &Surface) -> u8 {
+        img.pixels().map(|p| p.0[0]).max().unwrap_or(0)
+    }
+
+    #[test]
+    fn watermark_defaults_match_the_live_editor() {
+        // src/editor/watermark.ts:28-33 (DEFAULT_WATERMARK).
+        assert!((DEFAULT_WATERMARK_OPACITY - 0.45).abs() < f32::EPSILON);
+        assert!((DEFAULT_WATERMARK_SIZE - 22.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn watermark_lands_in_the_requested_corner() {
+        let Some(font) = test_font() else {
+            return;
+        };
+        let base = gray(260, 140);
+        let (w, h) = base.dimensions();
+
+        for (corner, want_left, want_bottom) in [
+            (Corner::TopLeft, true, false),
+            (Corner::TopRight, false, false),
+            (Corner::BottomLeft, true, true),
+            (Corner::BottomRight, false, true),
+        ] {
+            let mut img = base.clone();
+            apply_watermark(&mut img, "rostad.cc", 0.9, corner, Some(&font), 40.0);
+            let Some((x0, y0, x1, y1)) = ink_bbox(&base, &img) else {
+                panic!("{corner:?} painted nothing");
+            };
+            let cx = (x0 + x1) / 2;
+            let cy = (y0 + y1) / 2;
+            assert_eq!(cx < w / 2, want_left, "{corner:?} horizontal placement");
+            assert_eq!(cy > h / 2, want_bottom, "{corner:?} vertical placement");
+            assert!(
+                x0 >= 8 && y0 >= 8 && x1 <= w - 2 && y1 <= h - 2,
+                "must keep a gutter: ({x0}, {y0}, {x1}, {y1})"
+            );
+        }
+    }
+
+    #[test]
+    fn watermark_is_white_text_over_a_shadow() {
+        let Some(font) = test_font() else {
+            return;
+        };
+        let base = gray(220, 90);
+        let mut img = base.clone();
+        apply_watermark(
+            &mut img,
+            "hello",
+            1.0,
+            Corner::BottomRight,
+            Some(&font),
+            32.0,
+        );
+
+        let (x0, y0, x1, y1) = ink_bbox(&base, &img).expect("ink");
+        let mut saw_white = false;
+        let mut saw_dark = false;
+        for y in y0..=y1 {
+            for x in x0..=x1 {
+                let p = img.get_pixel(x, y).0;
+                saw_white |= p[0] > 240 && p[1] > 240 && p[2] > 240;
+                // The shadow darkens the 70-grey background.
+                saw_dark |= p[0] < 60;
+            }
+        }
+        assert!(saw_white, "the mark itself is white");
+        assert!(saw_dark, "the shadow keeps it legible on light images");
+    }
+
+    #[test]
+    fn watermark_opacity_is_clamped_and_blended() {
+        let Some(font) = test_font() else {
+            return;
+        };
+        let base = gray(200, 80);
+
+        let mut faint = base.clone();
+        apply_watermark(
+            &mut faint,
+            "abc",
+            0.0,
+            Corner::BottomLeft,
+            Some(&font),
+            30.0,
+        );
+        let mut faintest = base.clone();
+        apply_watermark(
+            &mut faintest,
+            "abc",
+            MIN_WATERMARK_OPACITY,
+            Corner::BottomLeft,
+            Some(&font),
+            30.0,
+        );
+        assert_eq!(faint, faintest, "opacity below the floor clamps to 0.02");
+
+        let mut opaque = base.clone();
+        apply_watermark(
+            &mut opaque,
+            "abc",
+            5.0,
+            Corner::BottomLeft,
+            Some(&font),
+            30.0,
+        );
+        let mut full = base.clone();
+        apply_watermark(
+            &mut full,
+            "abc",
+            MAX_WATERMARK_OPACITY,
+            Corner::BottomLeft,
+            Some(&font),
+            30.0,
+        );
+        assert_eq!(opaque, full, "opacity above 1 clamps to 1");
+
+        let mut half = base.clone();
+        apply_watermark(&mut half, "abc", 0.5, Corner::BottomLeft, Some(&font), 30.0);
+        assert!(
+            brightest(&half) < brightest(&full),
+            "half opacity must be dimmer than full"
+        );
+        assert!(
+            brightest(&half) > 70,
+            "half opacity must still lighten the grey base"
+        );
+    }
+
+    #[test]
+    fn watermark_size_is_clamped() {
+        let Some(font) = test_font() else {
+            return;
+        };
+        let base = gray(240, 120);
+
+        let mut tiny = base.clone();
+        apply_watermark(&mut tiny, "abc", 0.8, Corner::TopLeft, Some(&font), 1.0);
+        let mut smallest = base.clone();
+        apply_watermark(
+            &mut smallest,
+            "abc",
+            0.8,
+            Corner::TopLeft,
+            Some(&font),
+            MIN_WATERMARK_SIZE,
+        );
+        assert_eq!(tiny, smallest, "size below the floor clamps to 8");
+
+        let mut huge = base.clone();
+        apply_watermark(&mut huge, "abc", 0.8, Corner::TopLeft, Some(&font), 5_000.0);
+        let mut largest = base.clone();
+        apply_watermark(
+            &mut largest,
+            "abc",
+            0.8,
+            Corner::TopLeft,
+            Some(&font),
+            MAX_WATERMARK_SIZE,
+        );
+        assert_eq!(huge, largest, "size above the cap clamps to 200");
+    }
+
+    #[test]
+    fn watermark_text_is_bounded() {
+        let Some(font) = test_font() else {
+            return;
+        };
+        let base = gray(300, 100);
+        let long: String = std::iter::repeat_n('w', MAX_WATERMARK_TEXT * 4).collect();
+        let prefix: String = long.chars().take(MAX_WATERMARK_TEXT).collect();
+
+        let mut clamped = base.clone();
+        apply_watermark(
+            &mut clamped,
+            &long,
+            0.7,
+            Corner::BottomLeft,
+            Some(&font),
+            24.0,
+        );
+        let mut expected = base.clone();
+        apply_watermark(
+            &mut expected,
+            &prefix,
+            0.7,
+            Corner::BottomLeft,
+            Some(&font),
+            24.0,
+        );
+        assert_eq!(clamped, expected);
+    }
+
+    #[test]
+    fn watermark_skips_empty_text_and_missing_font() {
+        let Some(font) = test_font() else {
+            return;
+        };
+        let base = gray(160, 80);
+
+        for text in ["", "   ", "\t\n"] {
+            let mut img = base.clone();
+            apply_watermark(&mut img, text, 0.8, Corner::BottomRight, Some(&font), 24.0);
+            assert_eq!(img, base, "{text:?} must paint nothing");
+        }
+
+        let mut img = base.clone();
+        apply_watermark::<ab_glyph::FontVec>(&mut img, "abc", 0.8, Corner::BottomRight, None, 24.0);
+        assert_eq!(img, base, "no font, no mark");
+    }
+
+    #[test]
+    fn watermark_tolerates_degenerate_images_and_settings() {
+        let Some(font) = test_font() else {
+            return;
+        };
+        // Hostile numbers never panic and never paint.
+        let mut empty = Surface::new(0, 0);
+        apply_watermark(&mut empty, "abc", 0.8, Corner::TopLeft, Some(&font), 24.0);
+        assert_eq!(empty.dimensions(), (0, 0));
+
+        let mut dot = gray(1, 1);
+        apply_watermark(&mut dot, "abc", 0.8, Corner::BottomRight, Some(&font), 24.0);
+        assert_eq!(dot.dimensions(), (1, 1));
+
+        let mut nan = gray(60, 60);
+        apply_watermark(
+            &mut nan,
+            "abc",
+            f32::NAN,
+            Corner::TopRight,
+            Some(&font),
+            f32::INFINITY,
+        );
+        assert_eq!(
+            nan.dimensions(),
+            (60, 60),
+            "non-finite settings use defaults"
+        );
     }
 }

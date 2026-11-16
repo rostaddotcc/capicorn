@@ -16,6 +16,8 @@
 //! Every portal interaction is bounded: a locked or unresponsive session must
 //! surface as [`CaptureError::Timeout`], never as a hung UI thread.
 
+pub mod timelapse;
+
 use std::path::PathBuf;
 use std::time::Duration;
 

@@ -15,7 +15,9 @@
 //! * Input-derived dimensions are capped by [`snagcraft_raster::MAX_DIM`] (hostile input).
 
 pub mod clipboard;
+pub mod ocr;
 pub mod settings;
+pub mod upload;
 
 use std::io::Cursor;
 use std::path::Path;

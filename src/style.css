@@ -244,7 +244,7 @@ kbd {
   font-size: 11px;
   font-weight: 500;
   line-height: 1.35;
-  color: var(--fg-muted);
+  color: var(--fg);
   background: var(--surface);
   border: 1px solid var(--border-strong);
   border-bottom-width: 2px;
@@ -381,7 +381,7 @@ kbd {
   align-items: center;
   gap: 5px;
   font-size: 12px;
-  color: var(--fg-subtle);
+  color: var(--fg-muted);
   white-space: nowrap;
 }
 
@@ -560,7 +560,7 @@ kbd {
 
 .chip.is-active {
   background: var(--accent-soft);
-  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 60%, transparent);
   color: var(--accent-strong);
 }
 
@@ -572,7 +572,17 @@ kbd {
 }
 
 .chip.tool {
-  padding: 6px 9px;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+}
+
+/* Classic icon toolbar: the tool name lives in the tooltip, the properties
+   rail and the shortcuts overlay — not in a label that wraps the row.
+   (The button carries an aria-label, so hiding the span loses nothing.) */
+.chip.tool span {
+  display: none;
 }
 
 .chip:disabled {
@@ -759,7 +769,7 @@ kbd {
   align-items: center;
   gap: 4px;
   font-size: 11.5px;
-  color: var(--fg-subtle);
+  color: var(--fg-muted);
 }
 
 .status-keys kbd {
@@ -2597,19 +2607,8 @@ kbd {
 
 /* ------------------------------------------------------------ responsive */
 
-/* Narrow windows: tools become compact icon buttons so the toolbar stays one row. */
+/* Narrow windows: the capture mode label folds away so the toolbar stays one row. */
 @media (max-width: 1000px) {
-  .chip.tool {
-    width: 34px;
-    height: 32px;
-    padding: 0;
-    justify-content: center;
-  }
-
-  .chip.tool span {
-    display: none;
-  }
-
   .split-mode {
     display: none;
   }

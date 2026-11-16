@@ -3,6 +3,17 @@
 All notable changes to SnagCraft, newest first. Full release notes for every tag live on
 the [releases page](https://github.com/rostaddotcc/snagcraft/releases).
 
+## v1.3.1
+- **Classic icon toolbar.** The annotation tools are now compact icon buttons on a single
+  row at every desktop width — names live in the tooltips, the properties rail and the
+  shortcuts overlay, like a native tool palette. No more wrapped second row with a dead
+  left half; Save/Copy/OCR keep their text labels on the right.
+- **Legible keycaps.** Shortcut hints (top bar + status bar) use full-contrast text and
+  darker keycaps; the active tool gets a stronger accent border in the light theme.
+- **CI ships Windows installers on the release page.** Tag builds now attach the NSIS
+  `.exe` and WiX `.msi` (plus the Linux bundles) to the GitHub release automatically —
+  previously they only lived in expiring workflow artifacts.
+
 ## v1.3.0
 - **Classic desktop look.** The violet-tinted chrome is gone: neutral grey surfaces with
   one restrained blue accent (primary action, active tool, logo), smaller corner radii,

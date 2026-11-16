@@ -570,7 +570,7 @@ mod tests {
         //   window − (6px + 6px horizontal, 5px + 5px vertical padding)
         assert_eq!(WIDGET_TAB_WIDTH - 12.0, 46.0, "tab width");
         assert_eq!(WIDGET_TAB_HEIGHT - 10.0, 64.0, "tab height");
-        assert_eq!(WIDGET_WIDTH - 12.0, 240.0, "pill width");
+        assert_eq!(WIDGET_WIDTH - 12.0, 292.0, "pill width");
         assert_eq!(WIDGET_HEIGHT - 10.0, 50.0, "pill height");
     }
 }

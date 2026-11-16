@@ -3,6 +3,13 @@
 All notable changes to SnagCraft, newest first. Full release notes for every tag live on
 the [releases page](https://github.com/rostaddotcc/snagcraft/releases).
 
+## v1.5.2
+- **CI green again.** The widget-size unit test still pinned the pre-v1.5.0 pill width
+  (240 px) and failed the quality gate, so v1.5.0/v1.5.1 never got their Windows installers
+  attached. The test now asserts the current 292 px pill (matching `widget.css`); full suite
+  (97 tests), rustfmt, clippy and tsc all pass. No app behaviour change — this release exists
+  so every platform's installers build and land on the release page.
+
 ## v1.5.1
 - **About box, corrected.** It claimed "MIT licensed" — SnagCraft is GPL-3.0-or-later with
   a commercial option; the line now says so. Added the app name above the version and a

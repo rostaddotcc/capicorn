@@ -4069,6 +4069,8 @@ version = "0.1.0"
 dependencies = [
  "arboard",
  "image",
+ "serde",
+ "serde_json",
  "snagcraft-geom",
  "snagcraft-raster",
  "thiserror 2.0.21",

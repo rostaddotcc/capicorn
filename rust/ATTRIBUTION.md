@@ -5,6 +5,7 @@
 | Path | Title | Author | Source | License |
 |---|---|---|---|---|
 | `packaging/snagcraft.png` | SnagCraft app icon (256px) | rostad | Original artwork, resized from repo-root `app-icon.png` (1024px original) | GPL-3.0-or-later + commercial (project dual license) |
+| `assets/tray-32.png` | SnagCraft tray icon (32px) | rostad | Copied from the live Tauri app `src-tauri/icons/32x32.png` (same original artwork) | GPL-3.0-or-later + commercial |
 | `crates/ui-egui/tests/snapshots/*.png` | Headless test snapshots | Hermes (generated) | Rendered by egui_kittest from synthetic scenes | GPL-3.0-or-later + commercial |
 
 ## Fonts

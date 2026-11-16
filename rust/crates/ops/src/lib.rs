@@ -11,7 +11,12 @@
 
 use snagcraft_doc::Document;
 
-pub const MAX_UNDO: usize = 100;
+/// Undo depth. Live parity: the editor keeps the last 80 steps.
+pub const MAX_HISTORY: usize = 80;
+
+/// Old name, kept so existing call sites keep compiling.
+#[deprecated(note = "renamed to MAX_HISTORY (80 steps, live parity)")]
+pub const MAX_UNDO: usize = MAX_HISTORY;
 
 #[derive(Clone, Debug, Default)]
 pub struct History {
@@ -23,7 +28,7 @@ impl History {
     /// Record the pre-mutation state; clears the redo branch.
     pub fn record(&mut self, before: &Document) {
         self.undo.push(before.clone());
-        if self.undo.len() > MAX_UNDO {
+        if self.undo.len() > MAX_HISTORY {
             self.undo.remove(0);
         }
         self.redo.clear();
@@ -53,13 +58,18 @@ impl History {
         self.undo.clear();
         self.redo.clear();
     }
+
+    /// Number of undo steps currently held (<= [`MAX_HISTORY`]).
+    pub fn depth(&self) -> usize {
+        self.undo.len()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use snagcraft_color::Rgba;
-    use snagcraft_doc::AnnotObject;
+    use snagcraft_doc::{AnnotObject, Shadow};
     use snagcraft_geom::{Rect, Size};
     use std::sync::Arc;
 
@@ -70,6 +80,7 @@ mod tests {
             rect: Rect::new(1.0, 1.0, 5.0, 5.0),
             color: Rgba::BLACK,
             width: 1.0,
+            shadow: Shadow::default(),
         }
     }
 
@@ -100,21 +111,26 @@ mod tests {
     }
 
     #[test]
-    fn bounded_and_clear() {
+    fn bounded_to_eighty_and_clear() {
+        assert_eq!(MAX_HISTORY, 80);
         let mut doc = Document::white(Size::new(8, 8));
         let mut h = History::default();
-        for _ in 0..(MAX_UNDO + 25) {
+        for _ in 0..(MAX_HISTORY + 25) {
             h.record(&doc);
             doc.add(rect_obj());
         }
+        // Bounded while recording, not only after unwinding.
+        assert_eq!(h.depth(), MAX_HISTORY);
+
         let mut count = 0;
         while let Some(prev) = h.undo(&doc) {
             doc = prev;
             count += 1;
         }
-        assert_eq!(count, MAX_UNDO);
+        assert_eq!(count, MAX_HISTORY);
         h.clear();
         assert!(!h.can_undo() && !h.can_redo());
+        assert_eq!(h.depth(), 0);
     }
 
     #[test]

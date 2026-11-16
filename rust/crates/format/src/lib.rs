@@ -145,10 +145,16 @@ pub fn load(bytes: &[u8]) -> Result<Document, FormatError> {
         )));
     }
 
+    // Hostile-input pass: clamp shadow ranges, cap brush point counts.
+    let mut objects = raw.objects;
+    for obj in &mut objects {
+        obj.sanitize();
+    }
+
     Ok(Document {
         size: raw.size,
         base: Arc::new(base),
-        objects: raw.objects,
+        objects,
         next_id: raw.next_id,
     })
 }
@@ -203,6 +209,7 @@ fn object_json(obj: &AnnotObject) -> Value {
             to,
             color,
             width,
+            shadow,
         } => json!({
             "kind": "Arrow",
             "id": id,
@@ -210,6 +217,7 @@ fn object_json(obj: &AnnotObject) -> Value {
             "to": to,
             "color": color,
             "width": width,
+            "shadow": shadow,
         }),
         AnnotObject::Shape {
             id,
@@ -217,6 +225,7 @@ fn object_json(obj: &AnnotObject) -> Value {
             rect,
             color,
             width,
+            shadow,
         } => json!({
             "kind": "Shape",
             "id": id,
@@ -224,6 +233,7 @@ fn object_json(obj: &AnnotObject) -> Value {
             "rect": rect,
             "color": color,
             "width": width,
+            "shadow": shadow,
         }),
         AnnotObject::Text {
             id,
@@ -233,6 +243,8 @@ fn object_json(obj: &AnnotObject) -> Value {
             size,
             bold,
             italic,
+            family,
+            shadow,
         } => json!({
             "kind": "Text",
             "id": id,
@@ -242,6 +254,8 @@ fn object_json(obj: &AnnotObject) -> Value {
             "size": size,
             "bold": bold,
             "italic": italic,
+            "family": family,
+            "shadow": shadow,
         }),
         AnnotObject::Blur {
             id,
@@ -261,6 +275,7 @@ fn object_json(obj: &AnnotObject) -> Value {
             number,
             color,
             radius,
+            shadow,
         } => json!({
             "kind": "Step",
             "id": id,
@@ -268,6 +283,7 @@ fn object_json(obj: &AnnotObject) -> Value {
             "number": number,
             "color": color,
             "radius": radius,
+            "shadow": shadow,
         }),
         AnnotObject::Highlighter { id, rect, color } => json!({
             "kind": "Highlighter",
@@ -287,6 +303,8 @@ fn object_json(obj: &AnnotObject) -> Value {
             text,
             color,
             size,
+            family,
+            shadow,
         } => json!({
             "kind": "Callout",
             "id": id,
@@ -294,6 +312,26 @@ fn object_json(obj: &AnnotObject) -> Value {
             "text": text,
             "color": color,
             "size": size,
+            "family": family,
+            "shadow": shadow,
+        }),
+        AnnotObject::Magnify { id, rect, zoom } => json!({
+            "kind": "Magnify",
+            "id": id,
+            "rect": rect,
+            "zoom": zoom,
+        }),
+        AnnotObject::BrushStroke {
+            id,
+            points,
+            color,
+            width,
+        } => json!({
+            "kind": "BrushStroke",
+            "id": id,
+            "points": points,
+            "color": color,
+            "width": width,
         }),
     }
 }
@@ -302,7 +340,7 @@ fn object_json(obj: &AnnotObject) -> Value {
 mod tests {
     use super::*;
     use snagcraft_color::Rgba;
-    use snagcraft_doc::{BlurMode, ShapeKind};
+    use snagcraft_doc::{BlurMode, MAX_BRUSH_POINTS, Shadow, ShapeKind};
     use snagcraft_geom::{Point, Rect};
 
     fn base_surface(w: u32, h: u32) -> Surface {
@@ -316,22 +354,31 @@ mod tests {
         })
     }
 
-    /// One document carrying every W1 object kind, inserted through `add` so ids are 1..=8.
+    /// One document carrying every object kind, inserted through `add` so ids are 1..=10.
     fn doc_all_kinds() -> Document {
         let mut d = Document::new(base_surface(33, 21));
+        let glow = Shadow {
+            enabled: true,
+            color: Rgba::new(0, 0, 0, 180),
+            blur: 7,
+            offset_x: 2.5,
+            offset_y: 5.0,
+        };
         d.add(AnnotObject::Arrow {
             id: 0,
             from: Point::new(1.0, 2.0),
             to: Point::new(30.5, 18.25),
             color: Rgba::new(255, 0, 0, 255),
             width: 3.5,
+            shadow: glow,
         });
         d.add(AnnotObject::Shape {
             id: 0,
-            shape: ShapeKind::Ellipse,
+            shape: ShapeKind::Star,
             rect: Rect::new(2.0, 3.0, 10.0, 12.0),
             color: Rgba::new(0, 128, 255, 200),
             width: 2.0,
+            shadow: glow,
         });
         d.add(AnnotObject::Text {
             id: 0,
@@ -341,6 +388,8 @@ mod tests {
             size: 14.0,
             bold: true,
             italic: true,
+            family: "Inter".to_string(),
+            shadow: Shadow::default(),
         });
         d.add(AnnotObject::Blur {
             id: 0,
@@ -354,6 +403,7 @@ mod tests {
             number: 7,
             color: Rgba::new(10, 20, 30, 255),
             radius: 11.5,
+            shadow: glow,
         });
         d.add(AnnotObject::Highlighter {
             id: 0,
@@ -371,6 +421,23 @@ mod tests {
             text: "note".to_string(),
             color: Rgba::new(40, 40, 40, 255),
             size: 13.0,
+            family: "Inter".to_string(),
+            shadow: glow,
+        });
+        d.add(AnnotObject::Magnify {
+            id: 0,
+            rect: Rect::new(5.0, 6.0, 11.0, 9.0),
+            zoom: 2.5,
+        });
+        d.add(AnnotObject::BrushStroke {
+            id: 0,
+            points: vec![
+                Point::new(1.0, 1.0),
+                Point::new(7.5, 4.25),
+                Point::new(12.0, 15.0),
+            ],
+            color: Rgba::new(0, 200, 10, 255),
+            width: 4.5,
         });
         d
     }
@@ -380,14 +447,14 @@ mod tests {
     }
 
     #[test]
-    fn round_trip_all_eight_kinds() {
+    fn round_trip_all_ten_kinds() {
         let doc = doc_all_kinds();
         let back = load(&save(&doc).unwrap()).unwrap();
 
         assert_eq!(back.size, doc.size);
         assert_eq!(back.next_id, doc.next_id);
-        assert_eq!(back.next_id, 9);
-        assert_eq!(back.objects.len(), 8);
+        assert_eq!(back.next_id, 11);
+        assert_eq!(back.objects.len(), 10);
         assert_eq!(back.objects, doc.objects);
         assert_eq!(back.base.dimensions(), doc.base.dimensions());
         assert_eq!(back.base.as_raw(), doc.base.as_raw());
@@ -398,9 +465,9 @@ mod tests {
         let v = manifest_of(&doc_all_kinds());
         assert_eq!(v["version"], json!(FORMAT_VERSION));
         assert_eq!(v["size"], json!({"w": 33, "h": 21}));
-        assert_eq!(v["next_id"], json!(9));
+        assert_eq!(v["next_id"], json!(11));
         let objects = v["objects"].as_array().unwrap();
-        assert_eq!(objects.len(), 8);
+        assert_eq!(objects.len(), 10);
         let kinds: Vec<&str> = objects
             .iter()
             .map(|o| o["kind"].as_str().unwrap_or("<missing>"))
@@ -415,7 +482,9 @@ mod tests {
                 "Step",
                 "Highlighter",
                 "Spotlight",
-                "Callout"
+                "Callout",
+                "Magnify",
+                "BrushStroke"
             ]
         );
         let b64 = v["base_png"].as_str().unwrap();
@@ -429,13 +498,137 @@ mod tests {
         let objects = v["objects"].as_array().unwrap();
         // Spot the fields that a lossy mapping would drop.
         assert_eq!(objects[0]["width"], json!(3.5));
-        assert_eq!(objects[1]["shape"], json!("Ellipse"));
+        // Shadow is written for every kind that carries it, field by field.
+        assert_eq!(objects[0]["shadow"]["enabled"], json!(true));
+        assert_eq!(objects[0]["shadow"]["blur"], json!(7));
+        assert_eq!(objects[0]["shadow"]["offset_x"], json!(2.5f32));
+        assert_eq!(objects[0]["shadow"]["offset_y"], json!(5.0f32));
+        assert_eq!(objects[0]["shadow"]["color"]["a"], json!(180));
+        // A disabled shadow is still written explicitly (not omitted).
+        assert_eq!(objects[2]["shadow"]["enabled"], json!(false));
+        assert_eq!(objects[4]["shadow"]["enabled"], json!(true));
+        assert_eq!(objects[7]["shadow"], objects[0]["shadow"]);
+        assert_eq!(objects[1]["shape"], json!("Star"));
         assert_eq!(objects[2]["bold"], json!(true));
         assert_eq!(objects[2]["italic"], json!(true));
         assert_eq!(objects[3]["mode"], json!("Pixelate"));
         assert_eq!(objects[3]["radius"], json!(10));
         assert_eq!(objects[6]["dim"], json!(0.6f32));
         assert_eq!(objects[7]["text"], json!("note"));
+        assert_eq!(objects[8]["zoom"], json!(2.5f32));
+        assert_eq!(
+            objects[9]["points"],
+            json!([{"x": 1.0, "y": 1.0}, {"x": 7.5, "y": 4.25}, {"x": 12.0, "y": 15.0}])
+        );
+        assert_eq!(objects[9]["width"], json!(4.5f32));
+    }
+
+    #[test]
+    fn triangle_and_line_shape_kinds_round_trip() {
+        let mut doc = Document::new(base_surface(12, 12));
+        doc.add(AnnotObject::Shape {
+            id: 0,
+            shape: ShapeKind::Triangle,
+            rect: Rect::new(1.0, 1.0, 5.0, 5.0),
+            color: Rgba::BLACK,
+            width: 1.5,
+            shadow: Shadow::default(),
+        });
+        doc.add(AnnotObject::Shape {
+            id: 0,
+            shape: ShapeKind::Line,
+            rect: Rect::new(2.0, 2.0, 6.0, 6.0),
+            color: Rgba::BLACK,
+            width: 1.5,
+            shadow: Shadow::default(),
+        });
+        let v = manifest_of(&doc);
+        assert_eq!(v["objects"][0]["shape"], json!("Triangle"));
+        assert_eq!(v["objects"][1]["shape"], json!("Line"));
+        let back = load(&save(&doc).unwrap()).unwrap();
+        assert_eq!(back.objects, doc.objects);
+    }
+
+    /// A v1 file written before shadows existed must still load, with `Shadow::default()`.
+    #[test]
+    fn old_file_without_shadow_fields_loads_defaults() {
+        let doc = doc_all_kinds();
+        let mut v = manifest_of(&doc);
+        let mut stripped = 0;
+        for obj in v["objects"].as_array_mut().unwrap() {
+            if let Some(map) = obj.as_object_mut()
+                && map.remove("shadow").is_some()
+            {
+                stripped += 1;
+            }
+        }
+        assert_eq!(
+            stripped, 5,
+            "Arrow/Shape/Text/Step/Callout all carry a shadow field"
+        );
+
+        let back = load(&serde_json::to_vec(&v).unwrap()).unwrap();
+        assert_eq!(back.objects.len(), 10);
+        let mut checked = 0;
+        for o in &back.objects {
+            match o {
+                AnnotObject::Arrow { shadow, .. }
+                | AnnotObject::Shape { shadow, .. }
+                | AnnotObject::Text { shadow, .. }
+                | AnnotObject::Step { shadow, .. }
+                | AnnotObject::Callout { shadow, .. } => {
+                    assert_eq!(*shadow, Shadow::default());
+                    checked += 1;
+                }
+                _ => {}
+            }
+        }
+        assert_eq!(checked, 5);
+        // Everything else still round-trips.
+        assert_eq!(back.next_id, 11);
+    }
+
+    #[test]
+    fn load_caps_hostile_shadow_and_brush_points() {
+        let mut doc = Document::new(base_surface(9, 9));
+        // `add` sanitizes, so splice the hostile values in afterwards.
+        doc.objects.push(AnnotObject::Shape {
+            id: 1,
+            shape: ShapeKind::Rect,
+            rect: Rect::new(1.0, 1.0, 2.0, 2.0),
+            color: Rgba::BLACK,
+            width: 1.0,
+            shadow: Shadow {
+                enabled: true,
+                color: Rgba::BLACK,
+                blur: 9_999,
+                offset_x: 1_000.0,
+                offset_y: -1_000.0,
+            },
+        });
+        doc.objects.push(AnnotObject::BrushStroke {
+            id: 2,
+            points: vec![Point::new(1.0, 1.0); MAX_BRUSH_POINTS + 10],
+            color: Rgba::BLACK,
+            width: 1.0,
+        });
+        doc.next_id = 3;
+
+        let back = load(&save(&doc).unwrap()).unwrap();
+        match &back.objects[0] {
+            AnnotObject::Shape { shadow, .. } => {
+                assert_eq!(shadow.blur, snagcraft_doc::SHADOW_BLUR_MAX);
+                assert_eq!(shadow.offset_x, snagcraft_doc::SHADOW_OFFSET_MAX);
+                assert_eq!(shadow.offset_y, -snagcraft_doc::SHADOW_OFFSET_MAX);
+            }
+            _ => panic!("wrong kind"),
+        }
+        match &back.objects[1] {
+            AnnotObject::BrushStroke { points, .. } => {
+                assert_eq!(points.len(), MAX_BRUSH_POINTS)
+            }
+            _ => panic!("wrong kind"),
+        }
     }
 
     #[test]

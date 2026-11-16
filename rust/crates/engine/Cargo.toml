@@ -8,6 +8,7 @@ repository.workspace = true
 publish = false
 
 [dependencies]
+snagcraft-algo = { path = "../algo" }
 snagcraft-doc = { path = "../doc" }
 snagcraft-ops = { path = "../ops" }
 snagcraft-compose = { path = "../compose" }
@@ -16,6 +17,8 @@ snagcraft-io = { path = "../io" }
 snagcraft-capture = { path = "../capture" }
 snagcraft-geom = { path = "../geom" }
 snagcraft-raster = { path = "../raster" }
+snagcraft-color = { path = "../color" }
+snagcraft-text = { path = "../text" }
 ab_glyph.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

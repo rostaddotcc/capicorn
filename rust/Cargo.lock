@@ -3899,7 +3899,6 @@ name = "snagcraft-cli"
 version = "0.1.0"
 dependencies = [
  "clap",
- "egui",
  "image",
  "serde_json",
  "snagcraft-engine",
@@ -3946,7 +3945,9 @@ version = "0.1.0"
 dependencies = [
  "ab_glyph",
  "serde_json",
+ "snagcraft-algo",
  "snagcraft-capture",
+ "snagcraft-color",
  "snagcraft-compose",
  "snagcraft-doc",
  "snagcraft-format",
@@ -3954,6 +3955,7 @@ dependencies = [
  "snagcraft-io",
  "snagcraft-ops",
  "snagcraft-raster",
+ "snagcraft-text",
  "thiserror 2.0.21",
 ]
 
@@ -4013,6 +4015,7 @@ name = "snagcraft-text"
 version = "0.1.0"
 dependencies = [
  "ab_glyph",
+ "tracing",
 ]
 
 [[package]]

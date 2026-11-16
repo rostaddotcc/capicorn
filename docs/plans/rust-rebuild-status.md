@@ -9,7 +9,7 @@ Baseline: Tauri v1.5.2 (commit d25adb1). Rebuild workspace: `rust/` (not yet cre
 |------|-------|--------|
 | W0 | egui editor spike + Wayland viewport probe | built + verified on pn53; KDE manual pass pending rostad |
 | W1 | workspace scaffold, doc model, engine, capture port | core landed + verified (99 tests); desktop capture→editor built; KDE pass pending |
-| W2 | editor tool parity | in progress — W2a tracks T1/T2/T3 dispatched (doc/ops/format, algo/compose, text) |
+| W2 | editor tool parity | W2a landed (doc/ops/format/algo/text verified); engine W2b commands landed; full UI track in flight |
 | W3 | shell parity (tray/hotkeys/widget/settings) | pending |
 | W4 | recording, scrolling, OCR, timelapse | pending |
 | W5 | CLI/JSON/MCP automation + WASM web | pending |
@@ -121,6 +121,25 @@ Baseline: Tauri v1.5.2 (commit d25adb1). Rebuild workspace: `rust/` (not yet cre
   composite + italic shear), T3 text FontDb (10 families, 14 faces).
 - Next: verify T1–T3 artifacts → W2b engine commands + full 13-tool UI → gates →
   AppImage → tick parity rows.
+
+### 2026-11-16 — wake #5: W2a verified, engine W2b landed, UI dispatched
+- T1 (doc/ops/format) + T3 (text) finished; T2 (algo/compose) in final verification.
+- Parent verified: doc 19 tests, format 14, ops 11, text 8 (live family order,
+  14 faces, bold fallbacks, case-insensitive) — clippy -D warnings clean on all.
+- Contract gap caught parent-side: Text/Callout lacked `family` (live TextStyle
+  has 10 families). T1 finished before the steer landed → parent applied the
+  family extension (serde default "Inter") to doc + format guard + 6 test literals.
+  T2 consumed its steer: composite_styled now passes (obj.family, obj.bold) and
+  applies italic shear per object.
+- Engine W2b (parent): edit.crop + edit.bucket commands (18 total), blur default
+  radius 12 clamp 2–60 (parity), render() switched to composite_styled with a
+  Session-cached FontDb face table (resolve_shared/FontArc) — bundled OFL fonts
+  now identical across UI/CLI/export; set_font removed (ui-egui + CLI updated,
+  CLI egui dep dropped). 11 engine tests green incl. crop/bucket undo, hostile
+  seeds, FontDb text pixel probe.
+- Dispatched full 13-tool UI track (deleg_3ecf00d3): one-row toolbar + contextual
+  properties rail + crop/brush/step/callout/magnify/bucket UX + quick font bar.
+- Next: T2 + UI land → full gates → vision contact sheet → AppImage → tick parity.
 
 ## Appendix — measured reality
 

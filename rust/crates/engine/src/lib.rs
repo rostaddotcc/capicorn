@@ -42,9 +42,9 @@ pub struct CommandSpec {
 pub struct Session {
     doc: Option<Document>,
     history: History,
-    /// Font bytes for CPU text raster at export (injected by the shell; egui's
-    /// bundled face on desktop). Engine stays UI-free.
-    font: Option<(Vec<u8>, u32)>,
+    /// Bundled OFL faces for CPU text raster (family, bold, face). Built once
+    /// from the text crate's embedded FontDb — identical in UI, CLI and export.
+    faces: Vec<(String, bool, ab_glyph::FontArc)>,
 }
 
 impl Default for Session {
@@ -55,15 +55,20 @@ impl Default for Session {
 
 impl Session {
     pub fn new() -> Self {
+        let db = snagcraft_text::FontDb::bundled();
+        let mut faces = Vec::new();
+        for family in snagcraft_text::FontDb::families() {
+            for bold in [false, true] {
+                if let Some(face) = db.resolve_shared(family, bold) {
+                    faces.push(((*family).to_string(), bold, face));
+                }
+            }
+        }
         Self {
             doc: None,
             history: History::default(),
-            font: None,
+            faces,
         }
-    }
-
-    pub fn set_font(&mut self, bytes: Vec<u8>, index: u32) {
-        self.font = Some((bytes, index));
     }
 
     pub fn doc(&self) -> Option<&Document> {
@@ -105,13 +110,17 @@ impl Session {
     }
 
     /// Composite the current document to a flat surface (export/preview).
+    /// Per-object font family/bold from the bundled OFL db; italic = shear.
     pub fn render(&self) -> Result<Surface, CommandError> {
         let doc = self.require_doc()?;
-        let font = self
-            .font
-            .as_ref()
-            .and_then(|(bytes, idx)| ab_glyph::FontRef::try_from_slice_and_index(bytes, *idx).ok());
-        Ok(snagcraft_compose::composite(doc, font.as_ref()))
+        let faces = &self.faces;
+        let lookup = move |family: &str, bold: bool| {
+            faces
+                .iter()
+                .find(|(f, b, _)| f.eq_ignore_ascii_case(family) && *b == bold)
+                .map(|(_, _, face)| face)
+        };
+        Ok(snagcraft_compose::composite_styled(doc, &lookup, snagcraft_text::ITALIC_SHEAR))
     }
 }
 
@@ -147,6 +156,18 @@ fn p_rect(v: &Value, key: &str) -> Result<snagcraft_geom::Rect, CommandError> {
         p_f32(r, "w")?,
         p_f32(r, "h")?,
     ))
+}
+
+fn p_color(v: &Value, key: &str) -> Result<snagcraft_color::Rgba, CommandError> {
+    let c = v.get(key).ok_or_else(|| CommandError::InvalidParams(format!("missing '{key}'")))?;
+    let arr = c.as_array().filter(|a| a.len() == 4)
+        .ok_or_else(|| CommandError::InvalidParams(format!("'{key}' must be [r,g,b,a]")))?;
+    let mut out = [0u8; 4];
+    for (i, slot) in out.iter_mut().enumerate() {
+        *slot = arr.get(i).and_then(Value::as_u64).filter(|n| *n <= 255).map(|n| n as u8)
+            .ok_or_else(|| CommandError::InvalidParams(format!("'{key}[{i}]' must be 0..255")))?;
+    }
+    Ok(snagcraft_color::Rgba::from_array(out))
 }
 
 fn p_format(v: &Value) -> Result<snagcraft_io::ImageFormat, CommandError> {
@@ -300,8 +321,11 @@ fn cmd_edit_blur(s: &mut Session, p: Value) -> Result<Value, CommandError> {
     let radius = p
         .get("radius")
         .and_then(Value::as_u64)
-        .unwrap_or(8)
-        .clamp(1, 64) as u32;
+        .unwrap_or(u64::from(snagcraft_algo::BLUR_RADIUS_DEFAULT))
+        .clamp(
+            u64::from(snagcraft_algo::BLUR_RADIUS_MIN),
+            u64::from(snagcraft_algo::BLUR_RADIUS_MAX),
+        ) as u32;
     let d = s.doc.as_mut().ok_or(CommandError::NoDoc)?;
     s.history.record(d);
     let id = d.add(AnnotObject::Blur {
@@ -311,6 +335,28 @@ fn cmd_edit_blur(s: &mut Session, p: Value) -> Result<Value, CommandError> {
         radius,
     });
     Ok(json!({"id": id}))
+}
+
+fn cmd_edit_crop(s: &mut Session, p: Value) -> Result<Value, CommandError> {
+    let rect = p_rect(&p, "rect")?;
+    let d = s.doc.as_ref().ok_or(CommandError::NoDoc)?;
+    let cropped = d.crop(rect).ok_or_else(|| CommandError::InvalidParams("crop rect is empty or outside the image".into()))?;
+    s.history.record(d);
+    let (w, h) = (cropped.size.w, cropped.size.h);
+    s.doc = Some(cropped);
+    Ok(json!({"width": w, "height": h}))
+}
+
+fn cmd_edit_bucket(s: &mut Session, p: Value) -> Result<Value, CommandError> {
+    let seed_obj = p.get("seed").ok_or_else(|| CommandError::InvalidParams("missing 'seed'".into()))?;
+    let seed = snagcraft_geom::Point::new(p_f32(seed_obj, "x")?, p_f32(seed_obj, "y")?);
+    let color = p_color(&p, "color")?;
+    let tolerance = p.get("tolerance").and_then(Value::as_u64).unwrap_or(0).min(255) as u8;
+    let d = s.doc.as_mut().ok_or(CommandError::NoDoc)?;
+    s.history.record(d);
+    let filled = snagcraft_algo::flood_fill(&d.base, seed, color, tolerance);
+    d.base = std::sync::Arc::new(filled);
+    Ok(json!({"filled": true}))
 }
 
 fn cmd_edit_undo(s: &mut Session, _p: Value) -> Result<Value, CommandError> {
@@ -421,6 +467,18 @@ pub fn registry() -> Vec<CommandSpec> {
             label: "Add blur region",
             params_doc: "{rect:{x,y,w,h}, mode, radius}",
             run: cmd_edit_blur,
+        },
+        CommandSpec {
+            id: "edit.crop",
+            label: "Crop document",
+            params_doc: "{rect:{x,y,w,h}}",
+            run: cmd_edit_crop,
+        },
+        CommandSpec {
+            id: "edit.bucket",
+            label: "Flood fill from seed",
+            params_doc: "{seed:{x,y}, color:[r,g,b,a], tolerance}",
+            run: cmd_edit_bucket,
         },
         CommandSpec {
             id: "edit.undo",
@@ -551,6 +609,56 @@ mod tests {
                 let _ = s.dispatch(cmd.id, g.clone());
             }
         }
+    }
+
+    #[test]
+    fn crop_command_resizes_and_undoes() {
+        let mut s = Session::new();
+        s.dispatch("doc.new", json!({"w": 64, "h": 48})).unwrap();
+        let r = s.dispatch("edit.crop", json!({"rect": {"x": 8.0, "y": 8.0, "w": 32.0, "h": 24.0}})).unwrap();
+        assert_eq!(r["width"], 32);
+        assert_eq!(r["height"], 24);
+        assert_eq!(s.doc().unwrap().size.w, 32);
+        s.dispatch("edit.undo", json!({})).unwrap();
+        assert_eq!(s.doc().unwrap().size.w, 64);
+        // empty / outside rect → error, doc untouched
+        assert!(s.dispatch("edit.crop", json!({"rect": {"x": 100.0, "y": 100.0, "w": 5.0, "h": 5.0}})).is_err());
+        assert_eq!(s.doc().unwrap().size.w, 64);
+    }
+
+    #[test]
+    fn bucket_command_fills_and_undoes() {
+        let mut s = Session::new();
+        s.dispatch("doc.new", json!({"w": 16, "h": 16})).unwrap();
+        s.dispatch("edit.bucket", json!({"seed": {"x": 8.0, "y": 8.0}, "color": [255, 0, 0, 255], "tolerance": 0})).unwrap();
+        assert_eq!(s.doc().unwrap().base.get_pixel(8, 8).0, [255, 0, 0, 255]);
+        s.dispatch("edit.undo", json!({})).unwrap();
+        assert_eq!(s.doc().unwrap().base.get_pixel(8, 8).0, [255, 255, 255, 255]);
+        // out-of-bounds seed: no-op, no panic
+        s.dispatch("edit.bucket", json!({"seed": {"x": 999.0, "y": 999.0}, "color": [0, 0, 0, 255]})).unwrap();
+        assert_eq!(s.doc().unwrap().base.get_pixel(8, 8).0, [255, 255, 255, 255]);
+    }
+
+    #[test]
+    fn blur_default_radius_is_parity_12() {
+        let mut s = Session::new();
+        s.dispatch("doc.new", json!({"w": 32, "h": 32})).unwrap();
+        s.dispatch("edit.blur", json!({"rect": {"x": 0.0, "y": 0.0, "w": 8.0, "h": 8.0}})).unwrap();
+        match &s.doc().unwrap().objects[0] {
+            snagcraft_doc::AnnotObject::Blur { radius, .. } => assert_eq!(*radius, 12),
+            _ => panic!("expected blur"),
+        }
+    }
+
+    #[test]
+    fn render_uses_bundled_fonts_for_text() {
+        let mut s = Session::new();
+        s.dispatch("doc.new", json!({"w": 200, "h": 60})).unwrap();
+        s.dispatch("edit.add", json!({"object": {"kind":"Text","id":0,"pos":{"x":5.0,"y":5.0},"text":"FontDb","color":[0,0,0,255],"size":24.0,"bold":false,"italic":false,"family":"Inter"}})).unwrap();
+        let img = s.render().unwrap();
+        let mut dark = 0;
+        for y in 0..60 { for x in 0..200 { let p = img.get_pixel(x, y).0; if p[0] < 90 && p[1] < 90 && p[2] < 90 { dark += 1; } } }
+        assert!(dark > 50, "bundled font must rasterize text: {dark} dark px");
     }
 
     #[test]

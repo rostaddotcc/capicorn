@@ -76,14 +76,6 @@ fn format_from_path(path: &std::path::Path) -> String {
 fn run() -> Result<(), String> {
     let cli = Cli::parse();
     let mut session = Session::new();
-    // Headless text export needs a font: reuse egui's bundled face (app layer,
-    // engine stays UI-free). Same extraction as the desktop shell.
-    if let Some(fd) = egui::FontDefinitions::default()
-        .font_data
-        .get("Ubuntu-Light")
-    {
-        session.set_font(fd.font.as_ref().as_ref().to_vec(), fd.index);
-    }
     match cli.cmd {
         Cmd::Capture { out, quality } => {
             session

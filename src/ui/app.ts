@@ -227,6 +227,9 @@ const ICONS = {
   film: icon(
     `<rect x="2.4" y="4" width="11.2" height="8" rx="1.4"/><path d="M5.2 4v8M10.8 4v8"/><path d="M5.2 7.2h5.6M5.2 9.6h5.6"/>`,
   ),
+  image: icon(
+    `<rect x="2.4" y="3" width="11.2" height="10" rx="1.4"/><circle cx="6" cy="6.4" r="1.1"/><path d="M2.6 11.4l3.2-3 2.6 2.2 2.2-2.4 2.8 3"/>`,
+  ),
 };
 
 const TOOLS: ReadonlyArray<{ id: ShellToolId; label: string; hint: string; icon: string }> = [
@@ -1147,11 +1150,11 @@ export function mountApp(root: HTMLElement): void {
         <header class="modal-head">
           <div class="modal-heading">
             <h2 class="modal-title" id="guard-title">Save changes before closing?</h2>
-            <p class="modal-desc" id="guard-desc">Your annotations are not on disk yet.</p>
+            <p class="modal-desc" id="guard-desc">You have unsaved annotations.</p>
           </div>
         </header>
         <div class="modal-body guard-body">
-          <p class="guard-swatch"><span class="guard-dot" aria-hidden="true"></span><span id="guard-file">SnagCraft capture</span></p>
+          <p class="guard-swatch"><span class="guard-file-icon" aria-hidden="true">${ICONS.image}</span><span id="guard-file">SnagCraft capture</span></p>
         </div>
         <footer class="modal-foot guard-foot">
           <button type="button" class="btn-secondary" id="guard-cancel">Cancel</button>
@@ -1173,11 +1176,15 @@ export function mountApp(root: HTMLElement): void {
         </header>
         <div class="modal-body about-body">
           <span class="about-mark" aria-hidden="true"><svg viewBox="0 0 32 32" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M17.6 9.3 C 22.2 9.4 26 11.9 27.4 15.6 C 28 17.4 28.1 19.1 27.4 20.4 C 26.6 21.9 24.9 22.5 23.2 21.9 C 21.6 22.5 20.4 23.9 19.8 25.9 L 19.3 28.7 L 10.5 28.7 C 10.3 24.5 10.2 20.3 11.4 16.3 C 12.3 13.3 14.5 10.7 17.6 9.3 Z M 22.5 16.1 a 1.1 1.1 0 1 1 -2.2 0 a 1.1 1.1 0 1 1 2.2 0 Z" /><path d="M13.4 10.2 C 12.7 8.1 12.4 6.2 12.7 4.9 C 14.1 6.5 15.6 8.0 16.7 9.2 Z" /><path d="M17.9 9.5 L22.4 1.9 L20.1 10.4 Z" /></svg></span>
+          <p class="about-name">SnagCraft</p>
           <p class="about-version" id="about-version">—</p>
           <p class="about-meta">Open-source screen capture and recording.</p>
           <p class="about-meta about-repo">github.com/rostaddotcc/snagcraft</p>
-          <p class="about-meta about-license">MIT licensed</p>
+          <p class="about-meta about-license">GPL-3.0-or-later · commercial license available</p>
         </div>
+        <footer class="modal-foot about-foot">
+          <button type="button" class="btn-primary" id="about-ok">OK</button>
+        </footer>
       </div>
     </div>
     <div class="modal-backdrop" id="shortcuts-modal" hidden>
@@ -4858,6 +4865,7 @@ export function mountApp(root: HTMLElement): void {
     fileBtn.focus({ preventScroll: true });
   };
   aboutCloseBtn.addEventListener("click", closeAbout);
+  $<HTMLButtonElement>("#about-ok").addEventListener("click", closeAbout);
   aboutModalEl.addEventListener("pointerdown", (ev) => {
     if (ev.target === aboutModalEl) closeAbout();
   });
@@ -5097,6 +5105,11 @@ export function mountApp(root: HTMLElement): void {
   });
 
   const onKeyDown = (ev: KeyboardEvent): void => {
+    if (ev.key === "Escape" && !aboutModalEl.hidden) {
+      ev.preventDefault();
+      closeAbout();
+      return;
+    }
     if (ev.key === "Escape" && !newModalEl.hidden) {
       ev.preventDefault();
       closeNewCanvas();

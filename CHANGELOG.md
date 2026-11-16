@@ -3,6 +3,15 @@
 All notable changes to SnagCraft, newest first. Full release notes for every tag live on
 the [releases page](https://github.com/rostaddotcc/snagcraft/releases).
 
+## v1.5.1
+- **About box, corrected.** It claimed "MIT licensed" — SnagCraft is GPL-3.0-or-later with
+  a commercial option; the line now says so. Added the app name above the version and a
+  classic **OK** button; Esc closes it from anywhere.
+- **Close-guard polish.** "Your annotations are not on disk yet" → "You have unsaved
+  annotations."; the radio-like blue dot before the filename is now a proper picture icon.
+- **Contrast pass.** Modal subtitles, the About repo line and the recording format label
+  raised from subtle to muted grey for legibility.
+
 ## v1.5.0
 - **The widget is a widget again — not a window.** It can no longer be stretched,
   maximised or minimised (KDE offered all three even on the frameless flärp, and

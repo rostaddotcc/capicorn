@@ -1416,7 +1416,7 @@ kbd {
 .modal-desc {
   margin: 2px 0 0;
   font-size: 12.5px;
-  color: var(--fg-subtle);
+  color: var(--fg-muted);
 }
 
 .modal-x {
@@ -2590,13 +2590,17 @@ kbd {
   overflow-wrap: anywhere;
 }
 
-.guard-dot {
+.guard-file-icon {
   flex: none;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-soft);
+  display: inline-flex;
+  width: 16px;
+  height: 16px;
+  color: var(--fg-muted);
+}
+
+.guard-file-icon svg {
+  width: 16px;
+  height: 16px;
 }
 
 .guard-foot {
@@ -3834,7 +3838,7 @@ kbd {
   font-weight: 700;
   letter-spacing: 0.09em;
   text-transform: uppercase;
-  color: var(--fg-subtle);
+  color: var(--fg-muted);
   line-height: 1;
 }
 
@@ -4971,6 +4975,14 @@ body.countdown-hud .countdown-card {
   height: 32px;
 }
 
+.about-name {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--fg);
+}
+
 .about-version {
   margin: 0;
   font-size: 13px;
@@ -4989,7 +5001,11 @@ body.countdown-hud .countdown-card {
 .about-repo {
   font-family: var(--mono, ui-monospace, monospace);
   font-size: 11px;
-  color: var(--fg-subtle);
+  color: var(--fg-muted);
+}
+
+.about-foot {
+  justify-content: flex-end;
 }
 
 /* ------------------------------------------- Shapes picker */

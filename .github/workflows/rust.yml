@@ -12,12 +12,16 @@ on:
 
 jobs:
   gates:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: rust
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
+      - name: System dependencies (PipeWire bindgen, OCR/ffmpeg tests)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libpipewire-0.3-dev libspa-0.2-dev clang tesseract-ocr ffmpeg
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -35,9 +39,13 @@ jobs:
 
   appimage:
     needs: gates
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
+      - name: System dependencies (PipeWire bindgen)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libpipewire-0.3-dev libspa-0.2-dev clang
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -54,7 +62,7 @@ jobs:
           export PATH="$PWD:$PATH"
           mkdir -p dist
           LINUXDEPLOY="$PWD/linuxdeploy" packaging/appimage.sh target/release/snagcraft dist
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: snagcraft-rust-appimage
           path: rust/dist/*.AppImage

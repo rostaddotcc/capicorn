@@ -78,7 +78,11 @@ share* flow in one lightweight app. SnagCraft fills that gap.
 - **Start at login** — Settings → General registers SnagCraft as a login item
   (XDG autostart on Linux, AppImage-aware; registry on Windows; LaunchAgent on macOS)
 - A collapsible floating capture widget (the "flärp") — a glass bookmark tab with the
-  unicorn mark and a breathing accent spine; hover to open, drag to park anywhere
+  unicorn mark and a breathing accent spine; hover to open, drag to park anywhere.
+  **Fixed size** — it can never be stretched, maximised or minimised like a window.
+  The pill has Full, Region and a **red Rec button** (full-screen recording; the widget
+  hides itself so it never lands in the video). While a take runs the tab's spine breathes
+  red, and reopening the widget shows a pulsing red **Stop** button
 - Global hotkeys via the Wayland GlobalShortcuts portal (KDE)
 - Light / dark themes, and a "save before closing?" guard
 

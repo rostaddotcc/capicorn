@@ -4,8 +4,10 @@
 //
 //   COLLAPSED  a 46x64 glass tab ("flärp") — a vertical bookmark with the
 //              unicorn mark and a breathing accent spine; idle, findable,
-//              only 58x74 of screen taken.
-//   EXPANDED   the full pill: drag grip + Full + Region + fold + close.
+//              only 58x74 of screen taken. While a recording runs, the spine
+//              breathes RED instead.
+//   EXPANDED   the full pill: drag grip + Full + Region + Rec + fold + close.
+//              Rec is the red record button; mid-take it becomes Stop.
 //
 // Hover (or click) on the tab expands it; leaving the widget collapses it after
 // ~1.2s, as does the fold control. A capture always folds it back first.
@@ -21,6 +23,8 @@
 //
 //   invoke('widget_capture', { mode: 'full'     })  capture the whole screen
 //   invoke('widget_capture', { mode: 'region'   })  pick a region
+//   invoke('widget_capture', { mode: 'record'   })  start a screen recording
+//   invoke('widget_capture', { mode: 'stop-record' })  end the running take
 //   invoke('widget_capture', { mode: 'move'     })  native interactive move (drag)
 //   invoke('widget_capture', { mode: 'expand'   })  grow the window to the pill
 //   invoke('widget_capture', { mode: 'collapse' })  shrink the window to the tab
@@ -31,6 +35,7 @@
 // capability; today the mousedown handler below is what actually moves it.
 
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import "./widget.css";
 
 const THEME_KEY = "snagcraft:theme";
@@ -46,7 +51,7 @@ const HOVER_GUARD = 420;
 
 type Theme = "light" | "dark";
 type CaptureMode = "full" | "region";
-type WidgetMode = CaptureMode | "move" | "expand" | "collapse";
+type WidgetMode = CaptureMode | "record" | "stop-record" | "move" | "expand" | "collapse";
 
 /* ------------------------------------------------------------------ theme */
 
@@ -95,6 +100,15 @@ const ICON_REGION = svg(
   `<path d="M6.5 2.5v15a2 2 0 0 0 2 2h13"/>` +
     `<path d="M2.5 6.5h15a2 2 0 0 1 2 2v13"/>`
 );
+
+// Record: the classic filled dot; Stop: the filled square. Both render in the
+// record red via .w-btn--rec (widget.css).
+const ICON_REC =
+  `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">` +
+  `<circle cx="12" cy="12" r="7" fill="currentColor"/></svg>`;
+const ICON_STOP =
+  `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">` +
+  `<rect x="6.5" y="6.5" width="11" height="11" rx="1.5" fill="currentColor"/></svg>`;
 
 // Fold: the pill retreats back into its tab.
 const ICON_FOLD = svg(`<path d="M14.5 5.5L8 12l6.5 6.5"/><path d="M8 12h11"/>`);
@@ -205,6 +219,14 @@ function mount(): void {
     tip: "Capture a region (R)",
   });
 
+  const rec = button({
+    id: "w-rec",
+    label: "Rec",
+    icon: ICON_REC,
+    tip: "Record the screen (V)",
+  });
+  rec.classList.add("w-btn--rec");
+
   const sep = document.createElement("span");
   sep.className = "w-sep";
   sep.setAttribute("aria-hidden", "true");
@@ -227,7 +249,7 @@ function mount(): void {
   });
   close.classList.add("w-btn--close");
 
-  bar.append(spine(), grip, full, region, sep, fold, close);
+  bar.append(spine(), grip, full, region, rec, sep, fold, close);
   root.append(tab, bar);
 
   /* -------------------------------------------------- collapse / expand */
@@ -387,6 +409,49 @@ function mount(): void {
   fold.addEventListener("click", () => collapse());
   close.addEventListener("click", () => void closeWidget());
 
+  /* ------------------------------------------------------------- recording */
+
+  // The backend broadcasts `recording-state` to every window; the widget mirrors
+  // it so a take started elsewhere (main window, hotkey) still turns the tab's
+  // spine red and flips Rec into Stop.
+  let recLive = false;
+
+  function paintRec(): void {
+    root.dataset.recording = recLive ? "true" : "false";
+    const icon = rec.querySelector<HTMLElement>(".w-icon");
+    const label = rec.querySelector<HTMLElement>(".w-label");
+    if (icon) icon.innerHTML = recLive ? ICON_STOP : ICON_REC;
+    if (label) label.textContent = recLive ? "Stop" : "Rec";
+    rec.classList.toggle("is-live", recLive);
+    rec.title = recLive ? "Stop the recording (V)" : "Record the screen (V)";
+    rec.setAttribute("aria-label", rec.title);
+    rec.setAttribute("aria-pressed", String(recLive));
+  }
+
+  async function toggleRec(): Promise<void> {
+    const now = performance.now();
+    if (now < busyUntil) return;
+    busyUntil = now + 400;
+    flash(rec);
+    if (recLive) {
+      // Stop keeps the widget on screen — the user opened it mid-take on purpose.
+      await send("stop-record");
+      return;
+    }
+    // Start folds + hides the widget (Rust) so it never lands in the video.
+    collapse();
+    await send("record");
+  }
+
+  rec.addEventListener("click", () => void toggleRec());
+  void listen<{ recording?: boolean }>("recording-state", (ev) => {
+    recLive = ev.payload?.recording === true;
+    paintRec();
+  }).catch(() => {
+    /* plain browser or an older backend without the recorder */
+  });
+  paintRec();
+
   document.addEventListener("keydown", (ev) => {
     if (ev.key === "Escape") {
       ev.preventDefault();
@@ -402,6 +467,9 @@ function mount(): void {
     } else if (key === "r") {
       ev.preventDefault();
       void capture("region", region);
+    } else if (key === "v") {
+      ev.preventDefault();
+      void toggleRec();
     }
   });
 

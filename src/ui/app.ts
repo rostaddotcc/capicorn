@@ -5267,6 +5267,20 @@ export function mountApp(root: HTMLElement): void {
     /* widget window absent */
   });
 
+  // The widget's red Rec button: start a full-screen recording (the widget
+  // hides itself so it never lands in the video). Its Stop button (shown when
+  // the widget is opened mid-take) ends the take.
+  void listen("widget-record", () => {
+    void startRecording("full");
+  }).catch(() => {
+    /* widget window absent */
+  });
+  void listen("widget-stop-record", () => {
+    void stopRecording();
+  }).catch(() => {
+    /* widget window absent */
+  });
+
   // Live progress for a manual-scroll stitch (frames accepted, stitched height,
   // match confidence and any "too fast" warning). No cast running → dropped.
   void listen<ScrollingStatus>("scrolling-status", (ev) => {

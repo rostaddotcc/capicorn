@@ -205,16 +205,16 @@ pub const WIDGET_LABEL: &str = "widget";
 /// Size of the widget in its two visual states, in logical pixels. These must
 /// stay in step with `src/widget.css`:
 ///
-/// | state    | window | drawn surface           |
-/// |----------|--------|-------------------------|
-/// | folded   | 58x74  | 46x64 tab ("flärp")     |
-/// | expanded | 252x60 | 240x50 capture pill     |
+/// | state    | window  | drawn surface           |
+/// |----------|---------|-------------------------|
+/// | folded   | 58x74   | 46x64 tab ("flärp")     |
+/// | expanded | 304x60  | 292x50 capture pill     |
 ///
 /// The window genuinely changes size (see [`widget_apply_size`]) rather than
 /// keeping one large transparent surface: on Wayland a surface's input region
 /// is the whole surface, so a permanently large window would swallow desktop
 /// clicks around a collapsed tab.
-const WIDGET_WIDTH: f64 = 252.0;
+const WIDGET_WIDTH: f64 = 304.0;
 const WIDGET_HEIGHT: f64 = 60.0;
 const WIDGET_TAB_WIDTH: f64 = 58.0;
 const WIDGET_TAB_HEIGHT: f64 = 74.0;
@@ -234,11 +234,15 @@ fn build_widget<R: Runtime>(app: &AppHandle<R>) -> Result<WebviewWindow<R>, Stri
             .decorations(false)
             .transparent(true)
             .shadow(false)
-            // Resizable on purpose: GTK clamps `gtk_window_resize` to the window's
-            // geometry hints, and `resizable(false)` pins those hints to the current
-            // size — a fixed-size widget can never grow into the pill. There is no
-            // titlebar and no resize border, so nothing can be resized by hand.
-            .resizable(true)
+            // A widget, not a window: the user must never be able to stretch,
+            // maximise or minimise it (KDE offers all three even on frameless
+            // windows via Alt-drag / the window menu). Programmatic tab↔pill
+            // resizes still work: `widget_apply_size` briefly unlocks the
+            // geometry hints around each `set_size` — GTK clamps resizes to the
+            // hints, and `resizable(false)` pins them to the CURRENT size.
+            .resizable(false)
+            .maximizable(false)
+            .minimizable(false)
             .skip_taskbar(true)
             .visible(true)
             .focused(true);
@@ -255,6 +259,10 @@ fn build_widget<R: Runtime>(app: &AppHandle<R>) -> Result<WebviewWindow<R>, Stri
             "snagcraft: widget always-on-top not supported here ({err}); normal stacking applies"
         );
     }
+    // Pin the compositor-side size limits to the folded tab as well.
+    let tab = tauri::LogicalSize::new(WIDGET_TAB_WIDTH, WIDGET_TAB_HEIGHT);
+    let _ = window.set_min_size(Some(tab));
+    let _ = window.set_max_size(Some(tab));
     place_top_right(&window, WIDGET_TAB_WIDTH);
     Ok(window)
 }
@@ -288,9 +296,17 @@ fn widget_apply_size<R: Runtime>(window: &WebviewWindow<R>, expanded: bool) -> R
     } else {
         (WIDGET_TAB_WIDTH, WIDGET_TAB_HEIGHT)
     };
-    window
-        .set_size(tauri::LogicalSize::new(width, height))
-        .map_err(|err| format!("could not resize the widget: {err}"))?;
+    // Unlock → new limits → resize → lock. GTK clamps `set_size` to the geometry
+    // hints, and a locked (resizable=false) window pins them to the OLD size —
+    // so the hints must move first, and the lock returns afterwards to keep the
+    // widget un-stretchable by hand between state changes.
+    let size = tauri::LogicalSize::new(width, height);
+    let _ = window.set_resizable(true);
+    let _ = window.set_min_size(Some(size));
+    let _ = window.set_max_size(Some(size));
+    let result = window.set_size(size);
+    let _ = window.set_resizable(false);
+    result.map_err(|err| format!("could not resize the widget: {err}"))?;
     place_top_right(window, width);
     Ok(())
 }
@@ -372,6 +388,7 @@ pub fn toggle_widget(app: AppHandle) -> Result<bool, String> {
 ///
 /// `mode` is one of:
 ///   * `"full"` / `"region"` — start a capture in the main window;
+///   * `"record"` / `"stop-record"` — start / stop a screen recording;
 ///   * `"move"`              — native interactive window move (the drag);
 ///   * `"expand"` / `"collapse"` — resize between the pill and the edge tab.
 ///
@@ -390,8 +407,33 @@ pub fn widget_capture(app: AppHandle, mode: String) -> Result<(), String> {
         "expand" => widget_resize(&app, true),
         "collapse" => widget_resize(&app, false),
         "full" | "region" => capture_from_widget(&app, &mode),
+        "record" => record_from_widget(&app, true),
+        "stop-record" => record_from_widget(&app, false),
         other => Err(format!("unknown widget mode: {other}")),
     }
+}
+
+/// "Rec" pressed inside the widget: hand the recording to the main window and
+/// hide the widget so it never ends up in the video. "Stop" keeps the widget
+/// visible — the user asked for it mid-take, and the main window's Stop button,
+/// tray and hotkeys keep working as before.
+fn record_from_widget(app: &AppHandle, start: bool) -> Result<(), String> {
+    if start {
+        if let Some(window) = widget_window(app) {
+            let _ = window.hide();
+        }
+        app.emit_to("main", "widget-record", ())
+            .map_err(|err| format!("could not reach the main window: {err}"))?;
+        if let Some(main) = app.get_webview_window("main") {
+            let _ = main.unminimize();
+            let _ = main.show();
+            let _ = main.set_focus();
+        }
+    } else {
+        app.emit_to("main", "widget-stop-record", ())
+            .map_err(|err| format!("could not reach the main window: {err}"))?;
+    }
+    Ok(())
 }
 
 /// Start a compositor-driven move. This maps to `xdg_toplevel.move` on Wayland

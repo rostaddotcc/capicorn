@@ -3,6 +3,20 @@
 All notable changes to SnagCraft, newest first. Full release notes for every tag live on
 the [releases page](https://github.com/rostaddotcc/snagcraft/releases).
 
+## v1.5.0
+- **The widget is a widget again — not a window.** It can no longer be stretched,
+  maximised or minimised (KDE offered all three even on the frameless flärp, and
+  stretching did nothing but grow an empty transparent frame). The window is now
+  locked (`resizable/maximizable/minimizable = false` + min=max size hints); the
+  tab↔pill resize still works because each state change briefly unlocks the GTK
+  geometry hints around the programmatic resize.
+- **Red Rec button on the pill.** One click starts a full-screen recording — the widget
+  folds and hides so it never lands in the video. While a take runs (started anywhere:
+  widget, main window, hotkey) the tab's spine breathes **red**, and reopening the widget
+  shows a pulsing filled-red **Stop** button that ends the take. `V` is the widget
+  shortcut for Rec/Stop, alongside `F` (Full) and `R` (Region).
+- Pill widened 240→292 px to seat the new button; record red unified to `#e5484d`.
+
 ## v1.4.0
 - **Draw from the first second.** SnagCraft now opens on a white 1280×800 canvas instead of
   an empty workspace — no more annotating "on nothing". Tools, Save and Copy are ready

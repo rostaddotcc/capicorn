@@ -151,6 +151,17 @@ Baseline: Tauri v1.5.2 (commit d25adb1). Rebuild workspace: `rust/` (not yet cre
   T1 added sanitize() on add() + format::load (shadow clamps, brush point cap,
   non-finite point skip) — extra hostile-input hardening beyond contract.
 
+### 2026-11-16 — wake #6: W2 polish while UI builds
+- UI track (deleg_3ecf00d3) still running — lib.rs 714 → 1896 lines mid-build.
+- Parent closed the two logged cosmetic parity gaps in compose (no sibling owns
+  it now): spotlight hole radius min(12,min(w,h)/6) + highlighter band radius
+  min(8,min(w,h)/4) with ≤0.5 hard-rect fallback (exact live blur.ts formulas,
+  SDF coverage AA), shadow blur 3 box passes ≈ gaussian. 2 corner-coverage
+  regression tests; 36 compose tests green, clippy clean. Committed c3a1a94.
+- Parity checklist: 11 rows ticked W1/W2 (blur modes/constants/secure-min/
+  blends, history 80 + reset-on-new).
+- Next: UI lands → full gates + vision contact sheet + AppImage + W2 sign-off.
+
 ## Appendix — measured reality
 
 | Claim | Measured | What changed |

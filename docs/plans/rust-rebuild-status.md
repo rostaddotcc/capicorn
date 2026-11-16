@@ -162,6 +162,25 @@ Baseline: Tauri v1.5.2 (commit d25adb1). Rebuild workspace: `rust/` (not yet cre
   blends, history 80 + reset-on-new).
 - Next: UI lands → full gates + vision contact sheet + AppImage + W2 sign-off.
 
+### 2026-11-16 — wake #7: UI pre-verification + step-number bug fix
+- UI track still running (final verification); snapshots w2_shell + w2_shell_narrow
+  blessed by child. Parent vision + pixel probes:
+  * Shell structure PASS: exactly 13 icon tools on ONE row + Capture/Open/Save/
+    Export/Undo/Redo; contextual rail (shape picker, 8-swatch palette, border,
+    shadow angle/distance/opacity/blur); narrow width keeps one row with
+    horizontal ScrollArea (tools 11–13 scroll-reachable, code-verified).
+  * Vision flagged spotlight/blur/magnify as broken — pixel probes DISPROVED it
+    (spotlight α=0.306 exact, blur smoothed, magnify shows zoomed content);
+    vision misread the synthetic checker base as unflattened alpha.
+  * REAL bug found: step-badge numbers invisible — compose asks fonts("", true)
+    and the engine lookup was exact-match-only → None. Fixed: fallback chain
+    exact → Inter → same-weight → first (mirrors FontDb::resolve). Regression
+    test counts glyph pixels strictly inside the badge (first version
+    false-passed on the white base — caught and fixed). 12 engine tests green.
+- Steered UI child: re-bless both snapshots with the fixed engine; do NOT
+  "fix" the proven-correct renderers. Committed f20cd2e + pushed.
+- Next: UI lands → full gates + AppImage + W2 sign-off + delivery.
+
 ## Appendix — measured reality
 
 | Claim | Measured | What changed |

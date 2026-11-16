@@ -250,6 +250,20 @@ Baseline: Tauri v1.5.2 (commit d25adb1). Rebuild workspace: `rust/` (not yet cre
   viewport, apps/snagcraft wiring (tray/hotkeys/CLI/launch_request/autostart/
   file associations), gates, AppImage.
 
+### 2026-11-16 — wake #11: T2 verified + committed; W3b dispatched
+- T2 (io::settings + engine settings.get/set) finished: parent-verified 19 io +
+  22 engine tests, clippy clean; committed 950a01e. Manifest note: T2 added
+  serde/serde_json to io (needed by Settings — parent wiring gap, accepted).
+- T1 (platform) still running: all modules written (tray 264, hotkeys 328,
+  single_instance 317, autostart 181, trigger 130, png 665 — png.rs likely a
+  hand-rolled PNG→RGBA decoder for the tray icon since platform has no image
+  dep; verify at integration).
+- Dispatched W3b (deleg_2984262f): settings panel + themes + close-guard +
+  widget viewport + tray/hotkey/instance/CLI wiring + file associations,
+  against the verified-mechanism design + locked platform contract.
+- Next: T1 + W3b land → verify → full gates → AppImage → KDE pass (tray click,
+  Print/Shift+Print consent, widget drag, close-guard, settings persistence).
+
 ## Appendix — measured reality
 
 | Claim | Measured | What changed |

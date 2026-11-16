@@ -391,7 +391,7 @@ pub async fn list_folder_media(dir: String) -> Result<Vec<FolderMedia>, String> 
     }
 
     let mut files = scan_media(&dir)?;
-    files.sort_by(|a, b| b.2.cmp(&a.2));
+    files.sort_by_key(|(_, _, modified)| std::cmp::Reverse(*modified));
     files.truncate(MEDIA_LIMIT);
 
     let mut out = Vec::with_capacity(files.len());

@@ -111,6 +111,8 @@ impl Session {
 
     /// Composite the current document to a flat surface (export/preview).
     /// Per-object font family/bold from the bundled OFL db; italic = shear.
+    /// Lookup mirrors FontDb::resolve semantics: exact family → Inter →
+    /// first available (compose asks for ("", true) for step numbers).
     pub fn render(&self) -> Result<Surface, CommandError> {
         let doc = self.require_doc()?;
         let faces = &self.faces;
@@ -118,6 +120,13 @@ impl Session {
             faces
                 .iter()
                 .find(|(f, b, _)| f.eq_ignore_ascii_case(family) && *b == bold)
+                .or_else(|| {
+                    faces
+                        .iter()
+                        .find(|(f, b, _)| f.eq_ignore_ascii_case("Inter") && *b == bold)
+                })
+                .or_else(|| faces.iter().find(|(_, b, _)| *b == bold))
+                .or_else(|| faces.first())
                 .map(|(_, _, face)| face)
         };
         Ok(snagcraft_compose::composite_styled(doc, &lookup, snagcraft_text::ITALIC_SHEAR))
@@ -659,6 +668,33 @@ mod tests {
         let mut dark = 0;
         for y in 0..60 { for x in 0..200 { let p = img.get_pixel(x, y).0; if p[0] < 90 && p[1] < 90 && p[2] < 90 { dark += 1; } } }
         assert!(dark > 50, "bundled font must rasterize text: {dark} dark px");
+    }
+
+    #[test]
+    fn step_number_rasterizes_via_font_fallback() {
+        // compose asks the font callback for ("", true) for step numbers —
+        // the lookup must fall back to Inter bold, not return None.
+        let mut s = Session::new();
+        s.dispatch("doc.new", json!({"w": 64, "h": 64})).unwrap();
+        s.dispatch("edit.add", json!({"object": {"kind":"Step","id":0,"pos":{"x":32.0,"y":32.0},"number":1,"color":[0,122,255,255],"radius":16.0}})).unwrap();
+        let img = s.render().unwrap();
+        let mut white = 0;
+        for y in 16..48 {
+            for x in 16..48 {
+                // Only count INSIDE the blue badge (r=16): the white base
+                // outside the circle must not satisfy the assertion.
+                let dx = x as f32 - 32.0;
+                let dy = y as f32 - 32.0;
+                if dx * dx + dy * dy > 144.0 {
+                    continue;
+                }
+                let p = img.get_pixel(x, y).0;
+                if p[0] > 230 && p[1] > 230 && p[2] > 230 {
+                    white += 1;
+                }
+            }
+        }
+        assert!(white > 5, "step number glyph must render: {white} white px");
     }
 
     #[test]

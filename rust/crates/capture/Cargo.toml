@@ -9,7 +9,6 @@ publish = false
 
 [dependencies]
 snagcraft-raster = { path = "../raster" }
-snagcraft-geom = { path = "../geom" }
 thiserror.workspace = true
 tracing.workspace = true
 image.workspace = true

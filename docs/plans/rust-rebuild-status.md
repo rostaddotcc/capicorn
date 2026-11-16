@@ -95,6 +95,14 @@ Baseline: Tauri v1.5.2 (commit d25adb1). Rebuild workspace: `rust/` (not yet cre
   kinds, undo/redo, PNG/JPEG/WebP export, native format, CLI automation.
 - Remaining W1 sign-off: rostad's KDE pass — live portal capture (unlocked),
   annotate → save/export under ten seconds. W2 next: full 13-tool parity.
+- Post-batch follow-up (child reports arrived after integration; all matched the
+  verified artifacts): confirmed C1's spotlight semantics (dim = darkening amount,
+  factor 1−dim — matches contract intent); dropped capture's unused geom dep;
+  hardened format::load to reject manifest-size/base-image mismatch (+tamper test,
+  format now 11 tests). C2's WebPEncoder::new_lossless deviation accepted (image
+  0.25 API). W2 inputs from parity doc: 5 shape variants (triangle/star missing in
+  rust ShapeKind), live MAX_HISTORY=80, SECURE_BLUR_MIN=10, blackout #111827,
+  spotlight rgba(8,12,18,.68), highlighter α .36, shortcuts V C A T R B E G L H K S M.
 
 ## Appendix — measured reality
 

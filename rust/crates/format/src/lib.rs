@@ -136,6 +136,14 @@ pub fn load(bytes: &[u8]) -> Result<Document, FormatError> {
     if w > MAX_DIM || h > MAX_DIM {
         return Err(FormatError::TooLarge);
     }
+    // The manifest size must agree with the actual base pixels — a mismatch
+    // would desync every object coordinate from the image (hostile file rule).
+    if w != raw.size.w || h != raw.size.h {
+        return Err(FormatError::InvalidImage(format!(
+            "manifest size {}x{} does not match base image {w}x{h}",
+            raw.size.w, raw.size.h
+        )));
+    }
 
     Ok(Document {
         size: raw.size,
@@ -501,5 +509,16 @@ mod tests {
             next_id: 1,
         };
         assert!(matches!(save(&doc), Err(FormatError::TooLarge)));
+    }
+
+    #[test]
+    fn load_rejects_size_mismatch_with_base() {
+        let doc = Document::white(Size::new(16, 16));
+        let bytes = save(&doc).unwrap();
+        // Tamper: manifest claims 32x16 while the base PNG stays 16x16.
+        let mut v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        v["size"]["w"] = serde_json::json!(32);
+        let tampered = serde_json::to_vec(&v).unwrap();
+        assert!(matches!(load(&tampered), Err(FormatError::InvalidImage(_))));
     }
 }

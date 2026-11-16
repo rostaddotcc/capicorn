@@ -10,7 +10,7 @@ Baseline: Tauri v1.5.2 (commit d25adb1). Rebuild workspace: `rust/` (not yet cre
 | W0 | egui editor spike + Wayland viewport probe | KDE-approved by rostad 2026-11-16 ("appen lirar") |
 | W1 | workspace scaffold, doc model, engine, capture port | KDE-approved by rostad 2026-11-16 |
 | W2 | editor tool parity | KDE-approved by rostad 2026-11-16; UI polish pass landed (sliders) |
-| W3 | shell parity (tray/hotkeys/widget/settings) | in progress — W3a tracks T1 (platform) + T2 (settings/engine) dispatched |
+| W3 | shell parity (tray/hotkeys/widget/settings) | complete on pn53 (216 tests); KDE live pass pending rostad |
 | W4 | recording, scrolling, OCR, timelapse | pending |
 | W5 | CLI/JSON/MCP automation + WASM web | pending |
 | W6 | packaging, docs, suite dossier | pending |
@@ -270,6 +270,28 @@ Baseline: Tauri v1.5.2 (commit d25adb1). Rebuild workspace: `rust/` (not yet cre
   after observing the portal hang with unshowable consent; edition-2024
   env::set_var is unsafe → pure resolvers instead (house-rule compliant).
   Steered W3b child: tray-32.png path, tray_available(), Bound/Failed gating.
+
+### 2026-11-16 — wake #17: W3 integrated end-to-end
+- W3b child finished (journal complete): settings panel (SettingsView mirror,
+  settings.set dispatch + Shell-wrapper persistence), dark theme (all chrome
+  reads visuals, accent #3d7ec2), close-guard decision tree via
+  ViewportEvent::Close/CancelClose + doc_dirty tracking, widget immediate
+  viewport (58×74 ↔ 304×60, park top-right, StartDrag, Enter/Space expand,
+  Rec disabled until W4), app wiring (acquire_or_forward, tray/hotkey channels
+  with graceful degradation, --capture/--region/path argv shared first+forwarded
+  launch), desktop file %F + MIME (desktop-file-validate passes).
+- Parent pre-verified all W3 snapshots by vision: settings (5 sections ✓),
+  dark theme ✓, close-guard modal (plain copy + picture icon + Save/Discard/
+  Cancel ✓), widget pill (white box in snapshot = kittest embedded-viewport
+  artifact; code correct: transparent viewport + pill-only paint + clear 0).
+- Parent gates: fmt ✓ (fixed own recording stub), clippy -D warnings ✓,
+  **216 tests / 0 failed / 3 ignored** ✓, layers 23 ✓. Release + AppImage
+  (12.8 MB) launch-tested (exit 124); tray gracefully unavailable on GNOME
+  (no StatusNotifierWatcher — KDE has it); CLI 24 commands incl settings.
+- Glyph lesson: ⚙ U+2699 absent from bundled fonts → painted gear (steered).
+- Remaining W3 sign-off: rostad KDE live pass — tray click-to-restore,
+  Print/Shift+Print portal consent, widget drag/transparency, hide-to-tray,
+  settings persistence across restart.
 
 ## Appendix — measured reality
 

@@ -15,6 +15,7 @@ snagcraft-compose = { path = "../compose" }
 snagcraft-raster = { path = "../raster" }
 snagcraft-geom = { path = "../geom" }
 snagcraft-color = { path = "../color" }
+snagcraft-platform = { path = "../platform" }
 egui.workspace = true
 eframe.workspace = true
 ab_glyph.workspace = true

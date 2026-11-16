@@ -11,24 +11,208 @@
 //! overflow, never a second row), contextual properties rail, crop Enter/Esc
 //! UX, freehand brush, auto-numbered steps, callout/magnify/bucket/spotlight,
 //! and a floating quick font bar while text is being typed.
+//! W3b: shell parity — settings panel (persisted through the app's io hook),
+//! light/dark themes, dirty-tracking close guard, tray/hotkey/single-instance
+//! plumbing and the transparent floating widget viewport.
 
 use std::path::PathBuf;
-use std::sync::mpsc;
+use std::sync::mpsc::{self, Receiver, Sender};
+use std::time::Duration;
 
 use egui::{
     Align, Align2, Color32, CornerRadius, FontId, Key, Layout, Modifiers, Pos2, Rect, Response,
-    Sense, Shape, Stroke, StrokeKind, pos2, vec2,
+    Sense, Shape, Stroke, StrokeKind, ViewportBuilder, ViewportCommand, ViewportId, pos2, vec2,
 };
 use snagcraft_doc::{AnnotObject, BlurMode, ShapeKind};
 use snagcraft_engine::Session;
 use snagcraft_geom::{Point, Rect as GRect};
+use snagcraft_platform::{HotkeyEvent, TrayEvent};
 use snagcraft_raster::Surface;
 
 pub const ACCENT: Color32 = Color32::from_rgb(0x22, 0x66, 0xb3);
+/// Dark-theme accent (`rust-rebuild-parity` §5).
+pub const ACCENT_DARK: Color32 = Color32::from_rgb(0x3d, 0x7e, 0xc2);
+
 const PANEL_FILL: Color32 = Color32::from_rgb(243, 244, 246);
 const BORDER: Color32 = Color32::from_rgb(209, 213, 219);
 const FG: Color32 = Color32::from_rgb(31, 41, 55);
 const FG_MUTED: Color32 = Color32::from_rgb(107, 114, 128);
+const DARK_PANEL: Color32 = Color32::from_rgb(30, 33, 38);
+const DARK_SURFACE: Color32 = Color32::from_rgb(35, 38, 44);
+const DARK_BORDER: Color32 = Color32::from_rgb(58, 63, 71);
+const DARK_FG: Color32 = Color32::from_rgb(230, 232, 236);
+
+// ---- theme-aware colours (the widgets read these, never a fixed light value) ----
+
+fn pal_panel(ui: &egui::Ui) -> Color32 {
+    ui.visuals().panel_fill
+}
+
+fn pal_surface(ui: &egui::Ui) -> Color32 {
+    ui.visuals().window_fill
+}
+
+fn pal_border(ui: &egui::Ui) -> Color32 {
+    ui.visuals().widgets.noninteractive.bg_stroke.color
+}
+
+fn pal_fg(ui: &egui::Ui) -> Color32 {
+    ui.visuals().widgets.noninteractive.fg_stroke.color
+}
+
+fn pal_muted(ui: &egui::Ui) -> Color32 {
+    ui.visuals().weak_text_color()
+}
+
+fn pal_accent(ui: &egui::Ui) -> Color32 {
+    ui.visuals().hyperlink_color
+}
+
+fn pal_hover(ui: &egui::Ui) -> Color32 {
+    ui.visuals().widgets.hovered.bg_fill
+}
+
+fn pal_canvas(ui: &egui::Ui) -> Color32 {
+    if ui.visuals().dark_mode {
+        Color32::from_rgb(21, 23, 27)
+    } else {
+        Color32::from_rgb(226, 229, 233)
+    }
+}
+
+/// UI theme, mirroring `io::settings::Theme` (the shell does not link the io
+/// crate — see the W3b manifest exception — so the pair is translated through
+/// the settings JSON the engine hands back).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum Theme {
+    #[default]
+    Light,
+    Dark,
+}
+
+impl Theme {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Light => "Light",
+            Self::Dark => "Dark",
+        }
+    }
+
+    fn from_json(value: Option<&serde_json::Value>) -> Self {
+        match value.and_then(|v| v.as_str()) {
+            Some("Dark") => Self::Dark,
+            _ => Self::Light,
+        }
+    }
+}
+
+/// The settings the panel edits: a faithful view of `io::settings::Settings`
+/// (same field names/types) with the theme as [`Theme`]. Every change is
+/// written back through `settings.set`, so the engine stays the single owner.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SettingsView {
+    pub minimize_to_tray: bool,
+    pub start_at_login: bool,
+    pub show_widget: bool,
+    pub autosave_captures: bool,
+    pub capture_delay_secs: u32,
+    pub theme: Theme,
+    pub default_format: String,
+    pub default_quality: u8,
+    pub save_dir: Option<String>,
+    pub filename_pattern: String,
+    pub hotkey_full: String,
+    pub hotkey_region: String,
+}
+
+impl Default for SettingsView {
+    fn default() -> Self {
+        Self {
+            minimize_to_tray: false,
+            start_at_login: false,
+            show_widget: true,
+            autosave_captures: true,
+            capture_delay_secs: 0,
+            theme: Theme::Light,
+            default_format: "png".to_string(),
+            default_quality: 90,
+            save_dir: None,
+            filename_pattern: "SnagCraft-{date}-{time}".to_string(),
+            hotkey_full: "Print".to_string(),
+            hotkey_region: "SHIFT+Print".to_string(),
+        }
+    }
+}
+
+impl SettingsView {
+    /// Tolerant reader: unknown/missing fields keep the documented defaults.
+    pub fn from_json(v: &serde_json::Value) -> Self {
+        let d = Self::default();
+        let b =
+            |key: &str, fallback: bool| v.get(key).and_then(|x| x.as_bool()).unwrap_or(fallback);
+        let s = |key: &str, fallback: &str| {
+            v.get(key)
+                .and_then(|x| x.as_str())
+                .unwrap_or(fallback)
+                .to_string()
+        };
+        Self {
+            minimize_to_tray: b("minimize_to_tray", d.minimize_to_tray),
+            start_at_login: b("start_at_login", d.start_at_login),
+            show_widget: b("show_widget", d.show_widget),
+            autosave_captures: b("autosave_captures", d.autosave_captures),
+            capture_delay_secs: v
+                .get("capture_delay_secs")
+                .and_then(|x| x.as_u64())
+                .map_or(d.capture_delay_secs, |x| x.min(3_600) as u32),
+            theme: Theme::from_json(v.get("theme")),
+            default_format: match v.get("default_format").and_then(|x| x.as_str()) {
+                Some(f) if ["png", "jpeg", "webp"].contains(&f) => f.to_string(),
+                _ => d.default_format,
+            },
+            default_quality: v
+                .get("default_quality")
+                .and_then(|x| x.as_u64())
+                .map_or(d.default_quality, |q| q.clamp(1, 100) as u8),
+            save_dir: v
+                .get("save_dir")
+                .and_then(|x| x.as_str())
+                .map(str::to_string),
+            filename_pattern: s("filename_pattern", &d.filename_pattern),
+            hotkey_full: s("hotkey_full", &d.hotkey_full),
+            hotkey_region: s("hotkey_region", &d.hotkey_region),
+        }
+    }
+
+    pub fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "minimize_to_tray": self.minimize_to_tray,
+            "start_at_login": self.start_at_login,
+            "show_widget": self.show_widget,
+            "autosave_captures": self.autosave_captures,
+            "capture_delay_secs": self.capture_delay_secs,
+            "theme": self.theme.name(),
+            "default_format": self.default_format,
+            "default_quality": self.default_quality,
+            "save_dir": self.save_dir,
+            "filename_pattern": self.filename_pattern,
+            "hotkey_full": self.hotkey_full,
+            "hotkey_region": self.hotkey_region,
+        })
+    }
+}
+
+/// Everything the tray/hotkey/single-instance layer hands to the shell. The
+/// handles are only kept alive here — dropping them detaches the service.
+#[derive(Default)]
+pub struct PlatformLink {
+    tray_rx: Option<Receiver<TrayEvent>>,
+    hotkey_tx: Option<Sender<HotkeyEvent>>,
+    hotkey_rx: Option<Receiver<HotkeyEvent>>,
+    instance_rx: Option<Receiver<Vec<String>>>,
+    _tray: Option<snagcraft_platform::TrayHandle>,
+    hotkeys: Option<snagcraft_platform::HotkeyHandle>,
+}
 
 /// Live 8-swatch rail palette (`app.ts:330-339`): (name, rgb).
 pub const PALETTE: [(&str, [u8; 3]); 8] = [
@@ -287,7 +471,32 @@ pub struct SnagCraftApp {
     pub spotlight_dim: f32,
     pub status: String,
     pub selftest: Option<SelfTest>,
-    dirty: bool,
+    /// Settings mirror (engine is the owner; this is the last applied copy).
+    pub settings: SettingsView,
+    /// Unsaved-annotation flag for the close guard (cleared by save/export/
+    /// open/new/capture, set by any successful `edit.*`).
+    pub doc_dirty: bool,
+    /// Skip every guard on the way out (tray Quit / modal Discard).
+    pub force_quit: bool,
+    /// "Unsaved changes" modal visible.
+    pub confirm_close: bool,
+    pub settings_open: bool,
+    /// Floating widget: folded tab vs expanded pill.
+    pub widget_expanded: bool,
+    /// Tray icon actually registered (hide-to-tray is only safe then).
+    pub tray_ok: bool,
+    /// Main window hidden (to tray or to the widget): eframe then runs
+    /// `App::logic` instead of `App::ui`, so the channels are pumped there.
+    hidden: bool,
+    applied_theme: Option<Theme>,
+    /// Root context, captured each frame so settings changes can re-theme.
+    main_ctx: Option<egui::Context>,
+    widget_shown: bool,
+    widget_applied: Option<bool>,
+    platform: PlatformLink,
+    /// Set when a settings change must be persisted by the app layer.
+    settings_dirty: bool,
+    redraw: bool,
     tex: Option<egui::TextureHandle>,
     drag: Option<Drag>,
     drag_cur: Option<Point>,
@@ -303,6 +512,11 @@ impl SnagCraftApp {
     pub fn new() -> Self {
         let mut session = Session::new();
         let _ = session.dispatch("doc.new", serde_json::json!({"w": 1000, "h": 640}));
+        // The engine loaded the settings file in `Session::new` — mirror it.
+        let settings = session
+            .dispatch("settings.get", serde_json::json!({}))
+            .map(|v| SettingsView::from_json(&v))
+            .unwrap_or_default();
         Self {
             session,
             tool: Tool::Arrow,
@@ -328,7 +542,21 @@ impl SnagCraftApp {
             spotlight_dim: 0.6,
             status: "Ready — Capture the screen or open an image.".into(),
             selftest: None,
-            dirty: true,
+            settings,
+            doc_dirty: false,
+            force_quit: false,
+            confirm_close: false,
+            settings_open: false,
+            widget_expanded: false,
+            tray_ok: false,
+            hidden: false,
+            applied_theme: None,
+            main_ctx: None,
+            widget_shown: false,
+            widget_applied: None,
+            platform: PlatformLink::default(),
+            settings_dirty: false,
+            redraw: true,
             tex: None,
             drag: None,
             drag_cur: None,
@@ -422,7 +650,8 @@ impl SnagCraftApp {
         );
         app.tool = Tool::Shape;
         app.shadow_enabled = true;
-        app.dirty = true;
+        app.redraw = true;
+        app.doc_dirty = true;
         app
     }
 
@@ -442,16 +671,41 @@ impl SnagCraftApp {
     }
 
     pub fn start_capture(&mut self) {
+        self.start_capture_delayed(self.settings.capture_delay_secs);
+    }
+
+    fn start_capture_delayed(&mut self, delay_secs: u32) {
         if self.capture_rx.is_some() {
             return;
         }
         let (tx, rx) = mpsc::channel();
         self.capture_rx = Some(rx);
-        self.status = "Capturing… answer the OS picker if one appears.".into();
+        self.status = if delay_secs > 0 {
+            format!("Capturing in {delay_secs}s… answer the OS picker if one appears.")
+        } else {
+            "Capturing… answer the OS picker if one appears.".into()
+        };
+        // Hostile input: the delay is clamped by SettingsView (<= 3600) and
+        // capped again here so a corrupt file cannot park the thread forever.
+        let delay = Duration::from_secs(u64::from(delay_secs.min(3_600)));
         std::thread::spawn(move || {
+            if !delay.is_zero() {
+                std::thread::sleep(delay);
+            }
             let result = snagcraft_capture::capture_full_blocking().map_err(|e| e.to_string());
             let _ = tx.send(result);
         });
+    }
+
+    /// Capture the whole screen (toolbar widget's Full button, tray, hotkey).
+    pub fn capture_full(&mut self) {
+        self.start_capture();
+    }
+
+    /// Capture and switch straight into the crop tool (Region button/hotkey).
+    pub fn capture_region(&mut self) {
+        self.select_tool(Tool::Crop);
+        self.start_capture();
     }
 
     fn poll_capture(&mut self) {
@@ -461,7 +715,9 @@ impl SnagCraftApp {
                 let (w, h) = (surface.width(), surface.height());
                 self.session.load_surface(surface);
                 self.capture_rx = None;
-                self.dirty = true;
+                self.redraw = true;
+                // A fresh capture starts a clean document.
+                self.doc_dirty = false;
                 self.selected = None;
                 self.status = format!("Captured {w}×{h} — annotate away.");
             }
@@ -479,7 +735,16 @@ impl SnagCraftApp {
 
     fn dispatch(&mut self, cmd: &str, params: serde_json::Value) {
         match self.session.dispatch(cmd, params) {
-            Ok(_) => self.dirty = true,
+            Ok(_) => {
+                self.redraw = true;
+                // Dirty tracking: edits make the document unsaved, while
+                // save/export/open/new all leave it clean.
+                if cmd.starts_with("edit.") {
+                    self.doc_dirty = true;
+                } else if matches!(cmd, "doc.save" | "doc.export" | "doc.open" | "doc.new") {
+                    self.doc_dirty = false;
+                }
+            }
             Err(e) => self.status = format!("{cmd}: {e}"),
         }
     }
@@ -508,7 +773,8 @@ impl SnagCraftApp {
         {
             Ok(v) => {
                 if v["pasted"].as_bool().unwrap_or(false) {
-                    self.dirty = true;
+                    self.redraw = true;
+                    self.doc_dirty = true;
                     self.selected = None;
                     self.status = format!("Pasted {}×{} from clipboard.", v["width"], v["height"]);
                 } else {
@@ -689,7 +955,7 @@ impl SnagCraftApp {
             "color": color, "width": width}));
     }
 
-    fn open_dialog(&mut self) {
+    fn open_dialog(&mut self) -> bool {
         if let Some(path) = rfd::FileDialog::new()
             .add_filter("Images", &["png", "jpg", "jpeg", "webp"])
             .pick_file()
@@ -699,41 +965,806 @@ impl SnagCraftApp {
                 serde_json::json!({"path": path.to_string_lossy()}),
             );
             self.status = format!("Opened {}", path.display());
+            return true;
         }
+        false
     }
 
-    fn save_dialog(&mut self) {
-        if let Some(path) = rfd::FileDialog::new()
+    /// Native "save annotations" dialog. Returns true when a file was written
+    /// (the close guard needs to know whether closing is now safe).
+    pub fn save_dialog(&mut self) -> bool {
+        let mut dialog = rfd::FileDialog::new()
             .set_file_name("capture.snagcraft")
-            .add_filter("SnagCraft", &["snagcraft"])
-            .save_file()
-        {
+            .add_filter("SnagCraft", &["snagcraft"]);
+        if let Some(dir) = &self.settings.save_dir {
+            dialog = dialog.set_directory(dir);
+        }
+        if let Some(path) = dialog.save_file() {
             self.dispatch(
                 "doc.save",
                 serde_json::json!({"path": path.to_string_lossy()}),
             );
             self.status = format!("Saved {}", path.display());
+            return true;
         }
+        false
     }
 
-    fn export_dialog(&mut self) {
-        if let Some(path) = rfd::FileDialog::new()
-            .set_file_name("capture.png")
-            .add_filter("PNG", &["png"])
-            .save_file()
-        {
+    /// Export the flattened image using the settings' format/quality.
+    pub fn export_dialog(&mut self) -> bool {
+        let format = self.settings.default_format.clone();
+        let quality = self.settings.default_quality;
+        let filter = match format.as_str() {
+            "jpeg" => ("JPEG", vec!["jpeg", "jpg"]),
+            "webp" => ("WebP", vec!["webp"]),
+            _ => ("PNG", vec!["png"]),
+        };
+        let mut dialog = rfd::FileDialog::new()
+            .set_file_name(format!("capture.{format}"))
+            .add_filter(filter.0, &filter.1);
+        if let Some(dir) = &self.settings.save_dir {
+            dialog = dialog.set_directory(dir);
+        }
+        if let Some(path) = dialog.save_file() {
             self.dispatch(
                 "doc.export",
-                serde_json::json!({"path": path.to_string_lossy(), "format": "png"}),
+                serde_json::json!({"path": path.to_string_lossy(),
+                    "format": format, "quality": quality}),
             );
             self.status = format!("Exported {}", path.display());
+            return true;
         }
+        false
     }
 }
 
 impl Default for SnagCraftApp {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+// --------------------------------------------------------- W3b: shell plumbing
+
+/// Widget geometry (`windows.rs:205-213`): the outer window, then the folded tab.
+pub const WIDGET_EXPANDED_SIZE: (f32, f32) = (304.0, 60.0);
+pub const WIDGET_FOLDED_SIZE: (f32, f32) = (58.0, 74.0);
+/// Live red dot on the widget (recording itself lands in W4).
+const WIDGET_RED: Color32 = Color32::from_rgb(214, 40, 40);
+const WIDGET_BG: Color32 = Color32::from_rgba_premultiplied(26, 29, 35, 242);
+
+/// The floating widget's own viewport (immediate viewport, one per frame).
+pub fn widget_viewport_id() -> ViewportId {
+    ViewportId::from_hash_of("snagcraft-widget")
+}
+
+/// What the settings panel asks for beyond "the value changed".
+#[derive(Default)]
+struct SettingsActions {
+    changed: bool,
+    pick_dir: bool,
+    rebind: bool,
+}
+
+impl SnagCraftApp {
+    // ---- platform wiring ----------------------------------------------------
+
+    /// Hand the live tray over (the handle keeps the icon alive).
+    pub fn attach_tray(&mut self, handle: snagcraft_platform::TrayHandle, rx: Receiver<TrayEvent>) {
+        self.tray_ok = handle.is_available();
+        if !self.tray_ok {
+            self.status = "No tray host — close-to-tray stays off.".into();
+        }
+        self.platform._tray = Some(handle);
+        self.attach_tray_events(rx);
+    }
+
+    /// Drain-only variant of [`Self::attach_tray`] (no live handle needed —
+    /// the channels are what the shell actually consumes).
+    pub fn attach_tray_events(&mut self, rx: Receiver<TrayEvent>) {
+        self.platform.tray_rx = Some(rx);
+    }
+
+    /// Record why the tray never came up (headless / locked session).
+    pub fn tray_failed(&mut self, error: &snagcraft_platform::PlatformError) {
+        self.tray_ok = false;
+        self.status = format!("Tray unavailable ({error}) — close-to-tray stays off.");
+    }
+
+    /// Second-launch argv stream from `acquire_or_forward`.
+    pub fn attach_instance(&mut self, rx: Receiver<Vec<String>>) {
+        self.platform.instance_rx = Some(rx);
+    }
+
+    /// Hotkey portal session: keep the handle, drain the events channel.
+    pub fn attach_hotkeys(
+        &mut self,
+        tx: Sender<HotkeyEvent>,
+        rx: Receiver<HotkeyEvent>,
+        handle: Result<snagcraft_platform::HotkeyHandle, snagcraft_platform::PlatformError>,
+    ) {
+        self.platform.hotkey_tx = Some(tx);
+        self.platform.hotkey_rx = Some(rx);
+        match handle {
+            Ok(handle) => self.platform.hotkeys = Some(handle),
+            Err(err) => self.status = format!("Global hotkeys unavailable: {err}"),
+        }
+    }
+
+    /// True exactly once after a settings change: the app layer answers it
+    /// with `io::settings::save` (this crate stays free of the io dependency).
+    pub fn take_settings_dirty(&mut self) -> bool {
+        std::mem::take(&mut self.settings_dirty)
+    }
+
+    /// Re-bind the global hotkeys after the trigger strings changed. The portal
+    /// allows one `BindShortcuts` per session, so the old handle is dropped.
+    pub fn rebind_hotkeys(&mut self) {
+        let Some(tx) = self.platform.hotkey_tx.clone() else {
+            self.status = "No hotkey portal — bindings unchanged.".into();
+            return;
+        };
+        let defs = vec![
+            snagcraft_platform::HotkeyDef::new("capture-full", self.settings.hotkey_full.clone()),
+            snagcraft_platform::HotkeyDef::new(
+                "capture-region",
+                self.settings.hotkey_region.clone(),
+            ),
+        ];
+        self.platform.hotkeys = None;
+        match snagcraft_platform::spawn_hotkeys(defs, tx) {
+            Ok(handle) => {
+                self.platform.hotkeys = Some(handle);
+                self.status = "Rebinding global hotkeys — approve the dialog if asked.".into();
+            }
+            Err(err) => self.status = format!("Hotkeys: {err}"),
+        }
+    }
+
+    fn poll_platform(&mut self, ctx: &egui::Context) {
+        let tray_events: Vec<TrayEvent> = self
+            .platform
+            .tray_rx
+            .as_ref()
+            .map(|rx| std::iter::from_fn(|| rx.try_recv().ok()).take(32).collect())
+            .unwrap_or_default();
+        for event in tray_events {
+            match event {
+                TrayEvent::Show => {
+                    self.hidden = false;
+                    ctx.send_viewport_cmd(ViewportCommand::Visible(true));
+                    ctx.send_viewport_cmd(ViewportCommand::Focus);
+                    ctx.request_repaint();
+                }
+                TrayEvent::Capture => self.capture_full(),
+                TrayEvent::ToggleWidget => self.toggle_widget(ctx),
+                TrayEvent::Quit => {
+                    self.force_quit = true;
+                    ctx.send_viewport_cmd(ViewportCommand::Close);
+                }
+            }
+        }
+
+        let hotkey_events: Vec<HotkeyEvent> = self
+            .platform
+            .hotkey_rx
+            .as_ref()
+            .map(|rx| std::iter::from_fn(|| rx.try_recv().ok()).take(32).collect())
+            .unwrap_or_default();
+        for event in hotkey_events {
+            match event {
+                HotkeyEvent::Activated { id } => match id.as_str() {
+                    "capture-region" => self.capture_region(),
+                    "capture-full" => self.capture_full(),
+                    other => self.status = format!("Unknown hotkey: {other}"),
+                },
+                HotkeyEvent::Bound { granted } => {
+                    let names: Vec<String> = granted
+                        .iter()
+                        .map(|(id, trigger)| format!("{id} ({trigger})"))
+                        .collect();
+                    self.status = if names.is_empty() {
+                        "No global hotkeys were granted — tray and toolbar still work.".into()
+                    } else {
+                        format!("Hotkeys bound: {}", names.join(", "))
+                    };
+                }
+                HotkeyEvent::Failed(msg) => {
+                    self.status = format!("Hotkeys unavailable: {msg}");
+                }
+            }
+        }
+
+        let launches: Vec<Vec<String>> = self
+            .platform
+            .instance_rx
+            .as_ref()
+            .map(|rx| std::iter::from_fn(|| rx.try_recv().ok()).take(8).collect())
+            .unwrap_or_default();
+        for argv in launches {
+            self.handle_launch_args(&argv);
+        }
+    }
+
+    /// CLI / forwarded argv: `--capture`, `--region`, and image paths.
+    pub fn handle_launch_args(&mut self, args: &[String]) {
+        for arg in args {
+            match arg.as_str() {
+                "--capture" => self.capture_full(),
+                "--region" => self.capture_region(),
+                other if other.starts_with('-') => {}
+                other => {
+                    let lower = other.to_ascii_lowercase();
+                    let known = [
+                        ".png",
+                        ".jpg",
+                        ".jpeg",
+                        ".webp",
+                        ".gif",
+                        ".bmp",
+                        ".snagcraft",
+                    ];
+                    if known.iter().any(|ext| lower.ends_with(ext)) {
+                        self.dispatch("doc.open", serde_json::json!({"path": other}));
+                        self.status = format!("Opened {other}");
+                    }
+                }
+            }
+        }
+    }
+
+    // ---- settings -----------------------------------------------------------
+
+    /// Apply a settings change: engine first (it owns the values), then the
+    /// persistence hook, then the live effects.
+    fn push_settings(&mut self, next: SettingsView) {
+        let payload = next.to_json();
+        match self
+            .session
+            .dispatch("settings.set", serde_json::json!({"settings": payload}))
+        {
+            Ok(applied) => {
+                self.settings = SettingsView::from_json(&applied);
+                self.settings_dirty = true;
+                self.apply_settings();
+                self.redraw = true;
+                self.status = "Settings saved.".into();
+            }
+            Err(err) => self.status = format!("settings.set: {err}"),
+        }
+    }
+
+    /// Live effects of the current settings (theme now; visibility is read
+    /// every frame by the widget/close-guard code).
+    fn apply_settings(&mut self) {
+        if self.applied_theme == Some(self.settings.theme) {
+            return;
+        }
+        self.applied_theme = Some(self.settings.theme);
+        if let Some(ctx) = self.main_ctx.clone() {
+            apply_theme(&ctx, self.settings.theme);
+        }
+        self.redraw = true;
+    }
+
+    fn toggle_widget(&mut self, _ctx: &egui::Context) {
+        let mut next = self.settings.clone();
+        next.show_widget = !next.show_widget;
+        self.push_settings(next);
+    }
+
+    // ---- close guard --------------------------------------------------------
+
+    /// eframe 0.37: the X button arrives as `ViewportEvent::Close`, and the
+    /// window only closes if we do *not* answer with `CancelClose`.
+    fn handle_close_request(&mut self, ctx: &egui::Context) {
+        let close = ctx.input(|i| i.viewport().events.contains(&egui::ViewportEvent::Close));
+        if !close {
+            return;
+        }
+        // Tray Quit / modal Discard already decided — let eframe close.
+        if self.force_quit {
+            return;
+        }
+        if self.doc_dirty {
+            self.confirm_close = true;
+            ctx.send_viewport_cmd(ViewportCommand::CancelClose);
+            return;
+        }
+        let hide_to_widget = self.widget_shown && self.settings.show_widget;
+        let hide_to_tray = self.settings.minimize_to_tray && self.tray_ok;
+        if hide_to_widget || hide_to_tray {
+            self.hide_main(ctx);
+            ctx.send_viewport_cmd(ViewportCommand::CancelClose);
+        }
+    }
+
+    /// Hide the main window but keep the app alive. eframe stops calling
+    /// `App::ui` for a hidden root, so [`Self::logic`] takes over the pumping.
+    fn hide_main(&mut self, ctx: &egui::Context) {
+        self.hidden = true;
+        ctx.send_viewport_cmd(ViewportCommand::Visible(false));
+        // One full pass while hidden, so the widget viewport (when it is the
+        // thing keeping the app reachable) is still requested.
+        ctx.send_viewport_cmd(ViewportCommand::RequestPaintWhileHidden);
+        ctx.request_repaint_after(Duration::from_millis(250));
+    }
+
+    /// eframe runs this instead of [`app_ui`] while the window is hidden: no
+    /// painting, but the tray/hotkey/instance channels must stay drained or the
+    /// window could never be brought back.
+    pub fn logic(&mut self, ctx: &egui::Context) {
+        if self.hidden {
+            // Slow heartbeat: eframe otherwise only wakes for OS events, and a
+            // hidden window has none. A quarter second keeps the tray snappy
+            // without burning a frame loop.
+            ctx.send_viewport_cmd(ViewportCommand::RequestPaintWhileHidden);
+            ctx.request_repaint_after(Duration::from_millis(250));
+        }
+        self.main_ctx = Some(ctx.clone());
+        self.poll_platform(ctx);
+        self.handle_close_request(ctx);
+    }
+
+    fn close_modal(&mut self, ctx: &egui::Context) {
+        if !self.confirm_close {
+            return;
+        }
+        let mut action = None;
+        egui::Window::new("Unsaved changes")
+            .collapsible(false)
+            .resizable(false)
+            .anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0))
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    picture_icon(ui);
+                    ui.add_space(12.0);
+                    ui.vertical(|ui| {
+                        ui.label(egui::RichText::new("You have unsaved annotations").strong());
+                        ui.label(
+                            egui::RichText::new("Closing now throws them away.")
+                                .weak()
+                                .size(11.5),
+                        );
+                        ui.add_space(6.0);
+                        ui.horizontal(|ui| {
+                            if ui.button("Save").clicked() {
+                                action = Some(0u8);
+                            }
+                            if ui.button("Discard").clicked() {
+                                action = Some(1);
+                            }
+                            if ui.button("Cancel").clicked() {
+                                action = Some(2);
+                            }
+                        });
+                    });
+                });
+            });
+        match action {
+            // Save: only close once the file really landed.
+            Some(0) => {
+                if self.save_dialog() {
+                    self.doc_dirty = false;
+                    self.force_quit = true;
+                    self.confirm_close = false;
+                    ctx.send_viewport_cmd(ViewportCommand::Close);
+                }
+            }
+            Some(1) => {
+                self.force_quit = true;
+                self.confirm_close = false;
+                ctx.send_viewport_cmd(ViewportCommand::Close);
+            }
+            Some(2) => self.confirm_close = false,
+            _ => {}
+        }
+    }
+
+    // ---- settings panel -----------------------------------------------------
+
+    fn settings_window(&mut self, ctx: &egui::Context) {
+        if !self.settings_open {
+            return;
+        }
+        let mut open = true;
+        let mut next = self.settings.clone();
+        let mut acts = SettingsActions::default();
+        egui::Window::new("Settings")
+            .open(&mut open)
+            .resizable(false)
+            .default_width(380.0)
+            .show(ctx, |ui| settings_ui(ui, &mut next, &mut acts));
+        if !open {
+            self.settings_open = false;
+        }
+        if acts.pick_dir {
+            let mut dialog = rfd::FileDialog::new();
+            if let Some(current) = &next.save_dir {
+                dialog = dialog.set_directory(current);
+            }
+            if let Some(dir) = dialog.pick_folder() {
+                next.save_dir = Some(dir.to_string_lossy().to_string());
+                acts.changed = true;
+            }
+        }
+        if acts.changed {
+            // Login autostart is a real desktop entry, not just a flag: apply
+            // it first and roll the checkbox back if the write failed.
+            if next.start_at_login != self.settings.start_at_login {
+                match snagcraft_platform::set_autostart(next.start_at_login) {
+                    Ok(()) => {
+                        self.status = if next.start_at_login {
+                            "SnagCraft will start at login.".into()
+                        } else {
+                            "SnagCraft will no longer start at login.".into()
+                        };
+                    }
+                    Err(err) => {
+                        self.status = format!("Autostart failed: {err}");
+                        next.start_at_login = self.settings.start_at_login;
+                    }
+                }
+            }
+            self.push_settings(next);
+        }
+        if acts.rebind {
+            self.rebind_hotkeys();
+        }
+    }
+
+    // ---- floating widget ----------------------------------------------------
+
+    fn floating_widget(&mut self, ctx: &egui::Context) {
+        if !self.settings.show_widget {
+            if self.widget_shown {
+                ctx.send_viewport_cmd_to(widget_viewport_id(), ViewportCommand::Close);
+                self.widget_shown = false;
+            }
+            return;
+        }
+        let (w, h) = if self.widget_expanded {
+            WIDGET_EXPANDED_SIZE
+        } else {
+            WIDGET_FOLDED_SIZE
+        };
+        let builder = ViewportBuilder::default()
+            .with_title("SnagCraft widget")
+            .with_transparent(true)
+            .with_decorations(false)
+            .with_resizable(false)
+            .with_inner_size([w, h]);
+        ctx.show_viewport_immediate(widget_viewport_id(), builder, |ui, class| {
+            widget_ui(ui, self, class);
+        });
+        self.widget_shown = true;
+    }
+}
+
+/// A small picture glyph for the close-guard modal (painted, not a font glyph).
+fn picture_icon(ui: &mut egui::Ui) {
+    let (rect, _) = ui.allocate_exact_size(vec2(46.0, 46.0), Sense::hover());
+    let frame = Rect::from_center_size(rect.center(), vec2(42.0, 34.0));
+    let accent = pal_accent(ui);
+    let painter = ui.painter();
+    painter.rect_filled(frame, CornerRadius::same(4), accent.linear_multiply(0.12));
+    painter.rect_stroke(
+        frame,
+        CornerRadius::same(4),
+        Stroke::new(1.5, accent),
+        StrokeKind::Inside,
+    );
+    // Sun + two hills: reads as "picture" at 42×34.
+    painter.circle_filled(pos2(frame.left() + 11.0, frame.top() + 10.0), 3.2, accent);
+    painter.add(Shape::convex_polygon(
+        vec![
+            pos2(frame.left() + 5.0, frame.bottom() - 4.0),
+            pos2(frame.left() + 18.0, frame.top() + 15.0),
+            pos2(frame.left() + 30.0, frame.bottom() - 4.0),
+        ],
+        accent.linear_multiply(0.55),
+        Stroke::NONE,
+    ));
+    painter.add(Shape::convex_polygon(
+        vec![
+            pos2(frame.left() + 20.0, frame.bottom() - 4.0),
+            pos2(frame.left() + 30.0, frame.top() + 18.0),
+            pos2(frame.right() - 4.0, frame.bottom() - 4.0),
+        ],
+        accent,
+        Stroke::NONE,
+    ));
+}
+
+fn section(ui: &mut egui::Ui, title: &str) {
+    ui.add_space(4.0);
+    ui.label(egui::RichText::new(title).strong().size(12.5));
+}
+
+/// The settings body. Pure UI: it mutates `next` and reports what happened.
+fn settings_ui(ui: &mut egui::Ui, next: &mut SettingsView, acts: &mut SettingsActions) {
+    section(ui, "General");
+    acts.changed |= ui
+        .checkbox(
+            &mut next.minimize_to_tray,
+            "Minimize to tray instead of closing",
+        )
+        .on_hover_text("Close hides the window; the tray icon brings it back")
+        .changed();
+    acts.changed |= ui
+        .checkbox(&mut next.start_at_login, "Start at login")
+        .changed();
+    acts.changed |= ui
+        .checkbox(&mut next.show_widget, "Show the floating widget")
+        .changed();
+    acts.changed |= ui
+        .checkbox(&mut next.autosave_captures, "Auto-save captures")
+        .changed();
+    ui.horizontal(|ui| {
+        ui.label("Capture delay");
+        acts.changed |= ui
+            .add(
+                egui::Slider::new(&mut next.capture_delay_secs, 0..=10)
+                    .suffix(" s")
+                    .integer()
+                    .trailing_fill(true),
+            )
+            .on_hover_text("Wait this long before grabbing the screen")
+            .changed();
+    });
+
+    ui.separator();
+    section(ui, "Export");
+    ui.horizontal(|ui| {
+        ui.label("Default format");
+        egui::ComboBox::from_id_salt("settings-format")
+            .width(96.0)
+            .selected_text(next.default_format.clone())
+            .show_ui(ui, |ui| {
+                for format in ["png", "jpeg", "webp"] {
+                    acts.changed |= ui
+                        .selectable_value(&mut next.default_format, format.to_string(), format)
+                        .changed();
+                }
+            });
+    });
+    ui.horizontal(|ui| {
+        ui.label("Quality");
+        acts.changed |= ui
+            .add(
+                egui::Slider::new(&mut next.default_quality, 1..=100)
+                    .suffix(" %")
+                    .trailing_fill(true),
+            )
+            .on_hover_text("JPEG/WebP only — PNG is lossless")
+            .changed();
+    });
+
+    ui.separator();
+    section(ui, "Save location");
+    ui.horizontal(|ui| {
+        ui.label("Folder");
+        let shown = next
+            .save_dir
+            .clone()
+            .unwrap_or_else(|| "Pictures/SnagCraft".into());
+        ui.add(
+            egui::Label::new(egui::RichText::new(shown).size(11.5).monospace())
+                .truncate()
+                .sense(Sense::hover()),
+        );
+        if ui.button("Choose…").clicked() {
+            acts.pick_dir = true;
+        }
+    });
+    ui.horizontal(|ui| {
+        ui.label("File name");
+        acts.changed |= ui
+            .add(
+                egui::TextEdit::singleline(&mut next.filename_pattern)
+                    .desired_width(220.0)
+                    .hint_text("SnagCraft-{date}-{time}"),
+            )
+            .on_hover_text("{date} and {time} expand at save time")
+            .changed();
+    });
+
+    ui.separator();
+    section(ui, "Global hotkeys");
+    ui.horizontal(|ui| {
+        ui.label("Capture full screen");
+        acts.changed |= ui
+            .add(
+                egui::TextEdit::singleline(&mut next.hotkey_full)
+                    .desired_width(150.0)
+                    .hint_text("Print"),
+            )
+            .changed();
+    });
+    ui.horizontal(|ui| {
+        ui.label("Capture region");
+        acts.changed |= ui
+            .add(
+                egui::TextEdit::singleline(&mut next.hotkey_region)
+                    .desired_width(150.0)
+                    .hint_text("SHIFT+Print"),
+            )
+            .changed();
+    });
+    ui.horizontal(|ui| {
+        if ui
+            .button("Rebind")
+            .on_hover_text("Ask the compositor to bind these two shortcuts")
+            .clicked()
+        {
+            acts.rebind = true;
+        }
+        ui.label(
+            egui::RichText::new("The compositor may ask for approval.")
+                .weak()
+                .size(11.0),
+        );
+    });
+
+    ui.separator();
+    section(ui, "Theme");
+    ui.horizontal(|ui| {
+        acts.changed |= ui
+            .radio_value(&mut next.theme, Theme::Light, "Light")
+            .changed();
+        acts.changed |= ui
+            .radio_value(&mut next.theme, Theme::Dark, "Dark")
+            .changed();
+    });
+}
+
+/// One compact pill button (the widget paints its own chrome).
+fn widget_button(ui: &mut egui::Ui, rect: Rect, label: &str) -> Response {
+    ui.put(
+        rect,
+        egui::Button::new(egui::RichText::new(label).size(12.0).color(Color32::WHITE))
+            .fill(Color32::from_rgb(46, 51, 61))
+            .corner_radius(CornerRadius::same(8)),
+    )
+}
+
+/// The floating widget's contents. Called from an immediate viewport, so the
+/// whole window is transparent and just the pill is painted.
+///
+/// `class` matters: only a real `Immediate` viewport may resize/move itself —
+/// when egui embeds the viewport instead (kittest, backends without viewport
+/// support) those commands would resize the *parent* window.
+pub fn widget_ui(ui: &mut egui::Ui, app: &mut SnagCraftApp, class: egui::ViewportClass) {
+    let ctx = ui.ctx().clone();
+    let full = ui.max_rect();
+    let pill = full.shrink(4.0);
+    let radius = CornerRadius::same(if app.widget_expanded { 24 } else { 14 });
+    let painter = ui.painter().clone();
+    painter.rect_filled(pill, radius, WIDGET_BG);
+    painter.rect_stroke(
+        pill,
+        radius,
+        Stroke::new(1.0, Color32::from_white_alpha(46)),
+        StrokeKind::Inside,
+    );
+
+    // Drag from anywhere on the pill (Wayland-native StartDrag, W0-proved).
+    let drag = ui.interact(
+        pill,
+        ui.scope_id().with("widget-drag"),
+        Sense::click_and_drag(),
+    );
+    if drag.drag_started() {
+        ctx.send_viewport_cmd(ViewportCommand::StartDrag);
+    }
+
+    if app.widget_expanded {
+        let h = pill.height();
+        let btn_h = (h - 16.0).clamp(18.0, 32.0);
+        let y = pill.center().y - btn_h * 0.5;
+        let mut x = pill.left() + 10.0;
+        let mut place = |ui: &mut egui::Ui, width: f32, label: &str| -> Response {
+            let rect = Rect::from_min_size(pos2(x, y), vec2(width, btn_h));
+            x += width + 6.0;
+            widget_button(ui, rect, label)
+        };
+        if place(ui, 50.0, "Full").clicked() {
+            app.capture_full();
+        }
+        if place(ui, 62.0, "Region").clicked() {
+            app.capture_region();
+        }
+        // Recording is a W4 feature: keep the affordance visible, disabled.
+        let rec_rect = Rect::from_min_size(pos2(x, y), vec2(52.0, btn_h));
+        ui.add_enabled_ui(false, |ui| {
+            ui.put(
+                rec_rect,
+                egui::Button::new(egui::RichText::new("Rec").size(12.0).color(Color32::WHITE))
+                    .fill(WIDGET_RED.linear_multiply(0.55))
+                    .corner_radius(CornerRadius::same(8)),
+            )
+        })
+        .response
+        .on_disabled_hover_text("Recording lands in W4");
+        // Red live dot next to the disabled Rec button, probe styling.
+        painter.circle_filled(pos2(pill.right() - 96.0, pill.center().y), 4.0, WIDGET_RED);
+
+        let fold_rect = Rect::from_min_size(pos2(pill.right() - 62.0, y), vec2(26.0, btn_h));
+        if widget_button(ui, fold_rect, "»").clicked() {
+            app.widget_expanded = false;
+        }
+        let close_rect = Rect::from_min_size(pos2(pill.right() - 30.0, y), vec2(22.0, btn_h));
+        let close = ui
+            .put(
+                close_rect,
+                egui::Button::new(egui::RichText::new("×").size(13.0).color(Color32::WHITE))
+                    .fill(Color32::TRANSPARENT)
+                    .corner_radius(CornerRadius::same(8)),
+            )
+            .on_hover_text("Hide the widget");
+        if close.clicked() {
+            let mut next = app.settings.clone();
+            next.show_widget = false;
+            app.push_settings(next);
+            // Never strand the app: if the main window is hidden, closing the
+            // widget restores it (the widget was the way back).
+            if app.hidden {
+                app.hidden = false;
+                ctx.send_viewport_cmd(ViewportCommand::Visible(true));
+                ctx.send_viewport_cmd(ViewportCommand::Focus);
+            }
+        }
+    } else {
+        // Folded tab: wordmark, live dot, expand chevron.
+        painter.text(
+            pos2(pill.center().x, pill.top() + 15.0),
+            Align2::CENTER_CENTER,
+            "S",
+            FontId::proportional(16.0),
+            Color32::from_rgb(235, 238, 245),
+        );
+        painter.circle_filled(
+            pos2(pill.center().x, pill.center().y + 4.0),
+            4.5,
+            WIDGET_RED,
+        );
+        let chevron = Rect::from_center_size(
+            pos2(pill.center().x, pill.bottom() - 13.0),
+            vec2(30.0, 20.0),
+        );
+        let expand = ui
+            .put(
+                chevron,
+                egui::Button::new(egui::RichText::new("»").size(13.0).color(Color32::WHITE))
+                    .fill(Color32::from_rgb(46, 51, 61))
+                    .corner_radius(CornerRadius::same(8)),
+            )
+            .on_hover_text("Open the capture widget");
+        if expand.clicked() || (drag.clicked() && !drag.dragged()) {
+            app.widget_expanded = true;
+        }
+        // Enter / Space expand the tab (a11y).
+        if ui.input(|i| i.key_pressed(Key::Enter) || i.key_pressed(Key::Space)) {
+            app.widget_expanded = true;
+        }
+    }
+
+    // Park top-right and resize only when the state actually changed, and only
+    // for a viewport we actually own.
+    if class == egui::ViewportClass::Immediate && app.widget_applied != Some(app.widget_expanded) {
+        let (w, h) = if app.widget_expanded {
+            WIDGET_EXPANDED_SIZE
+        } else {
+            WIDGET_FOLDED_SIZE
+        };
+        ctx.send_viewport_cmd(ViewportCommand::InnerSize(vec2(w, h)));
+        if let Some(monitor) = ctx.input(|i| i.viewport().monitor_size) {
+            ctx.send_viewport_cmd(ViewportCommand::OuterPosition(pos2(
+                (monitor.x - w - 16.0).max(0.0),
+                16.0,
+            )));
+        }
+        app.widget_applied = Some(app.widget_expanded);
     }
 }
 
@@ -791,16 +1822,53 @@ fn menu_row(ui: &mut egui::Ui, label: &str, shortcut: &str) -> bool {
     clicked
 }
 
-pub fn apply_theme(ctx: &egui::Context) {
-    let mut v = egui::Visuals::light();
-    v.panel_fill = PANEL_FILL;
-    v.window_fill = Color32::WHITE;
-    v.extreme_bg_color = Color32::WHITE;
-    v.faint_bg_color = Color32::from_rgb(249, 250, 251);
-    v.selection.bg_fill = ACCENT.linear_multiply(0.35);
+/// Install the shell's visual style. Light is the long-standing palette; Dark
+/// is `Visuals::dark()` with the #3d7ec2 accent and near-black panel fills.
+/// Slider trailing fill and the 4px corner radius stay identical in both.
+pub fn apply_theme(ctx: &egui::Context, theme: Theme) {
+    let (mut v, accent, border, fg, muted, weak) = match theme {
+        Theme::Light => (
+            egui::Visuals::light(),
+            ACCENT,
+            BORDER,
+            FG,
+            FG_MUTED,
+            Color32::from_rgb(249, 250, 251),
+        ),
+        Theme::Dark => (
+            egui::Visuals::dark(),
+            ACCENT_DARK,
+            DARK_BORDER,
+            DARK_FG,
+            Color32::from_rgb(154, 161, 173),
+            Color32::from_rgb(38, 42, 48),
+        ),
+    };
+    match theme {
+        Theme::Light => {
+            v.panel_fill = PANEL_FILL;
+            v.window_fill = Color32::WHITE;
+            v.extreme_bg_color = Color32::WHITE;
+            v.widgets.inactive.bg_fill = Color32::WHITE;
+            v.widgets.hovered.bg_fill = Color32::from_rgb(229, 231, 235);
+            v.widgets.active.bg_fill = Color32::from_rgb(224, 226, 230);
+        }
+        Theme::Dark => {
+            v.panel_fill = DARK_PANEL;
+            v.window_fill = DARK_SURFACE;
+            v.extreme_bg_color = Color32::from_rgb(22, 24, 28);
+            v.widgets.noninteractive.bg_fill = DARK_PANEL;
+            v.widgets.inactive.bg_fill = Color32::from_rgb(43, 47, 54);
+            v.widgets.hovered.bg_fill = Color32::from_rgb(51, 56, 66);
+            v.widgets.active.bg_fill = Color32::from_rgb(58, 64, 72);
+        }
+    }
+    v.faint_bg_color = weak;
+    v.selection.bg_fill = accent.linear_multiply(0.35);
     v.slider_trailing_fill = true;
-    v.selection.stroke = Stroke::new(1.0, ACCENT);
-    v.hyperlink_color = ACCENT;
+    v.selection.stroke = Stroke::new(1.0, accent);
+    v.hyperlink_color = accent;
+    v.weak_text_color = Some(muted);
     for w in [
         &mut v.widgets.noninteractive,
         &mut v.widgets.inactive,
@@ -810,10 +1878,14 @@ pub fn apply_theme(ctx: &egui::Context) {
     ] {
         w.corner_radius = CornerRadius::same(4);
     }
-    v.widgets.noninteractive.bg_stroke = Stroke::new(1.0, BORDER);
-    v.widgets.inactive.bg_stroke = Stroke::new(1.0, BORDER);
-    v.widgets.hovered.bg_stroke = Stroke::new(1.0, ACCENT);
-    v.widgets.active.bg_stroke = Stroke::new(1.5, ACCENT);
+    v.widgets.noninteractive.fg_stroke = Stroke::new(1.0, fg);
+    v.widgets.inactive.fg_stroke = Stroke::new(1.0, fg);
+    v.widgets.hovered.fg_stroke = Stroke::new(1.0, fg);
+    v.widgets.open.fg_stroke = Stroke::new(1.0, fg);
+    v.widgets.noninteractive.bg_stroke = Stroke::new(1.0, border);
+    v.widgets.inactive.bg_stroke = Stroke::new(1.0, border);
+    v.widgets.hovered.bg_stroke = Stroke::new(1.0, accent);
+    v.widgets.active.bg_stroke = Stroke::new(1.5, accent);
     ctx.set_visuals(v);
 }
 
@@ -1028,16 +2100,51 @@ fn shape_icon(painter: &egui::Painter, rect: Rect, kind: ShapeKind, color: Color
     }
 }
 
+/// A painted gear (the bundled fonts carry no U+2699, so the glyph is drawn)
+/// with an explicit accessibility label the tests can query.
+fn settings_button(ui: &mut egui::Ui) -> Response {
+    let (rect, resp) = ui.allocate_exact_size(vec2(30.0, 30.0), Sense::click());
+    let ink = if resp.hovered() {
+        pal_accent(ui)
+    } else {
+        pal_fg(ui)
+    };
+    if resp.hovered() {
+        ui.painter()
+            .rect_filled(rect, CornerRadius::same(5), pal_hover(ui));
+    }
+    let c = rect.center();
+    let r = rect.width() * 0.26;
+    let stroke = Stroke::new(1.7, ink);
+    let painter = ui.painter();
+    painter.circle_stroke(c, r, stroke);
+    painter.circle_stroke(c, r * 0.36, stroke);
+    for i in 0..8 {
+        let angle = std::f32::consts::TAU * (i as f32) / 8.0;
+        let (sin, cos) = angle.sin_cos();
+        painter.line_segment(
+            [
+                pos2(c.x + cos * r, c.y + sin * r),
+                pos2(c.x + cos * r * 1.45, c.y + sin * r * 1.45),
+            ],
+            stroke,
+        );
+    }
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Settings (Ctrl+,)"));
+    resp.on_hover_text("Settings (Ctrl+,)")
+}
+
 fn tool_button(ui: &mut egui::Ui, tool: Tool, active: bool) -> Response {
     let (rect, resp) = ui.allocate_exact_size(vec2(32.0, 32.0), Sense::click());
+    let accent = pal_accent(ui);
     let fill = if active {
-        ACCENT.linear_multiply(0.16)
+        accent.linear_multiply(0.16)
     } else if resp.hovered() {
-        Color32::from_rgb(229, 231, 235)
+        pal_hover(ui)
     } else {
-        Color32::WHITE
+        pal_surface(ui)
     };
-    let border = if active { ACCENT } else { BORDER };
+    let border = if active { accent } else { pal_border(ui) };
     ui.painter().rect_filled(rect, CornerRadius::same(5), fill);
     ui.painter().rect_stroke(
         rect,
@@ -1045,23 +2152,26 @@ fn tool_button(ui: &mut egui::Ui, tool: Tool, active: bool) -> Response {
         Stroke::new(if active { 1.5 } else { 1.0 }, border),
         StrokeKind::Outside,
     );
-    icon(ui.painter(), rect, tool, if active { ACCENT } else { FG });
+    let ink = if active { accent } else { pal_fg(ui) };
+    icon(ui.painter(), rect, tool, ink);
     resp.on_hover_text(tool.label())
 }
 
 // ------------------------------------------------------------------- the rail
 
 fn hint(ui: &mut egui::Ui, text: &str) {
-    ui.label(egui::RichText::new(text).color(FG_MUTED).size(11.5));
+    ui.label(egui::RichText::new(text).color(pal_muted(ui)).size(11.5));
 }
 
 fn palette(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
+    let accent = pal_accent(ui);
+    let border = pal_border(ui);
     for (name, rgb) in PALETTE {
         let color = Color32::from_rgb(rgb[0], rgb[1], rgb[2]);
         let selected = app.color.to_array()[..3] == rgb;
         let (rect, resp) = ui.allocate_exact_size(vec2(20.0, 20.0), Sense::click());
         ui.painter().rect_filled(rect, CornerRadius::same(5), color);
-        let ring = if selected { ACCENT } else { BORDER };
+        let ring = if selected { accent } else { border };
         ui.painter().rect_stroke(
             rect,
             CornerRadius::same(5),
@@ -1084,7 +2194,7 @@ fn size_control(
     range: std::ops::RangeInclusive<f32>,
     tooltip: &str,
 ) {
-    ui.label(egui::RichText::new(label).color(FG_MUTED).size(11.0))
+    ui.label(egui::RichText::new(label).color(pal_muted(ui)).size(11.0))
         .on_hover_text(tooltip);
     ui.add_sized(
         vec2(132.0, 18.0),
@@ -1098,6 +2208,9 @@ fn size_control(
 }
 
 fn shape_picker(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
+    let accent = pal_accent(ui);
+    let border = pal_border(ui);
+    let ink = pal_fg(ui);
     for kind in [
         ShapeKind::Rect,
         ShapeKind::Ellipse,
@@ -1108,11 +2221,11 @@ fn shape_picker(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
         let (rect, resp) = ui.allocate_exact_size(vec2(26.0, 26.0), Sense::click());
         let active = app.shape_kind == kind;
         let fill = if active {
-            ACCENT.linear_multiply(0.16)
+            accent.linear_multiply(0.16)
         } else if resp.hovered() {
-            Color32::from_rgb(229, 231, 235)
+            pal_hover(ui)
         } else {
-            Color32::WHITE
+            pal_surface(ui)
         };
         ui.painter().rect_filled(rect, CornerRadius::same(4), fill);
         ui.painter().rect_stroke(
@@ -1120,7 +2233,7 @@ fn shape_picker(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
             CornerRadius::same(4),
             Stroke::new(
                 if active { 1.5 } else { 1.0 },
-                if active { ACCENT } else { BORDER },
+                if active { accent } else { border },
             ),
             StrokeKind::Outside,
         );
@@ -1128,7 +2241,7 @@ fn shape_picker(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
             ui.painter(),
             rect.shrink(7.0),
             kind,
-            if active { ACCENT } else { FG },
+            if active { accent } else { ink },
         );
         if resp.on_hover_text(shape_name(kind)).clicked() {
             app.shape_kind = kind;
@@ -1189,7 +2302,11 @@ fn tool_has_shadow(tool: Tool) -> bool {
 fn shadow_row(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing = vec2(6.0, 3.0);
-        ui.label(egui::RichText::new("Shadow").color(FG_MUTED).size(11.0));
+        ui.label(
+            egui::RichText::new("Shadow")
+                .color(pal_muted(ui))
+                .size(11.0),
+        );
         shadow_slider(
             ui,
             "Angle",
@@ -1239,7 +2356,7 @@ fn shadow_slider(
     suffix: &str,
     tooltip: &str,
 ) {
-    ui.label(egui::RichText::new(label).color(FG_MUTED).size(11.0));
+    ui.label(egui::RichText::new(label).color(pal_muted(ui)).size(11.0));
     ui.add_sized(
         vec2(118.0, 18.0),
         egui::Slider::new(value, range)
@@ -1299,7 +2416,11 @@ fn rail(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
                             ui.selectable_value(&mut app.blur_mode, mode, blur_mode_name(mode));
                         }
                     });
-                ui.label(egui::RichText::new("Radius").color(FG_MUTED).size(11.0));
+                ui.label(
+                    egui::RichText::new("Radius")
+                        .color(pal_muted(ui))
+                        .size(11.0),
+                );
                 ui.add_sized(
                     vec2(132.0, 18.0),
                     egui::Slider::new(&mut app.blur_radius, BLUR_MIN..=BLUR_MAX)
@@ -1309,7 +2430,11 @@ fn rail(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
             }
             Tool::Bucket => {
                 palette(ui, app);
-                ui.label(egui::RichText::new("Tolerance").color(FG_MUTED).size(11.0));
+                ui.label(
+                    egui::RichText::new("Tolerance")
+                        .color(pal_muted(ui))
+                        .size(11.0),
+                );
                 ui.add_sized(
                     vec2(132.0, 18.0),
                     egui::Slider::new(&mut app.bucket_tolerance, 0..=255).trailing_fill(true),
@@ -1327,7 +2452,7 @@ fn rail(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
                 );
             }
             Tool::Spotlight => {
-                ui.label(egui::RichText::new("Dim").color(FG_MUTED).size(11.0));
+                ui.label(egui::RichText::new("Dim").color(pal_muted(ui)).size(11.0));
                 ui.add_sized(
                     vec2(132.0, 18.0),
                     egui::Slider::new(&mut app.spotlight_dim, 0.0..=1.0)
@@ -1375,7 +2500,7 @@ fn rail(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
                 shadow_controls(ui, app);
             }
             Tool::Magnify => {
-                ui.label(egui::RichText::new("Zoom").color(FG_MUTED).size(11.0));
+                ui.label(egui::RichText::new("Zoom").color(pal_muted(ui)).size(11.0));
                 ui.add_sized(
                     vec2(132.0, 18.0),
                     egui::Slider::new(&mut app.magnify_zoom, ZOOM_MIN..=ZOOM_MAX)
@@ -1422,12 +2547,18 @@ fn handle_keys(ctx: &egui::Context, app: &mut SnagCraftApp) {
         if i.consume_key(Modifiers::CTRL, Key::V) {
             app.paste_from_clipboard();
         }
+        if i.consume_key(Modifiers::CTRL, Key::Comma) {
+            app.settings_open = true;
+        }
         if i.consume_key(Modifiers::CTRL, Key::D)
             && let Some(id) = app.selected
         {
             app.dispatch("edit.duplicate", serde_json::json!({"id": id}));
         }
-        if i.consume_key(Modifiers::NONE, Key::Enter)
+        // Only claim Enter while a crop frame is pending — otherwise the
+        // floating widget's Enter-to-expand never sees the key.
+        if app.crop.is_some()
+            && i.consume_key(Modifiers::NONE, Key::Enter)
             && let Some(frame) = app.crop.take()
             && frame.w >= 2.0
             && frame.h >= 2.0
@@ -1462,19 +2593,26 @@ fn handle_keys(ctx: &egui::Context, app: &mut SnagCraftApp) {
 /// The whole shell in one fn — shared by eframe and headless kittest.
 pub fn app_ui(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
     let ctx = ui.ctx().clone();
+    app.main_ctx = Some(ctx.clone());
+    app.apply_settings();
+    app.poll_platform(&ctx);
     app.poll_capture();
+    app.handle_close_request(&ctx);
 
     egui::Panel::top("toolbar")
         .frame(
             egui::Frame::new()
-                .fill(PANEL_FILL)
+                .fill(pal_panel(ui))
                 .inner_margin(egui::Margin::symmetric(8, 6))
-                .stroke(Stroke::new(1.0, BORDER)),
+                .stroke(Stroke::new(1.0, pal_border(ui))),
         )
         .show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     let capturing = app.capture_rx.is_some();
+                    if settings_button(ui).clicked() {
+                        app.settings_open = true;
+                    }
                     ui.add_enabled_ui(app.session.can_redo(), |ui| {
                         if ui.button("Redo").on_hover_text("Ctrl+Shift+Z").clicked() {
                             app.dispatch("edit.redo", serde_json::json!({}));
@@ -1487,7 +2625,7 @@ pub fn app_ui(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
                     });
                     if ui
                         .button("Export")
-                        .on_hover_text("Export flattened PNG")
+                        .on_hover_text("Export the flattened image")
                         .clicked()
                     {
                         app.export_dialog();
@@ -1516,7 +2654,7 @@ pub fn app_ui(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
                                 .color(Color32::WHITE)
                                 .strong(),
                         )
-                        .fill(ACCENT),
+                        .fill(pal_accent(ui)),
                     );
                     if cap_btn
                         .on_hover_text("Capture the full screen via the OS portal")
@@ -1554,9 +2692,9 @@ pub fn app_ui(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
     egui::Panel::top("props")
         .frame(
             egui::Frame::new()
-                .fill(Color32::WHITE)
+                .fill(pal_surface(ui))
                 .inner_margin(egui::Margin::symmetric(8, 4))
-                .stroke(Stroke::new(1.0, BORDER)),
+                .stroke(Stroke::new(1.0, pal_border(ui))),
         )
         .show(ui, |ui| {
             egui::ScrollArea::horizontal()
@@ -1567,28 +2705,32 @@ pub fn app_ui(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
     egui::Panel::bottom("status")
         .frame(
             egui::Frame::new()
-                .fill(PANEL_FILL)
+                .fill(pal_panel(ui))
                 .inner_margin(egui::Margin::symmetric(8, 3))
-                .stroke(Stroke::new(1.0, BORDER)),
+                .stroke(Stroke::new(1.0, pal_border(ui))),
         )
         .show(ui, |ui| {
             ui.horizontal(|ui| {
                 if let Some(d) = app.session.doc() {
                     ui.label(
                         egui::RichText::new(format!("{}×{}", d.size.w, d.size.h))
-                            .color(FG_MUTED)
+                            .color(pal_muted(ui))
                             .size(11.0),
                     );
                     ui.separator();
                 }
                 ui.label(
                     egui::RichText::new(app.tool.label().split(" (").next().unwrap_or("Tool"))
-                        .color(FG)
+                        .color(pal_fg(ui))
                         .size(11.0)
                         .strong(),
                 );
                 ui.separator();
-                ui.label(egui::RichText::new(&app.status).color(FG_MUTED).size(11.0));
+                ui.label(
+                    egui::RichText::new(&app.status)
+                        .color(pal_muted(ui))
+                        .size(11.0),
+                );
             });
         });
 
@@ -1603,7 +2745,7 @@ pub fn app_ui(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
     egui::CentralPanel::default()
         .frame(
             egui::Frame::new()
-                .fill(Color32::from_rgb(226, 229, 233))
+                .fill(pal_canvas(ui))
                 .inner_margin(egui::Margin::same(0)),
         )
         .show(ui, |ui| {
@@ -1628,7 +2770,7 @@ pub fn app_ui(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
                 |p: Point| Point::new(p.x.clamp(0.0, iw as f32), p.y.clamp(0.0, ih as f32));
 
             // CPU composite → texture, cached until the next mutation.
-            if (app.dirty || app.tex.is_none())
+            if (app.redraw || app.tex.is_none())
                 && let Ok(img) = app.session.render()
             {
                 let color_img = egui::ColorImage::from_rgba_unmultiplied(
@@ -1640,7 +2782,7 @@ pub fn app_ui(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
                     color_img,
                     egui::TextureOptions::LINEAR,
                 ));
-                app.dirty = false;
+                app.redraw = false;
             }
             if let Some(tex) = &app.tex {
                 ui.painter().image(
@@ -2103,6 +3245,10 @@ pub fn app_ui(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
             }
         });
 
+    app.settings_window(&ctx);
+    app.close_modal(&ctx);
+    app.floating_widget(&ctx);
+
     if let Some(st) = &mut app.selftest {
         st.frames += 1;
         if st.frames == 12 && !st.requested {
@@ -2147,7 +3293,12 @@ impl eframe::App for SnagCraftApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         app_ui(ui, self);
     }
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        SnagCraftApp::logic(self, ctx);
+    }
+    /// Fully transparent root: the floating widget viewport needs it, and the
+    /// main window stays opaque because every panel paints a full-size fill.
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
-        [0.886, 0.898, 0.914, 1.0]
+        [0.0, 0.0, 0.0, 0.0]
     }
 }

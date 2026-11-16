@@ -10,6 +10,8 @@ publish = false
 [dependencies]
 snagcraft-ui-egui = { path = "../../crates/ui-egui" }
 snagcraft-engine = { path = "../../crates/engine" }
+snagcraft-platform = { path = "../../crates/platform" }
+snagcraft-io = { path = "../../crates/io" }
 eframe.workspace = true
 egui.workspace = true
 tracing.workspace = true

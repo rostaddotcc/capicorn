@@ -2,17 +2,19 @@
 
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
-use snagcraft_ui_egui::{SnagCraftApp, app_ui, apply_theme};
+use snagcraft_ui_egui::{SettingsView, SnagCraftApp, Theme, app_ui, apply_theme};
 
 fn harness() -> Harness<'static, SnagCraftApp> {
+    let mut app = SnagCraftApp::seeded();
+    app.settings = SettingsView {
+        show_widget: false,
+        ..SettingsView::default()
+    };
     Harness::builder()
         .with_size(egui::vec2(1100.0, 760.0))
         .with_accessibility_check(false)
-        .with_context_setup(apply_theme)
-        .build_ui_state(
-            |ui, app: &mut SnagCraftApp| app_ui(ui, app),
-            SnagCraftApp::seeded(),
-        )
+        .with_context_setup(|ctx| apply_theme(ctx, Theme::Light))
+        .build_ui_state(|ui, app: &mut SnagCraftApp| app_ui(ui, app), app)
 }
 
 fn right_click(h: &mut Harness<'static, SnagCraftApp>, pos: egui::Pos2) {

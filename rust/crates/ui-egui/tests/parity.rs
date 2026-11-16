@@ -4,18 +4,21 @@
 use egui_kittest::Harness;
 use snagcraft_doc::{AnnotObject, ShapeKind};
 use snagcraft_ui_egui::{
-    SnagCraftApp, Tool, app_ui, apply_theme, callout_font_size, next_step_number, shadow_offsets,
+    SettingsView, SnagCraftApp, Theme, Tool, app_ui, apply_theme, callout_font_size,
+    next_step_number, shadow_offsets,
 };
 
 fn harness() -> Harness<'static, SnagCraftApp> {
+    let mut app = SnagCraftApp::new();
+    app.settings = SettingsView {
+        show_widget: false,
+        ..SettingsView::default()
+    };
     Harness::builder()
         .with_size(egui::vec2(1200.0, 900.0))
         .with_accessibility_check(false)
-        .with_context_setup(apply_theme)
-        .build_ui_state(
-            |ui, app: &mut SnagCraftApp| app_ui(ui, app),
-            SnagCraftApp::new(),
-        )
+        .with_context_setup(|ctx| apply_theme(ctx, Theme::Light))
+        .build_ui_state(|ui, app: &mut SnagCraftApp| app_ui(ui, app), app)
 }
 
 fn press(h: &mut Harness<'static, SnagCraftApp>, key: egui::Key) {

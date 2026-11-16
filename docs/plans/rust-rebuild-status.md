@@ -292,6 +292,13 @@ Baseline: Tauri v1.5.2 (commit d25adb1). Rebuild workspace: `rust/` (not yet cre
 - Remaining W3 sign-off: rostad KDE live pass — tray click-to-restore,
   Print/Shift+Print portal consent, widget drag/transparency, hide-to-tray,
   settings persistence across restart.
+- W3b completion report reconciled (all integrated in 55964c1): 28 ui-egui/app
+  tests (10 w3_shell gates). Key design detail verified: eframe skips App::ui
+  while hidden → channels drained in App::logic + 250ms heartbeat so hide-to-tray
+  stays recoverable (lesson saved to skill; applies to W4 recording events too).
+  SettingsView mirrors io::settings field-for-field (ui-egui stays io-free).
+  autosave_captures: setting UI landed, save BEHAVIOR is W4 — parity row
+  corrected to "W3 setting / W4 behavior" (honest ticking).
 
 ### 2026-11-16 — wake #18: W4 launched (recording + OCR/timelapse/upload/watermark)
 - Fresh check: W3 complete on pn53 (d86b845), KDE live pass still pending rostad.

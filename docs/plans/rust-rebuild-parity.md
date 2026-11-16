@@ -206,7 +206,7 @@ Sections rendered: General, Capture, Recording audio, Global hotkeys, Save locat
 | Minimize to tray | off | `settings.ts:799-802`, `TRAY_KEY` `:43` | W3 |
 | Start at login (hidden if unsupported) | off | `settings.ts:804-806` | W3 |
 | Show floating widget | — | `settings.ts:813-816` | W3 |
-| Auto-save captures | **on** | `settings.ts:820-823`, `AUTOSAVE_KEY` `:50`, default `:237` | W3 |
+| Auto-save captures | **on** | `settings.ts:820-823`, `AUTOSAVE_KEY` `:50`, default `:237` | W3 setting / W4 behavior |
 | Capture delay (seconds pills) | 0 | `settings.ts:830-836`, `:64` | W3 |
 | Interval capture period | 30 s | `settings.ts:837-842`, `:69` | pending |
 | Microphone source | None | `settings.ts:855-863` | pending |

@@ -263,6 +263,13 @@ Baseline: Tauri v1.5.2 (commit d25adb1). Rebuild workspace: `rust/` (not yet cre
   against the verified-mechanism design + locked platform contract.
 - Next: T1 + W3b land → verify → full gates → AppImage → KDE pass (tray click,
   Print/Shift+Print consent, widget drag, close-guard, settings persistence).
+- W3a batch closed: T1 parent-verified (22 tests + 2 ignored live, clippy clean,
+  layers 22) and committed 4350cc5 with assets/tray-32.png + ATTRIBUTION.
+  Good child initiative: std-only PNG decoder (tray-icon 0.25 lacks a PNG entry
+  point; manifests were off-limits) pixel-verified vs Python; 120s BIND_TIMEOUT
+  after observing the portal hang with unshowable consent; edition-2024
+  env::set_var is unsafe → pure resolvers instead (house-rule compliant).
+  Steered W3b child: tray-32.png path, tray_available(), Bound/Failed gating.
 
 ## Appendix — measured reality
 

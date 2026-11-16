@@ -11,6 +11,7 @@ publish = false
 snagcraft-geom = { path = "../geom" }
 snagcraft-color = { path = "../color" }
 snagcraft-raster = { path = "../raster" }
+image.workspace = true
 serde.workspace = true
 
 [lints]

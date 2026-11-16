@@ -8,6 +8,7 @@ repository.workspace = true
 publish = false
 
 [dependencies]
+ab_glyph.workspace = true
 
 [lints]
 workspace = true

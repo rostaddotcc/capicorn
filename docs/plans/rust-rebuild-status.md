@@ -9,7 +9,7 @@ Baseline: Tauri v1.5.2 (commit d25adb1). Rebuild workspace: `rust/` (not yet cre
 |------|-------|--------|
 | W0 | egui editor spike + Wayland viewport probe | built + verified on pn53; KDE manual pass pending rostad |
 | W1 | workspace scaffold, doc model, engine, capture port | core landed + verified (99 tests); desktop capture→editor built; KDE pass pending |
-| W2 | editor tool parity | pending |
+| W2 | editor tool parity | in progress — W2a tracks T1/T2/T3 dispatched (doc/ops/format, algo/compose, text) |
 | W3 | shell parity (tray/hotkeys/widget/settings) | pending |
 | W4 | recording, scrolling, OCR, timelapse | pending |
 | W5 | CLI/JSON/MCP automation + WASM web | pending |
@@ -103,6 +103,24 @@ Baseline: Tauri v1.5.2 (commit d25adb1). Rebuild workspace: `rust/` (not yet cre
   0.25 API). W2 inputs from parity doc: 5 shape variants (triangle/star missing in
   rust ShapeKind), live MAX_HISTORY=80, SECURE_BLUR_MIN=10, blackout #111827,
   spotlight rgba(8,12,18,.68), highlighter α .36, shortcuts V C A T R B E G L H K S M.
+
+### 2026-11-16 — wake #4: W2 launched (tool parity)
+- Fresh check: W1 stable at 942597f, no KDE feedback yet → next item W2.
+- W2 plan: docs/plans/2026-11-16-w2-tool-parity.md (W2a crate tracks now, W2b
+  engine+UI after). Parity inputs from checklist §1–2: 13 tools, 5 shape variants,
+  blur radius 2–60 default 12 + SECURE_BLUR_MIN 10, blackout #111827, spotlight
+  rgba(8,12,18,.68), highlighter multiply .36, shadow angle×distance→offsets,
+  history 80, brush 2–44, magnify 1.5–10×, callout width→font-size.
+- Font assets prepared parent-side: 14 OFL TTFs decompressed from the live app's
+  woff2 (fontTools 4.61.1) → rust/assets/fonts/ + OFL texts; ATTRIBUTION updated.
+  Italic = synthetic shear 0.2 (live bundles no italic faces either).
+- Manifests pre-wired + compile-verified: doc +image (crop_imm), text +ab_glyph.
+- Dispatched W2a (deleg_0688f850): T1 doc/ops/format (Shadow, Triangle/Star,
+  Magnify/BrushStroke, crop, history 80, guard extension), T2 algo/compose
+  (parity constants, flood_fill, resize_region, exact blends, shadows, styled
+  composite + italic shear), T3 text FontDb (10 families, 14 faces).
+- Next: verify T1–T3 artifacts → W2b engine commands + full 13-tool UI → gates →
+  AppImage → tick parity rows.
 
 ## Appendix — measured reality
 

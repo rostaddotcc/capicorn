@@ -9,7 +9,15 @@
 
 ## Fonts
 
-No font files are committed. Text raster reuses egui's bundled **Ubuntu-Light**
+W2 bundles 14 OFL TTF faces under `assets/fonts/` (decompressed from the live
+app's woff2 with fontTools; same faces the Tauri v1.5.x line ships). License texts
+sit alongside (`OFL*.txt`). Families: Inter (400/700), Lato (400/700),
+Source Serif 4 (400), Playfair Display (400/700), Oswald (400/700),
+Archivo Black (400), JetBrains Mono (400), Fira Code (400), Caveat (400),
+Pacifico (400). All OFL-1.1 (allowlisted). Source manifest:
+`tmp/research/fonts-v1.2.md` (google/fonts ofl/ upstream URLs).
+
+Previously (W1): no font files were committed. Text raster reuses egui's bundled **Ubuntu-Light**
 face at runtime (extracted from `egui::FontDefinitions::default()` in the app
 layer; the engine receives bytes via `Session::set_font`). Ubuntu-Light is
 © Canonical Ltd, licensed under the Ubuntu Font Licence 1.0 — see the

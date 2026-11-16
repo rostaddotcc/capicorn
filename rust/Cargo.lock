@@ -3932,6 +3932,7 @@ dependencies = [
 name = "snagcraft-doc"
 version = "0.1.0"
 dependencies = [
+ "image",
  "serde",
  "serde_json",
  "snagcraft-color",
@@ -4010,6 +4011,9 @@ dependencies = [
 [[package]]
 name = "snagcraft-text"
 version = "0.1.0"
+dependencies = [
+ "ab_glyph",
+]
 
 [[package]]
 name = "snagcraft-ui-egui"

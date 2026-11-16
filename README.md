@@ -37,19 +37,25 @@ share* flow in one lightweight app. SnagCraft fills that gap.
 - 13 tools: select, crop, arrow, text, rectangle, **true Gaussian blur** / pixelate /
   blackout, spotlight, highlighter, callout, step numbers, **live magnify lens**, brush,
   fill bucket
-- Shadows with **direction / distance / blur / opacity** sliders and a live sample,
-  stroke width, and per-tool sizes with a live brush-size preview
-- Four bundled OFL fonts (Inter, Source Serif 4, JetBrains Mono, Caveat) with
-  size / bold / italic, plus reusable style presets
+- **Quick text bar** — font, size, bold, italic and colour float right on the caption
+  you're editing; drag to size a text box, no placeholder to delete first
+- Shadows with **direction / distance / blur / opacity** sliders and a live sample —
+  applied to the selection as you tune them, on shapes, arrows and labels alike
+- Stroke width, and per-tool sizes with a live brush-size preview
+- Ten bundled OFL fonts (Inter, Lato, Source Serif 4, Playfair Display, Oswald,
+  Archivo Black, JetBrains Mono, Fira Code, Caveat, Pacifico) with size / bold / italic,
+  plus reusable style presets
 - Undo / redo, in-editor crop, delete the selected annotation with `Delete`
 
 **Share**
 - Copy to clipboard · save as PNG / JPEG / WebP (with quality) · **Save As…**
+- **Save = a new copy**: every Ctrl+S writes a fresh version next to the original
+  (never overwrites) and lands in Recent — browse back through every edit
 - **Watermark** burned into exports (text, opacity, corner — never the live capture)
 - **Upload** to your own endpoint, with the returned link copied to the clipboard
 - Auto-save on capture, custom filename patterns (`{date}`, `{time}`, `{datetime}`)
 - **OCR** — extract text from a capture (English / Swedish) via the system `tesseract`
-- Recent-captures filmstrip
+- Recent-captures filmstrip — **resizable**: drag its top edge for bigger thumbnails
 
 **Open & record**
 - **File → Open…** (`Ctrl+O`) to annotate any image on disk; drag-and-drop and `Ctrl+V` too

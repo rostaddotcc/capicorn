@@ -3,6 +3,30 @@
 All notable changes to SnagCraft, newest first. Full release notes for every tag live on
 the [releases page](https://github.com/rostaddotcc/snagcraft/releases).
 
+## v1.2.0
+- **Shadows actually work now.** Two root causes fixed: fabric strips a shadow before
+  stroking unless `affectStroke` is set — outline-only shapes (rects, ellipses, arrows, lines)
+  never cast one without it — and the shadow controls only styled *future* annotations.
+  Now the shadow toggle/sliders restyle the **current selection live**, and every shape,
+  arrow and label casts a proper shadow.
+- **Quick text settings on the image.** A floating bar hugs the caption you're editing or
+  selecting: font family, size −/+, bold, italic and colour — no trip to the properties rail.
+  The rail stays in sync, and the bar follows the box as you move/zoom.
+- **Text tool, rebuilt.** No more automatic "Text" placeholder — a new box starts empty with
+  just a caret. Drag to size the box (a dashed preview shows the size while you drag); a plain
+  click gets a comfortable default. Typed captions now survive switching tools (they used to
+  be silently discarded); an untouched box still disappears on its own.
+- **Six new bundled fonts** (all OFL): Lato, Oswald, Playfair Display, Archivo Black,
+  Fira Code and Pacifico — ten families in total, warmed at startup so canvas text never
+  renders in a fallback face.
+- **Resizable Recent strip.** Drag its top edge (or focus it and use ↑/↓) to give Recent more
+  room — thumbnails scale with it, up to poster size, for low-vision readability. The height
+  persists; double-click or Home resets.
+- **Save = a new copy, always.** Ctrl+S / Save writes a fresh versioned copy next to the
+  original (colliding names gain `-2`, `-3`, … — nothing is ever overwritten) and it appears
+  in Recent immediately. Browsing Recent with unsaved edits saves a copy first and switches —
+  the "unsaved changes" prompt is gone from history browsing; nothing is ever lost.
+
 ## v1.1.0
 - **The tray icon answers clicks.** SnagCraft now uses tray-icon's native StatusNotifierItem
   (ksni) backend on Linux instead of libappindicator, which never emitted mouse events:

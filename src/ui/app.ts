@@ -10,6 +10,7 @@ import {
 } from "@tauri-apps/plugin-autostart";
 import { Editor, type ToolId } from "../editor/editor";
 import { cropDataUrl, selectRegion, type Box } from "./region";
+import { TextBar, type TextTarget } from "./textbar";
 import {
   DEFAULT_INTERVAL,
   DEFAULT_PATTERN,
@@ -463,14 +464,37 @@ type SizeApi = {
 /** Families bundled under src/assets/fonts (OFL). `css` is a safe font-family token. */
 const FONTS: ReadonlyArray<{ family: string; css: string; stack: string }> = [
   { family: "Inter", css: "Inter", stack: "'Inter', system-ui, sans-serif" },
+  { family: "Lato", css: "Lato", stack: "'Lato', 'Helvetica Neue', sans-serif" },
   { family: "Source Serif 4", css: "'Source Serif 4'", stack: "'Source Serif 4', Georgia, serif" },
+  {
+    family: "Playfair Display",
+    css: "'Playfair Display'",
+    stack: "'Playfair Display', Georgia, serif",
+  },
+  { family: "Oswald", css: "Oswald", stack: "'Oswald', 'Arial Narrow', sans-serif" },
+  {
+    family: "Archivo Black",
+    css: "'Archivo Black'",
+    stack: "'Archivo Black', 'Arial Black', sans-serif",
+  },
   {
     family: "JetBrains Mono",
     css: "'JetBrains Mono'",
     stack: "'JetBrains Mono', ui-monospace, monospace",
   },
+  { family: "Fira Code", css: "'Fira Code'", stack: "'Fira Code', ui-monospace, monospace" },
   { family: "Caveat", css: "Caveat", stack: "'Caveat', cursive" },
+  { family: "Pacifico", css: "Pacifico", stack: "'Pacifico', cursive" },
 ];
+
+// Warm every bundled face (regular + bold) so canvas text never renders in a
+// fallback while the real font is still downloading. Best-effort, never fatal.
+if (typeof document !== "undefined" && document.fonts?.load) {
+  for (const font of FONTS) {
+    void document.fonts.load(`16px ${font.css}`).catch(() => {});
+    void document.fonts.load(`700 16px ${font.css}`).catch(() => {});
+  }
+}
 
 const errText = (e: unknown): string =>
   typeof e === "string" ? e : e instanceof Error ? e.message : String(e);
@@ -891,6 +915,7 @@ export function mountApp(root: HTMLElement): void {
       </div>
 
       <footer class="filmstrip" id="filmstrip" hidden aria-label="Recent captures">
+        <div class="filmstrip-resize" id="film-resize" role="separator" aria-orientation="horizontal" tabindex="0" aria-label="Resize recent captures" title="Drag to resize · double-click to reset"></div>
         <div class="filmstrip-head">
           <span class="filmstrip-title">Recent</span>
           <span class="filmstrip-total" id="film-total">0</span>
@@ -978,10 +1003,9 @@ export function mountApp(root: HTMLElement): void {
             <label class="font-picker">
               <span class="sr-only">Font family</span>
               <select id="font-family" class="font-select" aria-label="Font family">
-                <option value="Inter" style="font-family:'Inter',system-ui,sans-serif">Inter</option>
-                <option value="Source Serif 4" style="font-family:'Source Serif 4',Georgia,serif">Source Serif 4</option>
-                <option value="JetBrains Mono" style="font-family:'JetBrains Mono',ui-monospace,monospace">JetBrains Mono</option>
-                <option value="Caveat" style="font-family:'Caveat',cursive">Caveat</option>
+                ${FONTS.map(
+                  (f) => `<option value="${f.family}" style="font-family:${f.stack}">${f.family}</option>`,
+                ).join("")}
               </select>
               <span class="font-picker-arrow" aria-hidden="true">${ICONS.caret}</span>
             </label>
@@ -1333,6 +1357,27 @@ export function mountApp(root: HTMLElement): void {
   const presetSaveToggle = $<HTMLButtonElement>("#preset-save-toggle");
 
   const editor = new Editor(editorEl) as InkEditor;
+
+  // Quick text settings: font/size/bold/italic/colour floating right on the
+  // caption being edited or selected. The editor bridge keeps this Tauri-free.
+  const textBar = new TextBar({
+    host: stageEl,
+    fonts: FONTS,
+    minSize: 8,
+    maxSize: 200,
+    bridge: {
+      getActiveText: () => editor.getActiveText() as TextTarget | null,
+      getOverlayAnchor: () => editor.getOverlayAnchor(),
+      hasObject: (object) => editor.hasObject(object),
+      subscribe: (callback) => editor.onTextContextChange(callback),
+      commit: () => editor.commitTextStyles(),
+      setFontFamily: (family) => editor.setFontFamily(family),
+      setFontSize: (size) => editor.setFontSize(size),
+      setBold: (bold) => editor.setTextBold(bold),
+      setItalic: (italic) => editor.setTextItalic(italic),
+      setColor: (color) => editor.setColor(color),
+    },
+  });
   const toolButtons = new Map<ShellToolId, HTMLButtonElement>();
   let hasImage = false;
   let busy = false;
@@ -1752,7 +1797,11 @@ export function mountApp(root: HTMLElement): void {
     }
   }
 
-  /** Ctrl+S / Save: only writes when the capture actually changed. */
+  /**
+   * Ctrl+S / Save: writes a NEW copy of the edited capture (never overwrites
+   * the original — the backend dedupes colliding names) and surfaces it in
+   * Recent, so every saved edit is a version you can browse back to.
+   */
   async function saveEdited(): Promise<boolean> {
     if (!hasImage) {
       setStatus("Nothing to save yet — capture a screen first.", "error");
@@ -1765,8 +1814,12 @@ export function mountApp(root: HTMLElement): void {
     try {
       const saved = await writeImage(editor.flatten(), true);
       if (!saved) return false;
+      // The copy is now the open document: highlight it once the folder scan
+      // brings it into Recent (newest first, with a real thumbnail).
+      loadedRecentId = `file-${saved.path}`;
       setStatus(`Saved copy ${saved.filename}`, "success");
       syncDirty();
+      void refreshRecentFromFolder();
       return true;
     } catch (e) {
       setStatus(`Save failed: ${errText(e)}`, "error");
@@ -3940,8 +3993,14 @@ export function mountApp(root: HTMLElement): void {
         return;
       }
       // Folder-backed image: read it back from disk (nothing is held in memory).
-      if (hasImage && isDirty() && !window.confirm("Open this image? Unsaved annotations will be lost.")) {
-        return;
+      // Unsaved edits are kept as a saved copy first — browsing history must
+      // never cost work, and never needs a scary prompt.
+      if (hasImage && isDirty()) {
+        const kept = await saveEdited();
+        if (!kept) {
+          setStatus("Could not save a copy of your edits — staying on this image.", "error");
+          return;
+        }
       }
       try {
         const dataUrl = await invoke<string>("read_image_file", { path: item.path });
@@ -3955,8 +4014,12 @@ export function mountApp(root: HTMLElement): void {
       }
       return;
     }
-    if (hasImage && isDirty() && !window.confirm("Load this capture? Unsaved annotations will be lost.")) {
-      return;
+    if (hasImage && isDirty()) {
+      const kept = await saveEdited();
+      if (!kept) {
+        setStatus("Could not save a copy of your edits — staying on this image.", "error");
+        return;
+      }
     }
     try {
       await editor.load(item.dataUrl);
@@ -4538,9 +4601,17 @@ export function mountApp(root: HTMLElement): void {
     const canRedo = typeof detail?.canRedo === "boolean" ? detail.canRedo : editor.canRedo();
     undoBtn.disabled = !hasImage || !canUndo;
     redoBtn.disabled = !hasImage || !canRedo;
-    if (detail?.tool) paintProps(detail.tool as ShellToolId);
+    if (detail?.tool) {
+      paintProps(detail.tool as ShellToolId);
+      // The quick bar belongs to text work; other tools release a held box.
+      if (detail.tool !== "text" && detail.tool !== "select") textBar.release();
+    }
     // Shadow can change inside the editor (undo, tool restore) — mirror it back.
     syncShadowFromEditor();
+    // The quick text bar edits editor defaults directly — keep the rail in step.
+    syncTextFromEditor();
+    const liveColor = editor.getColor();
+    if (liveColor && liveColor.toLowerCase() !== inkColor) applyColor(liveColor, false);
     paintResizeState();
     syncDirty();
   });
@@ -4569,6 +4640,88 @@ export function mountApp(root: HTMLElement): void {
     renderFilm();
     setStatus("Recent captures cleared");
   });
+
+  /* ------------------------------------------- resizable Recent strip */
+  // Drag the top edge to give Recent more room; thumbnails scale with it so
+  // the strip stays readable for low-vision use. Height persists; double-click
+  // (or Home) resets to the compact default.
+  const FILM_HEIGHT_KEY = "snagcraft:film-height";
+  const FILM_MIN = 110;
+  const filmResizeEl = $<HTMLDivElement>("#film-resize");
+  let filmHeight: number | null = null;
+  let filmDrag: { startY: number; startH: number } | null = null;
+
+  const filmMax = (): number =>
+    Math.max(FILM_MIN, Math.min(Math.round(stageEl.clientHeight * 0.7), 468));
+
+  function applyFilmHeight(height: number | null): void {
+    filmHeight = height;
+    if (height == null) {
+      filmStripEl.style.height = "";
+      filmStripEl.style.removeProperty("--film-thumb-h");
+      filmStripEl.style.removeProperty("--film-item-w");
+      return;
+    }
+    const clamped = Math.min(Math.max(Math.round(height), FILM_MIN), filmMax());
+    // head + caption + padding ≈ 68px; the rest is thumbnail.
+    const thumb = Math.min(Math.max(clamped - 68, 48), 400);
+    filmStripEl.style.height = `${clamped}px`;
+    filmStripEl.style.setProperty("--film-thumb-h", `${thumb}px`);
+    filmStripEl.style.setProperty("--film-item-w", `${Math.round((thumb * 112) / 48)}px`);
+  }
+
+  const persistFilmHeight = (): void => {
+    if (filmHeight != null) writeStore(FILM_HEIGHT_KEY, String(filmHeight));
+  };
+
+  filmResizeEl.addEventListener("pointerdown", (ev) => {
+    ev.preventDefault();
+    filmResizeEl.setPointerCapture(ev.pointerId);
+    filmDrag = { startY: ev.clientY, startH: filmStripEl.getBoundingClientRect().height };
+  });
+  filmResizeEl.addEventListener("pointermove", (ev) => {
+    if (!filmDrag) return;
+    applyFilmHeight(filmDrag.startH + (filmDrag.startY - ev.clientY));
+  });
+  const endFilmDrag = (ev: PointerEvent): void => {
+    if (!filmDrag) return;
+    filmDrag = null;
+    try {
+      filmResizeEl.releasePointerCapture(ev.pointerId);
+    } catch {
+      /* capture already gone */
+    }
+    persistFilmHeight();
+  };
+  filmResizeEl.addEventListener("pointerup", endFilmDrag);
+  filmResizeEl.addEventListener("pointercancel", endFilmDrag);
+  filmResizeEl.addEventListener("dblclick", () => {
+    applyFilmHeight(null);
+    writeStore(FILM_HEIGHT_KEY, "");
+  });
+  filmResizeEl.addEventListener("keydown", (ev) => {
+    const current = filmStripEl.getBoundingClientRect().height;
+    if (ev.key === "ArrowUp") {
+      ev.preventDefault();
+      applyFilmHeight(current + 24);
+      persistFilmHeight();
+    } else if (ev.key === "ArrowDown") {
+      ev.preventDefault();
+      applyFilmHeight(current - 24);
+      persistFilmHeight();
+    } else if (ev.key === "Home") {
+      ev.preventDefault();
+      applyFilmHeight(null);
+      writeStore(FILM_HEIGHT_KEY, "");
+    }
+  });
+  window.addEventListener("resize", () => {
+    if (filmHeight != null) applyFilmHeight(filmHeight);
+  });
+  const storedFilmHeight = Number(readStore(FILM_HEIGHT_KEY));
+  if (Number.isFinite(storedFilmHeight) && storedFilmHeight >= FILM_MIN) {
+    applyFilmHeight(storedFilmHeight);
+  }
   filmTrackEl.addEventListener("click", (ev) => {
     const btn = (ev.target as HTMLElement | null)?.closest<HTMLButtonElement>(".film-item");
     const id = btn?.dataset.id;

@@ -211,7 +211,42 @@ pub fn ensure_extension(path: &Path, format: Format) -> PathBuf {
     out
 }
 
+/// Pick a path that does not exist yet: `name.png`, then `name-2.png`,
+/// `name-3.png`, … A save must NEVER overwrite an earlier capture or edit —
+/// every Save writes a fresh copy the user can browse back to.
+fn unique_path(dir: &Path, filename: &str) -> PathBuf {
+    let first = dir.join(filename);
+    if !first.exists() {
+        return first;
+    }
+    let path = Path::new(filename);
+    let stem = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or(filename);
+    let ext = path.extension().and_then(|e| e.to_str());
+    for n in 2..=999 {
+        let candidate = match ext {
+            Some(ext) => dir.join(format!("{stem}-{n}.{ext}")),
+            None => dir.join(format!("{stem}-{n}")),
+        };
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+    // Pathological case: 998 collisions. Fall back to a nanosecond stamp.
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    match ext {
+        Some(ext) => dir.join(format!("{stem}-{nanos}.{ext}")),
+        None => dir.join(format!("{stem}-{nanos}")),
+    }
+}
+
 /// Encode the data URL and write it into `dir`, returning the absolute path.
+/// Never overwrites: a colliding name gains a `-2`, `-3`, … suffix.
 pub fn write_export(
     data_url: &str,
     dir: &str,
@@ -227,7 +262,7 @@ pub fn write_export(
     let dir = PathBuf::from(dir.trim());
     std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
 
-    let path = dir.join(safe_filename(filename, encoded.format));
+    let path = unique_path(&dir, &safe_filename(filename, encoded.format));
     std::fs::write(&path, &encoded.bytes)
         .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
     Ok(path.to_string_lossy().into_owned())
@@ -366,5 +401,28 @@ mod tests {
             ensure_extension(&p("/home/me/pics/shot"), Format::Png),
             p("/home/me/pics/shot.png")
         );
+    }
+
+    #[test]
+    fn saves_never_overwrite_an_earlier_copy() {
+        let dir = std::env::temp_dir().join(format!("snagcraft-dedupe-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let dir_str = dir.to_string_lossy().into_owned();
+        let data_url = rgba_png(4, 3);
+
+        // Same requested name three times: three distinct files, all kept.
+        let a = write_export(&data_url, &dir_str, "shot.png", "png", 100).expect("first");
+        let b = write_export(&data_url, &dir_str, "shot.png", "png", 100).expect("second");
+        let c = write_export(&data_url, &dir_str, "shot.png", "png", 100).expect("third");
+        assert!(a.ends_with("shot.png"), "{a}");
+        assert!(b.ends_with("shot-2.png"), "{b}");
+        assert!(c.ends_with("shot-3.png"), "{c}");
+        assert!(Path::new(&a).exists() && Path::new(&b).exists() && Path::new(&c).exists());
+
+        // The original bytes are untouched by the later saves.
+        let first_bytes = std::fs::read(&a).expect("read first");
+        assert_eq!(&first_bytes[..8], b"\x89PNG\r\n\x1a\n");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

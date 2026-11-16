@@ -399,7 +399,8 @@ export interface TextStyle {
   fontStyle: "normal" | "italic";
 }
 
-/** Drop shadow applied to NEW arrow/rect/text/callout/step annotations. */
+/** Drop shadow applied to annotations (new ones, and — via the editor's
+ *  retune — the current selection when the shadow controls change). */
 export interface ShadowStyle {
   enabled: boolean;
   color: string;
@@ -411,17 +412,28 @@ export interface ShadowStyle {
   offsetY: number;
 }
 
-/** `fabric.Shadow` for the active style, or null when shadows are off. */
-export const shadowOf = (host: ToolHost): fabric.Shadow | null => {
-  const shadow = host.shadow();
-  if (!shadow || !shadow.enabled) return null;
+/**
+ * `fabric.Shadow` for a style, or null when shadows are off.
+ *
+ * `affectStroke: true` is LOAD-BEARING: fabric defaults it to false and then
+ * strips the shadow before stroking (`_renderStroke`). Outline-only shapes
+ * (rect/ellipse/… with a transparent fill, arrows, lines) have no fill pixels
+ * to cast a shadow, so without this flag they never show one at all.
+ */
+export const shadowFromStyle = (style: ShadowStyle | null): fabric.Shadow | null => {
+  if (!style || !style.enabled) return null;
   return new fabric.Shadow({
-    color: shadow.color,
-    blur: shadow.blur,
-    offsetX: shadow.offsetX,
-    offsetY: shadow.offsetY,
+    color: style.color,
+    blur: style.blur,
+    offsetX: style.offsetX,
+    offsetY: style.offsetY,
+    affectStroke: true,
   });
 };
+
+/** `fabric.Shadow` for the active style, or null when shadows are off. */
+export const shadowOf = (host: ToolHost): fabric.Shadow | null =>
+  shadowFromStyle(host.shadow());
 
 /** The slice of Editor a tool is allowed to touch. */
 export interface ToolHost {
@@ -1025,9 +1037,11 @@ class ArrowTool extends DragTool {
   }
 }
 
-/** Placeholder shown in a brand-new caption until the user types. */
-const TEXT_PLACEHOLDER = "Text";
-
+/**
+ * Text tool: drag to size a box, click for a comfortable default. The box
+ * starts EMPTY — no "Text" placeholder is ever shown or committed; an
+ * untouched box simply disappears when editing ends.
+ */
 class TextTool implements Tool {
   readonly id: ToolId = "text";
   readonly cursor = "text";
@@ -1036,6 +1050,8 @@ class TextTool implements Tool {
   private dirty = false;
   /** Pointer-down anchor; a drag sizes the text box instead of a fixed width. */
   private start: Point | null = null;
+  /** Dashed live preview of the box being dragged out. */
+  private preview: fabric.Rect | null = null;
 
   constructor(private readonly host: ToolHost) {}
 
@@ -1046,10 +1062,22 @@ class TextTool implements Tool {
 
   cancel(): void {
     const text = this.editing;
+    this.start = null;
+    this.clearPreview();
+    // Let settle() decide: exitEditing fires editing:exited synchronously,
+    // which commits real text and drops an untouched box. Resetting dirty
+    // BEFORE that (as this used to) threw typed captions away on every tool
+    // switch — settle saw dirty=false and discarded them.
+    if (text && text.isEditing) text.exitEditing();
     this.editing = null;
     this.dirty = false;
-    this.start = null;
-    if (text && text.isEditing) text.exitEditing();
+  }
+
+  private clearPreview(): void {
+    if (this.preview) {
+      this.host.removeObject(this.preview);
+      this.preview = null;
+    }
   }
 
   onPointerDown(point: Point): void {
@@ -1062,7 +1090,9 @@ class TextTool implements Tool {
     const canvas = this.host.canvas;
     const ink = this.host.color();
     const style = this.host.textStyle();
-    const text = new fabric.Textbox(TEXT_PLACEHOLDER, {
+    // Empty by design: the caret is the invitation to type, not a word the
+    // user has to delete first. An untouched box is dropped in settle().
+    const text = new fabric.Textbox("", {
       left,
       top,
       width,
@@ -1090,7 +1120,7 @@ class TextTool implements Tool {
     this.editing = text;
     this.dirty = false;
 
-    // Typing/pasting fires 'changed'; an untouched placeholder never does.
+    // Typing/pasting fires 'changed'; an untouched box never does.
     text.on("changed", () => {
       if (this.editing === text) this.dirty = true;
     });
@@ -1099,8 +1129,6 @@ class TextTool implements Tool {
     this.host.addObject(text);
     canvas.setActiveObject(text);
     text.enterEditing();
-    // Select the placeholder so the first keystroke replaces it.
-    text.selectAll();
     // Let the live caption be grabbed and dragged: fabric only starts a drag
     // when it can find the target under the pointer, so a caption that is
     // selectable/evented (and target-find enabled) can be repositioned while
@@ -1113,14 +1141,12 @@ class TextTool implements Tool {
 
   /**
    * Finish the caption. It is DISCARDED when it was never typed into (or is
-   * blank) — the placeholder is not content — and recorded in history only
+   * blank) — an empty box is not content — and recorded in history only
    * when it holds real text, so one Ctrl+Z removes it again.
    */
   private settle(text: fabric.Textbox): void {
     const value = (text.text ?? "").trim();
-    // Untouched: no 'changed' event ever fired, or the text is still exactly
-    // the placeholder it was created with.
-    const untouched = !this.dirty || value === TEXT_PLACEHOLDER;
+    const untouched = !this.dirty;
     if (this.editing === text) {
       this.editing = null;
       this.dirty = false;
@@ -1144,11 +1170,48 @@ class TextTool implements Tool {
     this.host.commit();
   }
 
-  onPointerMove(): void {}
+  onPointerMove(point: Point): void {
+    const start = this.start;
+    if (!start || this.editing) return;
+    const dx = Math.abs(point.x - start.x);
+    const dy = Math.abs(point.y - start.y);
+    if (dx <= 24 && dy <= 24) return;
+    // Live dashed preview so the box size being chosen is visible.
+    const box = normalizeBox(start, point);
+    if (!this.preview) {
+      this.preview = new fabric.Rect({
+        left: box.left,
+        top: box.top,
+        width: Math.max(box.width, 1),
+        height: Math.max(box.height, 1),
+        originX: "left",
+        originY: "top",
+        fill: "transparent",
+        stroke: this.host.color(),
+        strokeWidth: 1.5,
+        strokeDashArray: [6, 4],
+        strokeUniform: true,
+        selectable: false,
+        evented: false,
+        objectCaching: false,
+      });
+      this.host.addObject(this.preview);
+    } else {
+      this.preview.set({
+        left: box.left,
+        top: box.top,
+        width: Math.max(box.width, 1),
+        height: Math.max(box.height, 1),
+      });
+      this.preview.setCoords();
+    }
+    this.host.canvas.requestRenderAll();
+  }
 
   onPointerUp(point: Point): void {
     const start = this.start;
     this.start = null;
+    this.clearPreview();
     if (!start || this.editing) return;
     const dx = Math.abs(point.x - start.x);
     const dy = Math.abs(point.y - start.y);

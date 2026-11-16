@@ -43,6 +43,7 @@ import {
   isHighlighterRegion,
   isMagnifyRegion,
   isSpotlightRegion,
+  shadowFromStyle,
 } from "./tools";
 import {
   DEFAULT_WATERMARK,
@@ -651,12 +652,86 @@ export class Editor {
 
     if (JSON.stringify(next) === JSON.stringify(this.shadow)) return;
     this.shadow = next;
+    // Live retune: the controls must affect the CURRENT selection too, not
+    // only annotations drawn afterwards — drawing a shape and then reaching
+    // for the shadow sliders is the natural order, and it used to do nothing.
+    if (!this.retuneShadowSelection()) this.notify();
+  }
+
+  /** Apply the live shadow style to selected annotations. True if any. */
+  private retuneShadowSelection(): boolean {
+    if (this.restoring) return false;
+    const targets = this.canvas
+      .getActiveObjects()
+      .filter(
+        (o) =>
+          o !== this.image &&
+          !isBlurRegion(o) &&
+          !isSpotlightRegion(o) &&
+          !isHighlighterRegion(o) &&
+          !isMagnifyRegion(o),
+      );
+    if (!targets.length) return false;
+    const shadow = shadowFromStyle(this.shadow) ?? null;
+    for (const target of targets) {
+      target.shadow = shadow;
+      target.dirty = true;
+    }
+    this.commit();
+    this.canvas.requestRenderAll();
     this.notify();
+    return true;
   }
 
   /** A copy of the live shadow style (safe for a preset to hold on to). */
   getShadow(): ShadowStyle {
     return { ...this.shadow };
+  }
+
+  /* ------------------------------------------------ quick text bar bridge */
+
+  /** The caption currently being edited or selected, if any. */
+  getActiveText(): fabric.Textbox | fabric.IText | null {
+    const active = this.canvas.getActiveObject();
+    if (active instanceof fabric.Textbox || active instanceof fabric.IText) return active;
+    return null;
+  }
+
+  /** Upper canvas element — coordinate anchor for canvas-adjacent overlays. */
+  getOverlayAnchor(): HTMLCanvasElement | null {
+    return this.canvas.upperCanvasEl ?? null;
+  }
+
+  /** Whether an object is still part of the scene (quick-bar lifecycle). */
+  hasObject(object: unknown): boolean {
+    return this.canvas.getObjects().includes(object as fabric.FabricObject);
+  }
+
+  /**
+   * Subscribe to everything that can move or change the active text context
+   * (render, selection, editing, removal). Returns an unsubscribe function.
+   */
+  onTextContextChange(callback: () => void): () => void {
+    const events: (keyof fabric.CanvasEvents)[] = [
+      "after:render",
+      "selection:created",
+      "selection:updated",
+      "selection:cleared",
+      "text:editing:entered",
+      "text:editing:exited",
+      "object:removed",
+    ];
+    for (const event of events) this.canvas.on(event, callback);
+    return () => {
+      for (const event of events) this.canvas.off(event, callback);
+    };
+  }
+
+  /** Record a style change made directly on an object (the quick bar). */
+  commitTextStyles(): void {
+    this.commit();
+    this.canvas.requestRenderAll();
+    this.notify();
   }
 
   /** Apply the current mode/radius to selected blur regions. True if any. */

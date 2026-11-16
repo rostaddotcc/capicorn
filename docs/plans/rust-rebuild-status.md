@@ -7,9 +7,9 @@ Baseline: Tauri v1.5.2 (commit d25adb1). Rebuild workspace: `rust/` (not yet cre
 
 | Wave | Scope | Status |
 |------|-------|--------|
-| W0 | egui editor spike + Wayland viewport probe | built + verified on pn53; KDE manual pass pending rostad |
-| W1 | workspace scaffold, doc model, engine, capture port | core landed + verified (99 tests); desktop capture→editor built; KDE pass pending |
-| W2 | editor tool parity | complete on pn53 (180 tests, 13-tool UI, clipboard/context menu); KDE pass pending |
+| W0 | egui editor spike + Wayland viewport probe | KDE-approved by rostad 2026-11-16 ("appen lirar") |
+| W1 | workspace scaffold, doc model, engine, capture port | KDE-approved by rostad 2026-11-16 |
+| W2 | editor tool parity | KDE-approved by rostad 2026-11-16; UI polish pass landed (sliders) |
 | W3 | shell parity (tray/hotkeys/widget/settings) | pending |
 | W4 | recording, scrolling, OCR, timelapse | pending |
 | W5 | CLI/JSON/MCP automation + WASM web | pending |
@@ -215,6 +215,23 @@ Baseline: Tauri v1.5.2 (commit d25adb1). Rebuild workspace: `rust/` (not yet cre
   * W2 gaps logged for W3/polish: re-grab/move an existing crop frame (new
     drag replaces it), inline caption editing of existing callouts (created
     with default text), brush nib cursor preview.
+
+### 2026-11-16 — wake #8: rostad KDE-approval + UI polish (reglage)
+- rostad: "ser bra ut! appen lirar" — W0/W1/W2 ACCEPTED on his KDE box. New
+  direction: replace numeric/coordinate fields with sliders + general polish.
+- Polish pass (parent, ui-egui): ALL rail numeric DragValues → classic egui
+  Sliders with blue trailing fill + integer readouts (Width/Border/Brush/
+  Outline/Ring/Font size/Blur radius/Tolerance/Dim/Zoom + shadow Angle/Dist/
+  Opacity/Blur). Shadow sliders moved to an EXPANDED SECOND RAIL ROW when
+  Shadow is enabled (first attempt kept them inline → vision caught the
+  right-edge overflow; restructure made all four visible at once).
+  Status bar now: dimensions | active tool name | status.
+- Vision-verified: no numeric boxes left, no clipping, blue fills, muted
+  labels, classic look. Snapshots re-blessed (18 ui-egui tests).
+- Gates: 180 tests / 0 failed, clippy/fmt/layers green. AppImage 11.77 MB
+  launch-tested (exit 124). Delivered to rostad.
+- Next: W3 shell parity (tray, global hotkeys, widget, settings, close-guard,
+  single-instance, autostart, file associations) unless rostad redirects.
 
 ## Appendix — measured reality
 

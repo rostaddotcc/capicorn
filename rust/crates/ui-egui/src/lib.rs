@@ -797,7 +797,8 @@ pub fn apply_theme(ctx: &egui::Context) {
     v.window_fill = Color32::WHITE;
     v.extreme_bg_color = Color32::WHITE;
     v.faint_bg_color = Color32::from_rgb(249, 250, 251);
-    v.selection.bg_fill = ACCENT.linear_multiply(0.25);
+    v.selection.bg_fill = ACCENT.linear_multiply(0.35);
+    v.slider_trailing_fill = true;
     v.selection.stroke = Stroke::new(1.0, ACCENT);
     v.hyperlink_color = ACCENT;
     for w in [
@@ -1083,13 +1084,15 @@ fn size_control(
     range: std::ops::RangeInclusive<f32>,
     tooltip: &str,
 ) {
-    ui.label(egui::RichText::new(label).color(FG).size(11.5))
+    ui.label(egui::RichText::new(label).color(FG_MUTED).size(11.0))
         .on_hover_text(tooltip);
-    ui.add(
-        egui::DragValue::new(value)
-            .range(range)
-            .speed(0.25)
-            .suffix(" px"),
+    ui.add_sized(
+        vec2(132.0, 18.0),
+        egui::Slider::new(value, range)
+            .step_by(1.0)
+            .integer()
+            .suffix(" px")
+            .trailing_fill(true),
     )
     .on_hover_text(tooltip);
 }
@@ -1143,11 +1146,13 @@ fn font_controls(ui: &mut egui::Ui, app: &mut SnagCraftApp, salt: &str) {
                 ui.selectable_value(&mut app.font_family, family.to_string(), family);
             }
         });
-    ui.add(
-        egui::DragValue::new(&mut app.font_size)
-            .range(FONT_MIN..=FONT_MAX)
-            .speed(0.5)
-            .suffix(" px"),
+    ui.add_sized(
+        vec2(132.0, 18.0),
+        egui::Slider::new(&mut app.font_size, FONT_MIN..=FONT_MAX)
+            .step_by(1.0)
+            .integer()
+            .suffix(" px")
+            .trailing_fill(true),
     )
     .on_hover_text("Font size");
     if ui
@@ -1169,40 +1174,81 @@ fn font_controls(ui: &mut egui::Ui, app: &mut SnagCraftApp, salt: &str) {
 fn shadow_controls(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
     ui.separator();
     ui.checkbox(&mut app.shadow_enabled, "Shadow")
-        .on_hover_text("Drop shadow behind this annotation");
-    if !app.shadow_enabled {
-        return;
-    }
-    ui.add(
-        egui::DragValue::new(&mut app.shadow_angle)
-            .range(0.0..=360.0)
-            .speed(1.0)
-            .suffix("°"),
+        .on_hover_text("Drop shadow behind this annotation — sliders appear below");
+}
+
+/// Tools whose objects carry a shadow (mirrors compose::shadow_of).
+fn tool_has_shadow(tool: Tool) -> bool {
+    matches!(
+        tool,
+        Tool::Arrow | Tool::Shape | Tool::Text | Tool::Callout | Tool::Step
     )
-    .on_hover_text("Shadow angle (0 = right, 90 = down)");
-    ui.add(
-        egui::DragValue::new(&mut app.shadow_distance)
-            .range(0.0..=50.0)
-            .speed(0.25)
-            .prefix("d ")
-            .suffix(" px"),
+}
+
+/// Expanded shadow row: all four sliders visible at once (no hidden scroll).
+fn shadow_row(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing = vec2(6.0, 3.0);
+        ui.label(egui::RichText::new("Shadow").color(FG_MUTED).size(11.0));
+        shadow_slider(
+            ui,
+            "Angle",
+            &mut app.shadow_angle,
+            0.0..=360.0,
+            1.0,
+            "°",
+            "Shadow angle (0 = right, 90 = down)",
+        );
+        shadow_slider(
+            ui,
+            "Dist",
+            &mut app.shadow_distance,
+            0.0..=50.0,
+            0.5,
+            " px",
+            "Shadow distance",
+        );
+        shadow_slider(
+            ui,
+            "Opacity",
+            &mut app.shadow_opacity,
+            2.0..=100.0,
+            1.0,
+            " %",
+            "Shadow opacity",
+        );
+        shadow_slider(
+            ui,
+            "Blur",
+            &mut app.shadow_blur,
+            0.0..=60.0,
+            0.5,
+            " px",
+            "Shadow blur",
+        );
+    });
+}
+
+/// One labeled shadow slider (compact, classic).
+fn shadow_slider(
+    ui: &mut egui::Ui,
+    label: &str,
+    value: &mut f32,
+    range: std::ops::RangeInclusive<f32>,
+    step: f64,
+    suffix: &str,
+    tooltip: &str,
+) {
+    ui.label(egui::RichText::new(label).color(FG_MUTED).size(11.0));
+    ui.add_sized(
+        vec2(118.0, 18.0),
+        egui::Slider::new(value, range)
+            .step_by(step)
+            .integer()
+            .suffix(suffix)
+            .trailing_fill(true),
     )
-    .on_hover_text("Shadow distance");
-    ui.add(
-        egui::DragValue::new(&mut app.shadow_opacity)
-            .range(2.0..=100.0)
-            .speed(0.5)
-            .suffix(" %"),
-    )
-    .on_hover_text("Shadow opacity");
-    ui.add(
-        egui::DragValue::new(&mut app.shadow_blur)
-            .range(0.0..=60.0)
-            .speed(0.25)
-            .prefix("b ")
-            .suffix(" px"),
-    )
-    .on_hover_text("Shadow blur");
+    .on_hover_text(tooltip);
 }
 
 /// Contextual properties rail: only the active tool's own groups (`app.ts:348-380`).
@@ -1253,21 +1299,20 @@ fn rail(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
                             ui.selectable_value(&mut app.blur_mode, mode, blur_mode_name(mode));
                         }
                     });
-                ui.add(
-                    egui::DragValue::new(&mut app.blur_radius)
-                        .range(BLUR_MIN..=BLUR_MAX)
-                        .speed(0.2)
-                        .prefix("r "),
+                ui.label(egui::RichText::new("Radius").color(FG_MUTED).size(11.0));
+                ui.add_sized(
+                    vec2(132.0, 18.0),
+                    egui::Slider::new(&mut app.blur_radius, BLUR_MIN..=BLUR_MAX)
+                        .trailing_fill(true),
                 )
                 .on_hover_text("Blur radius (2-60, raised to 10 under the hood for legibility)");
             }
             Tool::Bucket => {
                 palette(ui, app);
-                ui.add(
-                    egui::DragValue::new(&mut app.bucket_tolerance)
-                        .range(0..=255)
-                        .speed(0.5)
-                        .prefix("tol "),
+                ui.label(egui::RichText::new("Tolerance").color(FG_MUTED).size(11.0));
+                ui.add_sized(
+                    vec2(132.0, 18.0),
+                    egui::Slider::new(&mut app.bucket_tolerance, 0..=255).trailing_fill(true),
                 )
                 .on_hover_text("Flood-fill tolerance");
             }
@@ -1282,12 +1327,13 @@ fn rail(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
                 );
             }
             Tool::Spotlight => {
-                ui.label(egui::RichText::new("Dim").color(FG).size(11.5));
-                ui.add(
-                    egui::DragValue::new(&mut app.spotlight_dim)
-                        .range(0.0..=1.0)
-                        .speed(0.01)
-                        .fixed_decimals(2),
+                ui.label(egui::RichText::new("Dim").color(FG_MUTED).size(11.0));
+                ui.add_sized(
+                    vec2(132.0, 18.0),
+                    egui::Slider::new(&mut app.spotlight_dim, 0.0..=1.0)
+                        .step_by(0.01)
+                        .fixed_decimals(2)
+                        .trailing_fill(true),
                 )
                 .on_hover_text("How hard everything outside the lit region is dimmed");
             }
@@ -1329,18 +1375,22 @@ fn rail(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
                 shadow_controls(ui, app);
             }
             Tool::Magnify => {
-                ui.label(egui::RichText::new("Zoom").color(FG).size(11.5));
-                ui.add(
-                    egui::DragValue::new(&mut app.magnify_zoom)
-                        .range(ZOOM_MIN..=ZOOM_MAX)
-                        .speed(0.1)
+                ui.label(egui::RichText::new("Zoom").color(FG_MUTED).size(11.0));
+                ui.add_sized(
+                    vec2(132.0, 18.0),
+                    egui::Slider::new(&mut app.magnify_zoom, ZOOM_MIN..=ZOOM_MAX)
+                        .step_by(0.1)
                         .fixed_decimals(1)
-                        .suffix("×"),
+                        .suffix("×")
+                        .trailing_fill(true),
                 )
                 .on_hover_text("Lens zoom (1.5-10×)");
             }
         }
     });
+    if app.shadow_enabled && tool_has_shadow(app.tool) {
+        shadow_row(ui, app);
+    }
 }
 
 // ------------------------------------------------------------------ shortcuts
@@ -1531,6 +1581,13 @@ pub fn app_ui(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
                     );
                     ui.separator();
                 }
+                ui.label(
+                    egui::RichText::new(app.tool.label().split(" (").next().unwrap_or("Tool"))
+                        .color(FG)
+                        .size(11.0)
+                        .strong(),
+                );
+                ui.separator();
                 ui.label(egui::RichText::new(&app.status).color(FG_MUTED).size(11.0));
             });
         });

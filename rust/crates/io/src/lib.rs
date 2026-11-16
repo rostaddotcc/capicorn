@@ -14,6 +14,8 @@
 //!   documented W2 gap. `quality` is ignored for PNG and WebP.
 //! * Input-derived dimensions are capped by [`snagcraft_raster::MAX_DIM`] (hostile input).
 
+pub mod clipboard;
+
 use std::io::Cursor;
 use std::path::Path;
 

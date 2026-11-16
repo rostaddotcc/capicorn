@@ -3985,6 +3985,7 @@ dependencies = [
 name = "snagcraft-io"
 version = "0.1.0"
 dependencies = [
+ "arboard",
  "image",
  "snagcraft-geom",
  "snagcraft-raster",

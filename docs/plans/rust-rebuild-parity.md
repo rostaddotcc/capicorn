@@ -23,19 +23,19 @@ Registry: `createTool()` switch `tools.ts:1917-1946`; `ToolId` narrowing at `too
 
 | # | Tool id | Shortcut | Behavior / options | Evidence | rust |
 |---|---------|----------|--------------------|----------|------|
-| 1 | `select` | `V` | Click-select, drag-move, Delete removes; discards active object on activate | `tools.ts:535-628` (`id` :536, activate :541-543); rail hint `app.ts:349-352` | pending |
-| 2 | `shape` | `R` | Drag outline. 5 variants: **rect, ellipse, triangle, line, star** (`SHAPE_KINDS`) — star is a normalised 96×91 5-point path. Options: shape picker + color + stroke + shadow | `tools.ts:614-616`, star path :619, class :628-785, stroke from `host.color()`/`strokeWidth()` :639-640; picker buttons `app.ts:964-968`, rail `app.ts:361-364` | W0 spike (rect only) |
-| 3 | `blur` | `B` | Drag a region; renders per current blur **mode** (gaussian/pixelate/blackout), dashed preview outline | `tools.ts:785-811`, mode read :789, `blurRegionPreview` :790; class `BlurRegion` :54-104 | W0 spike (gaussian) |
-| 4 | `spotlight` | `L` | Darkens everything except the dragged rect; outline thickness opt | `tools.ts:811-835`, thickness :815; `SpotlightRegion` :104-152 | pending |
-| 5 | `highlighter` | `H` | Translucent ink rect multiplied into pixels; opts `ink`, `alpha`, outline `thickness` | `tools.ts:835-861`, opts :168-169; `HighlighterRegion` :152-208 | pending |
-| 6 | `magnify` | `M` | Loupe lens: samples a source region and re-draws it scaled by `zoom` (**1.5–10×**) with a rounded-rect border + zoom label | `tools.ts:861-951`, `zoom` opt :276, rounded-rect helper :228-246, border :342, label :356; `LensBackground` :208; range `app.ts:3401` | pending |
-| 7 | `arrow` | `A` | Drag arrow, head scaled off stroke width (`strokeWidth*2`), fill = current color; shadow opt | `tools.ts:951-1045`, head :1014-1018; rail `app.ts:357-360` | W0 spike |
-| 8 | `text` | `T` | Click to place, type inline; options: 10 font families, size 8–200, **bold**, **italic**, color, shadow (no underline or alignment) | `tools.ts:1045-1232` (`TextStyle` :395-400); style applied :1101-1102, stroke/color :1190 | W0 spike |
-| 9 | `step` | `S` | Click to drop next number; numbers auto-ordered; ring width opt (rail label "Ring width") | `tools.ts:1232-1305`, click-default box :1221, radius/fill :1257; rail `app.ts:365-369` | pending |
-| 10 | `callout` | `K` | Drag a speech-box; width drives font size; default 240×112, min width clamp | `tools.ts:1305-1462`, `CALLOUT_DEFAULT` :1296, size calc :1350, font :1390 | pending |
-| 11 | `crop` | `C` | Drag handles to frame, **Enter** commits, Esc cancels | `tools.ts:1462-1557`; rail hint `app.ts:353-356` | pending |
-| 12 | `bucket` | `G` | Flood-fill region with current color (`context.fillStyle`), raster op on the canvas | `tools.ts:1557-1824`, fill :1776 | pending |
-| 13 | `brush` | `E` | Freehand stroke, nib width **2–44 px** (`brushWidth()`, rail = "Brush size", nib preview circle), stroke replaced while redrawing | `tools.ts:1824-1916`, width :1902, commit :1912; nib range + preview `app.ts:433`, `:993-995`, label `:3385-3397` | pending |
+| 1 | `select` | `V` | Click-select, drag-move, Delete removes; discards active object on activate | `tools.ts:535-628` (`id` :536, activate :541-543); rail hint `app.ts:349-352` | W2 |
+| 2 | `shape` | `R` | Drag outline. 5 variants: **rect, ellipse, triangle, line, star** (`SHAPE_KINDS`) — star is a normalised 96×91 5-point path. Options: shape picker + color + stroke + shadow | `tools.ts:614-616`, star path :619, class :628-785, stroke from `host.color()`/`strokeWidth()` :639-640; picker buttons `app.ts:964-968`, rail `app.ts:361-364` | W2 |
+| 3 | `blur` | `B` | Drag a region; renders per current blur **mode** (gaussian/pixelate/blackout), dashed preview outline | `tools.ts:785-811`, mode read :789, `blurRegionPreview` :790; class `BlurRegion` :54-104 | W2 |
+| 4 | `spotlight` | `L` | Darkens everything except the dragged rect; outline thickness opt | `tools.ts:811-835`, thickness :815; `SpotlightRegion` :104-152 | W2 |
+| 5 | `highlighter` | `H` | Translucent ink rect multiplied into pixels; opts `ink`, `alpha`, outline `thickness` | `tools.ts:835-861`, opts :168-169; `HighlighterRegion` :152-208 | W2 |
+| 6 | `magnify` | `M` | Loupe lens: samples a source region and re-draws it scaled by `zoom` (**1.5–10×**) with a rounded-rect border + zoom label | `tools.ts:861-951`, `zoom` opt :276, rounded-rect helper :228-246, border :342, label :356; `LensBackground` :208; range `app.ts:3401` | W2 |
+| 7 | `arrow` | `A` | Drag arrow, head scaled off stroke width (`strokeWidth*2`), fill = current color; shadow opt | `tools.ts:951-1045`, head :1014-1018; rail `app.ts:357-360` | W2 |
+| 8 | `text` | `T` | Click to place, type inline; options: 10 font families, size 8–200, **bold**, **italic**, color, shadow (no underline or alignment) | `tools.ts:1045-1232` (`TextStyle` :395-400); style applied :1101-1102, stroke/color :1190 | W2 |
+| 9 | `step` | `S` | Click to drop next number; numbers auto-ordered; ring width opt (rail label "Ring width") | `tools.ts:1232-1305`, click-default box :1221, radius/fill :1257; rail `app.ts:365-369` | W2 |
+| 10 | `callout` | `K` | Drag a speech-box; width drives font size; default 240×112, min width clamp | `tools.ts:1305-1462`, `CALLOUT_DEFAULT` :1296, size calc :1350, font :1390 | W2 |
+| 11 | `crop` | `C` | Drag handles to frame, **Enter** commits, Esc cancels | `tools.ts:1462-1557`; rail hint `app.ts:353-356` | W2 |
+| 12 | `bucket` | `G` | Flood-fill region with current color (`context.fillStyle`), raster op on the canvas | `tools.ts:1557-1824`, fill :1776 | W2 |
+| 13 | `brush` | `E` | Freehand stroke, nib width **2–44 px** (`brushWidth()`, rail = "Brush size", nib preview circle), stroke replaced while redrawing | `tools.ts:1824-1916`, width :1902, commit :1912; nib range + preview `app.ts:433`, `:993-995`, label `:3385-3397` | W2 |
 
 **Shape variants detail** (`tools.ts:614-616`, UI `app.ts:964-968`): rect, ellipse, triangle, line, star. Line variant is the one drag-with-endpoints path (`tools.ts:632-720` common opts `left/top`).
 
@@ -74,8 +74,8 @@ Effects are applied to the **image layer at export resolution** (scene px × exp
 | **Filename pattern** — `{date}`, `{time}`, `{datetime}`; default `SnagCraft-{date}-{time}` | `settings.ts:65` (`DEFAULT_PATTERN`), tokens hint `settings.ts:966-969`, `buildFilename` | pending |
 | **Default save dir** — OS Pictures/SnagCraft; Change… / Reset to default | `commands.rs:230-269` (`default_save_dir`, `pick_save_dir`), `ensureSaveDir` `app.ts:1717-1731`, change/reset `:1733-1762` | pending |
 | **Separate recording folder** (`splitFolders`, default off) | `settings.ts:141`, `settings.ts:919-932`, `getRecDir` `app.ts:4439` | pending |
-| **Copy to clipboard as PNG** (`Ctrl+C`) | `app.ts:4422-4432`, `copy_png` `commands.rs:299-303`, `clipboard.rs:6` | pending |
-| **Paste** an image from the clipboard into the editor (`Ctrl+V`, `paste` event, first `image/*` item) | `app.ts:5081-5094` | pending |
+| **Copy to clipboard as PNG** (`Ctrl+C`) | `app.ts:4422-4432`, `copy_png` `commands.rs:299-303`, `clipboard.rs:6` | W2 |
+| **Paste** an image from the clipboard into the editor (`Ctrl+V`, `paste` event, first `image/*` item) | `app.ts:5081-5094` | W2 |
 | **Watermark on export** — text, opacity 2–100 (default 45 %), corner bottom-right/bottom-left/top-right/top-left | `watermark.ts:13-49` (`DEFAULT_WATERMARK` :28-33 = opacity 0.45, bottom-right), draw :62-90 (Inter 600), UI `settings.ts:972-984` | pending |
 | **New blank canvas** (`Ctrl+N`) — 8 presets (Default 1280×800, HD, Full HD, QHD, 4K UHD, Square 1080², Story 1080×1920, Small 800×600), white or transparent, dims clamped 16–8192 | `app.ts:4939-4975` (`NEW_PRESETS` :4941-4950, `clampDim` :4952, `blankCanvasDataUrl` :4956-4969, `newCanvas` :4962) | pending |
 | **Resize** the canvas (dialog opened from the toolbar, closes on Esc) | `openResize` `app.ts:3622`, popover `:5118-5121` | pending |

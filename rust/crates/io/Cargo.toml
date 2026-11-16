@@ -12,6 +12,7 @@ snagcraft-raster = { path = "../raster" }
 snagcraft-geom = { path = "../geom" }
 image.workspace = true
 thiserror.workspace = true
+arboard.workspace = true
 
 [lints]
 workspace = true

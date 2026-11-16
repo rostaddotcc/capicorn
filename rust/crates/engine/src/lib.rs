@@ -129,7 +129,11 @@ impl Session {
                 .or_else(|| faces.first())
                 .map(|(_, _, face)| face)
         };
-        Ok(snagcraft_compose::composite_styled(doc, &lookup, snagcraft_text::ITALIC_SHEAR))
+        Ok(snagcraft_compose::composite_styled(
+            doc,
+            &lookup,
+            snagcraft_text::ITALIC_SHEAR,
+        ))
     }
 }
 
@@ -168,12 +172,20 @@ fn p_rect(v: &Value, key: &str) -> Result<snagcraft_geom::Rect, CommandError> {
 }
 
 fn p_color(v: &Value, key: &str) -> Result<snagcraft_color::Rgba, CommandError> {
-    let c = v.get(key).ok_or_else(|| CommandError::InvalidParams(format!("missing '{key}'")))?;
-    let arr = c.as_array().filter(|a| a.len() == 4)
+    let c = v
+        .get(key)
+        .ok_or_else(|| CommandError::InvalidParams(format!("missing '{key}'")))?;
+    let arr = c
+        .as_array()
+        .filter(|a| a.len() == 4)
         .ok_or_else(|| CommandError::InvalidParams(format!("'{key}' must be [r,g,b,a]")))?;
     let mut out = [0u8; 4];
     for (i, slot) in out.iter_mut().enumerate() {
-        *slot = arr.get(i).and_then(Value::as_u64).filter(|n| *n <= 255).map(|n| n as u8)
+        *slot = arr
+            .get(i)
+            .and_then(Value::as_u64)
+            .filter(|n| *n <= 255)
+            .map(|n| n as u8)
             .ok_or_else(|| CommandError::InvalidParams(format!("'{key}[{i}]' must be 0..255")))?;
     }
     Ok(snagcraft_color::Rgba::from_array(out))
@@ -349,7 +361,9 @@ fn cmd_edit_blur(s: &mut Session, p: Value) -> Result<Value, CommandError> {
 fn cmd_edit_crop(s: &mut Session, p: Value) -> Result<Value, CommandError> {
     let rect = p_rect(&p, "rect")?;
     let d = s.doc.as_ref().ok_or(CommandError::NoDoc)?;
-    let cropped = d.crop(rect).ok_or_else(|| CommandError::InvalidParams("crop rect is empty or outside the image".into()))?;
+    let cropped = d.crop(rect).ok_or_else(|| {
+        CommandError::InvalidParams("crop rect is empty or outside the image".into())
+    })?;
     s.history.record(d);
     let (w, h) = (cropped.size.w, cropped.size.h);
     s.doc = Some(cropped);
@@ -357,15 +371,76 @@ fn cmd_edit_crop(s: &mut Session, p: Value) -> Result<Value, CommandError> {
 }
 
 fn cmd_edit_bucket(s: &mut Session, p: Value) -> Result<Value, CommandError> {
-    let seed_obj = p.get("seed").ok_or_else(|| CommandError::InvalidParams("missing 'seed'".into()))?;
+    let seed_obj = p
+        .get("seed")
+        .ok_or_else(|| CommandError::InvalidParams("missing 'seed'".into()))?;
     let seed = snagcraft_geom::Point::new(p_f32(seed_obj, "x")?, p_f32(seed_obj, "y")?);
     let color = p_color(&p, "color")?;
-    let tolerance = p.get("tolerance").and_then(Value::as_u64).unwrap_or(0).min(255) as u8;
+    let tolerance = p
+        .get("tolerance")
+        .and_then(Value::as_u64)
+        .unwrap_or(0)
+        .min(255) as u8;
     let d = s.doc.as_mut().ok_or(CommandError::NoDoc)?;
     s.history.record(d);
     let filled = snagcraft_algo::flood_fill(&d.base, seed, color, tolerance);
     d.base = std::sync::Arc::new(filled);
     Ok(json!({"filled": true}))
+}
+
+fn cmd_clipboard_copy(s: &mut Session, _p: Value) -> Result<Value, CommandError> {
+    let img = s.render()?;
+    let (w, h) = (img.width(), img.height());
+    snagcraft_io::clipboard::copy_image(&img).map_err(|e| CommandError::Io(e.to_string()))?;
+    Ok(json!({"copied": true, "width": w, "height": h}))
+}
+
+fn cmd_clipboard_paste(s: &mut Session, _p: Value) -> Result<Value, CommandError> {
+    match snagcraft_io::clipboard::paste_image().map_err(|e| CommandError::Io(e.to_string()))? {
+        Some(img) => {
+            let (w, h) = (img.width(), img.height());
+            s.load_surface(img);
+            Ok(json!({"pasted": true, "width": w, "height": h}))
+        }
+        None => Ok(json!({"pasted": false})),
+    }
+}
+
+fn cmd_edit_duplicate(s: &mut Session, p: Value) -> Result<Value, CommandError> {
+    let id = p_u64(&p, "id")?;
+    let d = s.doc.as_mut().ok_or(CommandError::NoDoc)?;
+    let Some(obj) = d.get(id).cloned() else {
+        return Err(CommandError::InvalidParams(format!(
+            "no object with id {id}"
+        )));
+    };
+    s.history.record(d);
+    // Classic duplicate: offset so the copy is visibly distinct.
+    let new_id = d.add(obj.shifted(16.0, 16.0));
+    Ok(json!({"id": new_id}))
+}
+
+fn cmd_edit_reorder(s: &mut Session, p: Value) -> Result<Value, CommandError> {
+    let id = p_u64(&p, "id")?;
+    let to = p_str(&p, "to")?;
+    let d = s.doc.as_mut().ok_or(CommandError::NoDoc)?;
+    let Some(pos) = d.objects.iter().position(|o| o.id() == id) else {
+        return Err(CommandError::InvalidParams(format!(
+            "no object with id {id}"
+        )));
+    };
+    s.history.record(d);
+    let obj = d.objects.remove(pos);
+    match to {
+        "front" => d.objects.push(obj),
+        "back" => d.objects.insert(0, obj),
+        other => {
+            return Err(CommandError::InvalidParams(format!(
+                "'to' must be front|back, got '{other}'"
+            )));
+        }
+    }
+    Ok(json!({"reordered": to}))
 }
 
 fn cmd_edit_undo(s: &mut Session, _p: Value) -> Result<Value, CommandError> {
@@ -488,6 +563,30 @@ pub fn registry() -> Vec<CommandSpec> {
             label: "Flood fill from seed",
             params_doc: "{seed:{x,y}, color:[r,g,b,a], tolerance}",
             run: cmd_edit_bucket,
+        },
+        CommandSpec {
+            id: "clipboard.copy",
+            label: "Copy image to clipboard",
+            params_doc: "{}",
+            run: cmd_clipboard_copy,
+        },
+        CommandSpec {
+            id: "clipboard.paste",
+            label: "Paste image from clipboard",
+            params_doc: "{}",
+            run: cmd_clipboard_paste,
+        },
+        CommandSpec {
+            id: "edit.duplicate",
+            label: "Duplicate object",
+            params_doc: "{id}",
+            run: cmd_edit_duplicate,
+        },
+        CommandSpec {
+            id: "edit.reorder",
+            label: "Bring to front / send to back",
+            params_doc: "{id, to: front|back}",
+            run: cmd_edit_reorder,
         },
         CommandSpec {
             id: "edit.undo",
@@ -624,14 +723,25 @@ mod tests {
     fn crop_command_resizes_and_undoes() {
         let mut s = Session::new();
         s.dispatch("doc.new", json!({"w": 64, "h": 48})).unwrap();
-        let r = s.dispatch("edit.crop", json!({"rect": {"x": 8.0, "y": 8.0, "w": 32.0, "h": 24.0}})).unwrap();
+        let r = s
+            .dispatch(
+                "edit.crop",
+                json!({"rect": {"x": 8.0, "y": 8.0, "w": 32.0, "h": 24.0}}),
+            )
+            .unwrap();
         assert_eq!(r["width"], 32);
         assert_eq!(r["height"], 24);
         assert_eq!(s.doc().unwrap().size.w, 32);
         s.dispatch("edit.undo", json!({})).unwrap();
         assert_eq!(s.doc().unwrap().size.w, 64);
         // empty / outside rect → error, doc untouched
-        assert!(s.dispatch("edit.crop", json!({"rect": {"x": 100.0, "y": 100.0, "w": 5.0, "h": 5.0}})).is_err());
+        assert!(
+            s.dispatch(
+                "edit.crop",
+                json!({"rect": {"x": 100.0, "y": 100.0, "w": 5.0, "h": 5.0}})
+            )
+            .is_err()
+        );
         assert_eq!(s.doc().unwrap().size.w, 64);
     }
 
@@ -639,20 +749,38 @@ mod tests {
     fn bucket_command_fills_and_undoes() {
         let mut s = Session::new();
         s.dispatch("doc.new", json!({"w": 16, "h": 16})).unwrap();
-        s.dispatch("edit.bucket", json!({"seed": {"x": 8.0, "y": 8.0}, "color": [255, 0, 0, 255], "tolerance": 0})).unwrap();
+        s.dispatch(
+            "edit.bucket",
+            json!({"seed": {"x": 8.0, "y": 8.0}, "color": [255, 0, 0, 255], "tolerance": 0}),
+        )
+        .unwrap();
         assert_eq!(s.doc().unwrap().base.get_pixel(8, 8).0, [255, 0, 0, 255]);
         s.dispatch("edit.undo", json!({})).unwrap();
-        assert_eq!(s.doc().unwrap().base.get_pixel(8, 8).0, [255, 255, 255, 255]);
+        assert_eq!(
+            s.doc().unwrap().base.get_pixel(8, 8).0,
+            [255, 255, 255, 255]
+        );
         // out-of-bounds seed: no-op, no panic
-        s.dispatch("edit.bucket", json!({"seed": {"x": 999.0, "y": 999.0}, "color": [0, 0, 0, 255]})).unwrap();
-        assert_eq!(s.doc().unwrap().base.get_pixel(8, 8).0, [255, 255, 255, 255]);
+        s.dispatch(
+            "edit.bucket",
+            json!({"seed": {"x": 999.0, "y": 999.0}, "color": [0, 0, 0, 255]}),
+        )
+        .unwrap();
+        assert_eq!(
+            s.doc().unwrap().base.get_pixel(8, 8).0,
+            [255, 255, 255, 255]
+        );
     }
 
     #[test]
     fn blur_default_radius_is_parity_12() {
         let mut s = Session::new();
         s.dispatch("doc.new", json!({"w": 32, "h": 32})).unwrap();
-        s.dispatch("edit.blur", json!({"rect": {"x": 0.0, "y": 0.0, "w": 8.0, "h": 8.0}})).unwrap();
+        s.dispatch(
+            "edit.blur",
+            json!({"rect": {"x": 0.0, "y": 0.0, "w": 8.0, "h": 8.0}}),
+        )
+        .unwrap();
         match &s.doc().unwrap().objects[0] {
             snagcraft_doc::AnnotObject::Blur { radius, .. } => assert_eq!(*radius, 12),
             _ => panic!("expected blur"),
@@ -666,8 +794,18 @@ mod tests {
         s.dispatch("edit.add", json!({"object": {"kind":"Text","id":0,"pos":{"x":5.0,"y":5.0},"text":"FontDb","color":[0,0,0,255],"size":24.0,"bold":false,"italic":false,"family":"Inter"}})).unwrap();
         let img = s.render().unwrap();
         let mut dark = 0;
-        for y in 0..60 { for x in 0..200 { let p = img.get_pixel(x, y).0; if p[0] < 90 && p[1] < 90 && p[2] < 90 { dark += 1; } } }
-        assert!(dark > 50, "bundled font must rasterize text: {dark} dark px");
+        for y in 0..60 {
+            for x in 0..200 {
+                let p = img.get_pixel(x, y).0;
+                if p[0] < 90 && p[1] < 90 && p[2] < 90 {
+                    dark += 1;
+                }
+            }
+        }
+        assert!(
+            dark > 50,
+            "bundled font must rasterize text: {dark} dark px"
+        );
     }
 
     #[test]
@@ -695,6 +833,53 @@ mod tests {
             }
         }
         assert!(white > 5, "step number glyph must render: {white} white px");
+    }
+
+    #[test]
+    fn duplicate_offsets_and_undo() {
+        let mut s = Session::new();
+        s.dispatch("doc.new", json!({"w": 64, "h": 64})).unwrap();
+        let r = s.dispatch("edit.add", json!({"object": {"kind":"Shape","id":0,"shape":"Rect","rect":{"x":1.0,"y":1.0,"w":10.0,"h":10.0},"color":[0,0,0,255],"width":2.0}})).unwrap();
+        let id = r["id"].as_u64().unwrap();
+        let dup = s.dispatch("edit.duplicate", json!({"id": id})).unwrap();
+        let new_id = dup["id"].as_u64().unwrap();
+        assert_ne!(id, new_id);
+        assert_eq!(s.doc().unwrap().objects.len(), 2);
+        let b = s.doc().unwrap().get(new_id).unwrap().bounds();
+        assert!(b.x > 10.0, "duplicate offset: {b:?}");
+        s.dispatch("edit.undo", json!({})).unwrap();
+        assert_eq!(s.doc().unwrap().objects.len(), 1);
+        assert!(s.dispatch("edit.duplicate", json!({"id": 999})).is_err());
+    }
+
+    #[test]
+    fn reorder_front_back() {
+        let mut s = Session::new();
+        s.dispatch("doc.new", json!({"w": 64, "h": 64})).unwrap();
+        let a = s.dispatch("edit.add", json!({"object": {"kind":"Shape","id":0,"shape":"Rect","rect":{"x":0.0,"y":0.0,"w":5.0,"h":5.0},"color":[0,0,0,255],"width":1.0}})).unwrap()["id"].as_u64().unwrap();
+        let b = s.dispatch("edit.add", json!({"object": {"kind":"Shape","id":0,"shape":"Rect","rect":{"x":0.0,"y":0.0,"w":5.0,"h":5.0},"color":[0,0,0,255],"width":1.0}})).unwrap()["id"].as_u64().unwrap();
+        s.dispatch("edit.reorder", json!({"id": a, "to": "front"}))
+            .unwrap();
+        assert_eq!(s.doc().unwrap().objects.last().unwrap().id(), a);
+        s.dispatch("edit.reorder", json!({"id": a, "to": "back"}))
+            .unwrap();
+        assert_eq!(s.doc().unwrap().objects.first().unwrap().id(), a);
+        let _ = b;
+        assert!(
+            s.dispatch("edit.reorder", json!({"id": a, "to": "sideways"}))
+                .is_err()
+        );
+        s.dispatch("edit.undo", json!({})).unwrap();
+    }
+
+    #[test]
+    fn clipboard_commands_graceful_headless() {
+        let mut s = Session::new();
+        s.dispatch("doc.new", json!({"w": 8, "h": 8})).unwrap();
+        // No clipboard session on the build host: must Err or Ok, never panic.
+        let _ = s.dispatch("clipboard.copy", json!({}));
+        let _ = s.dispatch("clipboard.paste", json!({}));
+        assert!(s.doc().is_some());
     }
 
     #[test]

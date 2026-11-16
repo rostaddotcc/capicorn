@@ -9,7 +9,7 @@ Baseline: Tauri v1.5.2 (commit d25adb1). Rebuild workspace: `rust/` (not yet cre
 |------|-------|--------|
 | W0 | egui editor spike + Wayland viewport probe | built + verified on pn53; KDE manual pass pending rostad |
 | W1 | workspace scaffold, doc model, engine, capture port | core landed + verified (99 tests); desktop capture→editor built; KDE pass pending |
-| W2 | editor tool parity | W2a landed (doc/ops/format/algo/text verified); engine W2b commands landed; full UI track in flight |
+| W2 | editor tool parity | complete on pn53 (180 tests, 13-tool UI, clipboard/context menu); KDE pass pending |
 | W3 | shell parity (tray/hotkeys/widget/settings) | pending |
 | W4 | recording, scrolling, OCR, timelapse | pending |
 | W5 | CLI/JSON/MCP automation + WASM web | pending |
@@ -180,6 +180,28 @@ Baseline: Tauri v1.5.2 (commit d25adb1). Rebuild workspace: `rust/` (not yet cre
 - Steered UI child: re-bless both snapshots with the fixed engine; do NOT
   "fix" the proven-correct renderers. Committed f20cd2e + pushed.
 - Next: UI lands → full gates + AppImage + W2 sign-off + delivery.
+
+### 2026-11-16 — wake #7+: rostad's request — right-click + copy/paste (W2 finished)
+- rostad (direct message): wants right-click classic context menu + Copy (Ctrl+C)
+  so annotated captures paste into other chats. Live app has Ctrl+C but NO custom
+  context menu (editor.ts:335 suppresses it) — this goes beyond live parity.
+- Landed: io::clipboard (arboard 3 + wayland-data-control, ported from live
+  clipboard.rs, Surface-based copy_image/paste_image, graceful headless errors);
+  engine commands clipboard.copy / clipboard.paste / edit.duplicate / edit.reorder
+  (22 total, 15 engine tests); UI: Ctrl+C/V/D hotkeys, toolbar Copy button, classic
+  right-click menu (Copy Image, Paste | Duplicate, Delete, Bring to Front, Send to
+  Back | Undo, Redo | Save As…, Export PNG…) with shortcut hints + disabled states.
+- UI child (deleg_3ecf00d3) finished: full 13-tool shell, 16 ui-egui tests incl.
+  parity.rs (shortcut routing 13/13, drag-create 7 region tools, crop Enter/Esc,
+  step auto-numbering, brush, bucket, callout size table, shadow derivation).
+- Context-menu kittest tests (right-click injection): menu opens, classic items
+  present, object items on hit; snapshot vision-verified (10 items, hints,
+  separators, disabled Redo — clean classic look).
+- Full gates: fmt ✓ clippy -D warnings ✓ **180 tests / 0 failed / 1 ignored** ✓
+  layers 21 ✓. Release + AppImage (11.75 MB, fonts embedded) launch-tested (124).
+- Parity: 15 more rows ticked (13 tools + copy + paste) → 26 W2 rows total.
+- Delivered W2 AppImage to rostad for the KDE pass (capture → annotate →
+  right-click Copy → paste into chat is the acceptance flow).
 
 ## Appendix — measured reality
 

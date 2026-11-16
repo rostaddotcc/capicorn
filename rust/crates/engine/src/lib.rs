@@ -13,6 +13,7 @@
 use serde_json::{Value, json};
 use snagcraft_doc::{AnnotObject, BlurMode, Document};
 use snagcraft_geom::Size;
+use snagcraft_io::settings::Settings;
 use snagcraft_ops::History;
 use snagcraft_raster::Surface;
 
@@ -45,6 +46,9 @@ pub struct Session {
     /// Bundled OFL faces for CPU text raster (family, bold, face). Built once
     /// from the text crate's embedded FontDb — identical in UI, CLI and export.
     faces: Vec<(String, bool, ab_glyph::FontArc)>,
+    /// Persisted preferences, read once at startup. The engine never writes the
+    /// file — persistence is the app's job after `settings.set` is dispatched.
+    settings: Settings,
 }
 
 impl Default for Session {
@@ -68,7 +72,16 @@ impl Session {
             doc: None,
             history: History::default(),
             faces,
+            settings: snagcraft_io::settings::load(),
         }
+    }
+
+    pub fn settings(&self) -> &Settings {
+        &self.settings
+    }
+
+    pub fn settings_mut(&mut self) -> &mut Settings {
+        &mut self.settings
     }
 
     pub fn doc(&self) -> Option<&Document> {
@@ -465,6 +478,43 @@ fn cmd_edit_redo(s: &mut Session, _p: Value) -> Result<Value, CommandError> {
     }
 }
 
+// ---- settings (L4 persistence lives in io; the engine only holds state) ----
+
+fn settings_value(s: &Settings) -> Result<Value, CommandError> {
+    serde_json::to_value(s)
+        .map_err(|e| CommandError::InvalidParams(format!("settings serialize: {e}")))
+}
+
+fn cmd_settings_get(s: &mut Session, _p: Value) -> Result<Value, CommandError> {
+    settings_value(s.settings())
+}
+
+/// Partial update: overlay the incoming object onto the current settings and
+/// deserialize the result, so omitted fields stay untouched. Unknown keys are
+/// ignored by serde; wrong types / out-of-range values are rejected and leave
+/// the session's settings unchanged. Persistence is the app's job, not ours.
+fn cmd_settings_set(s: &mut Session, p: Value) -> Result<Value, CommandError> {
+    let incoming = p
+        .get("settings")
+        .ok_or_else(|| CommandError::InvalidParams("missing 'settings'".into()))?;
+    let obj = incoming
+        .as_object()
+        .ok_or_else(|| CommandError::InvalidParams("'settings' must be an object".into()))?;
+    let mut merged = settings_value(s.settings())?;
+    let map = merged
+        .as_object_mut()
+        .ok_or_else(|| CommandError::InvalidParams("settings payload is not an object".into()))?;
+    for (key, value) in obj {
+        map.insert(key.clone(), value.clone());
+    }
+    let next: Settings = serde_json::from_value(merged)
+        .map_err(|e| CommandError::InvalidParams(format!("invalid settings: {e}")))?;
+    next.validate()
+        .map_err(|e| CommandError::InvalidParams(e.to_string()))?;
+    *s.settings_mut() = next;
+    settings_value(s.settings())
+}
+
 /// The W1 command registry. Later waves extend this list (new modules per area).
 pub fn registry() -> Vec<CommandSpec> {
     vec![
@@ -479,6 +529,18 @@ pub fn registry() -> Vec<CommandSpec> {
             label: "List commands",
             params_doc: "{}",
             run: cmd_commands_list,
+        },
+        CommandSpec {
+            id: "settings.get",
+            label: "Get settings",
+            params_doc: "{}",
+            run: cmd_settings_get,
+        },
+        CommandSpec {
+            id: "settings.set",
+            label: "Update settings",
+            params_doc: "{settings: partial Settings JSON}",
+            run: cmd_settings_set,
         },
         CommandSpec {
             id: "capture.full",
@@ -889,5 +951,105 @@ mod tests {
         sorted.sort_unstable();
         sorted.dedup();
         assert_eq!(ids.len(), sorted.len());
+    }
+
+    // ---- settings ----
+
+    #[test]
+    fn settings_get_returns_defaults() {
+        let mut s = Session::new();
+        let got = s.dispatch("settings.get", json!({})).unwrap();
+        assert_eq!(got, serde_json::to_value(s.settings()).unwrap());
+        // A real settings file on the host would legitimately differ — only
+        // assert parity defaults when nothing is persisted.
+        if !snagcraft_io::settings::path().exists() {
+            let expected = serde_json::to_value(Settings::default()).unwrap();
+            assert_eq!(got, expected);
+            assert_eq!(got["theme"], "Light");
+            assert_eq!(got["default_quality"], 90);
+            assert_eq!(got["default_format"], "png");
+            assert_eq!(got["save_dir"], Value::Null);
+            assert_eq!(got["filename_pattern"], "SnagCraft-{date}-{time}");
+            assert_eq!(got["hotkey_region"], "SHIFT+Print");
+        }
+    }
+
+    #[test]
+    fn settings_set_partial_merge_keeps_other_fields() {
+        let mut s = Session::new();
+        *s.settings_mut() = Settings::default();
+        s.settings_mut().hotkey_full = "CTRL+Print".to_string();
+
+        let r = s
+            .dispatch(
+                "settings.set",
+                json!({"settings": {"default_quality": 75, "theme": "Dark"}}),
+            )
+            .unwrap();
+        assert_eq!(s.settings().default_quality, 75);
+        assert_eq!(s.settings().theme, snagcraft_io::settings::Theme::Dark);
+        assert_eq!(s.settings().default_format, "png");
+        assert_eq!(s.settings().hotkey_full, "CTRL+Print");
+        assert_eq!(s.settings().filename_pattern, "SnagCraft-{date}-{time}");
+        // The reply is the applied settings, not just the patch.
+        assert_eq!(r["default_quality"], 75);
+        assert_eq!(r["hotkey_full"], "CTRL+Print");
+
+        // save_dir round-trips through null → None and a string → Some.
+        s.dispatch("settings.set", json!({"settings": {"save_dir": "/tmp/x"}}))
+            .unwrap();
+        assert_eq!(s.settings().save_dir.as_deref(), Some("/tmp/x"));
+        s.dispatch("settings.set", json!({"settings": {"save_dir": null}}))
+            .unwrap();
+        assert_eq!(s.settings().save_dir, None);
+    }
+
+    #[test]
+    fn settings_set_invalid_values_err_and_leave_state() {
+        let mut s = Session::new();
+        *s.settings_mut() = Settings::default();
+        let bad = [
+            json!({"default_quality": 0}),
+            json!({"default_quality": 255}),
+            json!({"default_quality": 300}),
+            json!({"default_quality": -1}),
+            json!({"default_quality": "high"}),
+            json!({"default_format": "tiff"}),
+            json!({"default_format": 42}),
+        ];
+        for patch in bad {
+            assert!(
+                s.dispatch("settings.set", json!({"settings": patch}))
+                    .is_err(),
+                "expected rejection for {patch}"
+            );
+            assert_eq!(s.settings(), &Settings::default());
+        }
+    }
+
+    #[test]
+    fn settings_commands_adversarial_params_never_panic() {
+        let mut s = Session::new();
+        let garbage = [
+            Value::Null,
+            json!([]),
+            json!("settings"),
+            json!(0),
+            json!({"settings": null}),
+            json!({"settings": []}),
+            json!({"settings": "x"}),
+            json!({"settings": {"theme": 3}}),
+            json!({"settings": {"minimize_to_tray": "yes"}}),
+            json!({"settings": {"unknown_future_key": 1}}),
+            json!({"settings": {}}),
+        ];
+        for p in garbage {
+            let _ = s.dispatch("settings.set", p);
+        }
+        let _ = s.dispatch("settings.get", Value::Null);
+        let _ = s.dispatch("settings.get", json!([]));
+        // Session state stays coherent and serializable.
+        let got = s.dispatch("settings.get", json!({})).unwrap();
+        assert!(got.is_object());
     }
 }

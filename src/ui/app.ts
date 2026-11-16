@@ -4832,6 +4832,16 @@ export function mountApp(root: HTMLElement): void {
   };
 
   /** File → Open: load any image from disk into the editor (Ctrl+O). */
+  async function loadImagePath(path: string): Promise<void> {
+    const dataUrl = await invoke<string>("read_image_file", { path });
+    await editor.load(dataUrl);
+    setImageState(true);
+    syncDirty();
+    const name = path.split(/[\\/]/).pop() || "image";
+    setStatus(`Opened ${name} — annotate away.`, "success");
+    await addRecent(dataUrl, "Open");
+  }
+
   async function openImage(): Promise<void> {
     try {
       const picked = await open({
@@ -4846,13 +4856,7 @@ export function mountApp(root: HTMLElement): void {
         ],
       });
       if (!picked || Array.isArray(picked)) return;
-      const dataUrl = await invoke<string>("read_image_file", { path: picked });
-      await editor.load(dataUrl);
-      setImageState(true);
-      syncDirty();
-      const name = picked.split(/[\\/]/).pop() || "image";
-      setStatus(`Opened ${name} — annotate away.`, "success");
-      await addRecent(dataUrl, "Open");
+      await loadImagePath(picked);
     } catch (e) {
       setStatus(`Could not open that image: ${errText(e)}`, "error");
     }
@@ -4991,6 +4995,41 @@ export function mountApp(root: HTMLElement): void {
   }).catch(() => {
     /* plain browser or an older backend without the tray */
   });
+
+  // OS integration: `snagcraft --capture` / `--region` from a panel companion
+  // or terminal, forwarded by the single-instance plugin.
+  void listen<{ mode?: string }>("cli-capture", (ev) => {
+    void runCapture(ev.payload?.mode === "region" ? "region" : "full");
+  }).catch(() => {
+    /* plain browser */
+  });
+
+  // An image opened via file association ("Open with SnagCraft").
+  void listen<{ path?: string }>("cli-open", (ev) => {
+    const path = ev.payload?.path;
+    if (path) {
+      void loadImagePath(path).catch((e) =>
+        setStatus(`Could not open that image: ${errText(e)}`, "error"),
+      );
+    }
+  }).catch(() => {
+    /* plain browser */
+  });
+
+  // First launch: did the OS ask for a capture or an image? Poll once the
+  // listeners above are registered (later launches arrive as events).
+  void invoke<{ capture?: string; file?: string }>("launch_request")
+    .then((req) => {
+      if (req.capture) void runCapture(req.capture === "region" ? "region" : "full");
+      else if (req.file) {
+        void loadImagePath(req.file).catch((e) =>
+          setStatus(`Could not open that image: ${errText(e)}`, "error"),
+        );
+      }
+    })
+    .catch(() => {
+      /* plain browser or an older backend */
+    });
 
   // A registered global shortcut fired (Wayland GlobalShortcuts portal).
   void listen<{ id?: string }>("hotkey-activated", (ev) => {

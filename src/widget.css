@@ -11,37 +11,39 @@
    applied in `widget-main.ts`); buttons sit on top as ordinary controls. */
 
 :root {
-  --accent: #8b7cf6;
-  --accent-bright: #a99bff;
-  --accent-soft: rgba(139, 124, 246, 0.18);
-  --accent-press: rgba(139, 124, 246, 0.30);
-  --spine-glow: rgba(139, 124, 246, 0.55);
+  --accent: #6fa3dc;
+  --accent-bright: #9cc0ef;
+  --accent-soft: rgba(61, 126, 194, 0.20);
+  --accent-press: rgba(61, 126, 194, 0.32);
+  --spine-glow: rgba(111, 163, 220, 0.55);
 
-  --surface: linear-gradient(180deg, rgba(38, 35, 54, 0.84), rgba(22, 20, 33, 0.88));
+  --surface: linear-gradient(180deg, rgba(40, 41, 45, 0.86), rgba(24, 25, 28, 0.90));
   --surface-edge: rgba(255, 255, 255, 0.14);
   --stroke: rgba(255, 255, 255, 0.10);
-  --shade: 0 12px 30px rgba(5, 3, 16, 0.55), 0 3px 8px rgba(5, 3, 16, 0.45);
-  --shade-tab: 0 6px 16px rgba(5, 3, 16, 0.48), 0 2px 5px rgba(5, 3, 16, 0.38);
-  --text: #f1eefb;
-  --muted: #aaa5c2;
+  --shade: 0 12px 30px rgba(8, 8, 10, 0.55), 0 3px 8px rgba(8, 8, 10, 0.45);
+  --shade-tab: 0 6px 16px rgba(8, 8, 10, 0.48), 0 2px 5px rgba(8, 8, 10, 0.38);
+  --text: #f0f1f3;
+  --muted: #a8aab2;
   --hover: rgba(255, 255, 255, 0.08);
   --press: rgba(255, 255, 255, 0.14);
   --danger: #ff6b6b;
 }
 
 :root[data-theme="light"] {
-  --surface: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(244, 241, 252, 0.92));
+  --surface: linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(245, 246, 248, 0.94));
   --surface-edge: rgba(255, 255, 255, 0.9);
-  --stroke: rgba(30, 24, 60, 0.12);
-  --shade: 0 12px 28px rgba(35, 26, 70, 0.20), 0 3px 7px rgba(35, 26, 70, 0.14);
-  --shade-tab: 0 6px 14px rgba(35, 26, 70, 0.18), 0 2px 4px rgba(35, 26, 70, 0.12);
-  --text: #272138;
-  --muted: #6f6889;
-  --hover: rgba(30, 24, 60, 0.06);
-  --press: rgba(30, 24, 60, 0.12);
-  --accent-soft: rgba(139, 124, 246, 0.15);
-  --accent-press: rgba(139, 124, 246, 0.26);
-  --spine-glow: rgba(139, 124, 246, 0.40);
+  --stroke: rgba(25, 26, 30, 0.12);
+  --shade: 0 12px 28px rgba(30, 30, 34, 0.20), 0 3px 7px rgba(30, 30, 34, 0.14);
+  --shade-tab: 0 6px 14px rgba(30, 30, 34, 0.18), 0 2px 4px rgba(30, 30, 34, 0.12);
+  --text: #232428;
+  --muted: #63656e;
+  --hover: rgba(25, 26, 30, 0.06);
+  --press: rgba(25, 26, 30, 0.12);
+  --accent: #2266b3;
+  --accent-bright: #1a5296;
+  --accent-soft: rgba(34, 102, 179, 0.14);
+  --accent-press: rgba(34, 102, 179, 0.24);
+  --spine-glow: rgba(34, 102, 179, 0.40);
 }
 
 * { box-sizing: border-box; }
@@ -142,7 +144,7 @@ html, body {
 }
 
 @keyframes w-breathe {
-  0%, 100% { opacity: 0.55; box-shadow: 0 0 0 rgba(139, 124, 246, 0); }
+  0%, 100% { opacity: 0.55; box-shadow: 0 0 0 rgba(61, 126, 194, 0); }
   50%      { opacity: 1;    box-shadow: 0 0 10px var(--spine-glow); }
 }
 

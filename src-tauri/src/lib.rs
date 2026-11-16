@@ -1,4 +1,5 @@
 mod capture;
+mod cli;
 mod clipboard;
 mod commands;
 mod export;
@@ -17,7 +18,19 @@ mod windows;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // --help / --version answer on the console, no GUI.
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if cli::early_exit(&args) {
+        return;
+    }
     tauri::Builder::default()
+        // System-application behaviour: a second launch (hotkey companion,
+        // `snagcraft --capture`, "Open with" on an image) focuses the running
+        // window and forwards the request instead of opening a new instance.
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            let req = cli::parse_args(&argv[1..]);
+            cli::dispatch(app, &req);
+        }))
         .plugin(tauri_plugin_dialog::init())
         // Launch-at-login (Settings → General). Linux uses XDG autostart and
         // resolves the AppImage path via $APPIMAGE, so the .desktop entry keeps
@@ -41,6 +54,7 @@ pub fn run() {
         .manage(scrolling::ScrollingState::new())
         .invoke_handler(tauri::generate_handler![
             commands::capture_screenshot,
+            cli::launch_request,
             // Wave 10: single-frame capture of one window or one monitor
             // (ScreenCast portal picker -> PipeWire -> one frame -> PNG)
             commands::capture_window,

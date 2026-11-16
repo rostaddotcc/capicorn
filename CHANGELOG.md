@@ -3,6 +3,23 @@
 All notable changes to SnagCraft, newest first. Full release notes for every tag live on
 the [releases page](https://github.com/rostaddotcc/snagcraft/releases).
 
+## v1.3.0
+- **Classic desktop look.** The violet-tinted chrome is gone: neutral grey surfaces with
+  one restrained blue accent (primary action, active tool, logo), smaller corner radii,
+  a more compact top bar, flat surfaces instead of tinted gradients — in both themes and
+  in the floating widget. A utility, not a landing page.
+- **System application behaviour.** SnagCraft is now single-instance: a second launch
+  focuses the running window. `snagcraft --capture` and `--region` ask the running app to
+  capture (or start it), `--help` / `--version` answer on the console, and an image path
+  in the arguments opens straight in the editor.
+- **File associations.** The .deb / .msi / NSIS installers register SnagCraft as an editor
+  for PNG, JPEG, WebP, GIF, BMP, AVIF and TIFF — right-click an image → *Open with
+  SnagCraft*.
+- **GNOME & KDE panel companions** (`integrations/`): a GNOME Shell extension (45+) and a
+  Plasma 6 plasmoid that add a one-click capture button to the panel, plus a `.desktop`
+  entry with capture actions for AppImage users. Reference implementations — live-session
+  validation welcome.
+
 ## v1.2.1
 - **Fix: the thin AppImage failed to start on Wayland desktops.** The ksni tray dependency
   added in v1.1.0 accidentally re-enabled tray-icon's default features, which link

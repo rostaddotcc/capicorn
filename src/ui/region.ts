@@ -3,7 +3,7 @@
 
 export type Box = { left: number; top: number; width: number; height: number };
 
-const ACCENT = "#8b7cf6";
+const ACCENT = "#3f7fc4";
 /** Below this (in natural px) a drag is not considered a real selection. */
 const MIN_BOX = 3;
 

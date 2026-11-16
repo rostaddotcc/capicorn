@@ -1,0 +1,1 @@
+{"uuid": "snagcraft@rostad.cc", "name": "SnagCraft Capture", "description": "One-click screen capture with SnagCraft from the GNOME panel. Left click captures the screen, middle click a region, right click opens the editor.", "shell-version": ["45", "46", "47", "48", "49", "50"], "url": "https://github.com/rostaddotcc/snagcraft", "version": 1}

@@ -1,0 +1,21 @@
+[Desktop Entry]
+Type=Application
+Name=SnagCraft
+GenericName=Screen Capture
+Comment=Capture, annotate and record your screen
+Exec=snagcraft %F
+TryExec=snagcraft
+Icon=snagcraft
+Terminal=false
+Categories=Utility;Graphics;
+MimeType=image/png;image/jpeg;image/webp;image/gif;image/bmp;image/avif;image/tiff;
+StartupWMClass=SnagCraft
+Actions=Capture;Region;
+
+[Desktop Action Capture]
+Name=Capture screen
+Exec=snagcraft --capture
+
+[Desktop Action Region]
+Name=Capture region
+Exec=snagcraft --region

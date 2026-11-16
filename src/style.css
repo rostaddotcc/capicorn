@@ -1,7 +1,8 @@
-/* SnagCraft — portfolio-grade utility chrome.
-   Bold-but-calm system, anchored on the violet #8b7cf6 family with semantic
-   accents. Full light + dark themes driven by <html data-theme>. Soft shadows,
-   10–12px radii, 120–180ms feedback, themed scrollbars. No gradient soup. */
+/* SnagCraft — classic desktop chrome.
+   Neutral grey surfaces, one restrained blue accent reserved for the primary
+   action, the active tool and the logo. Small radii (4–8px), quiet shadows,
+   120–180ms feedback, themed scrollbars. Light + dark via <html data-theme>.
+   No gradient soup, no tinted glow — a utility, not a landing page. */
 
 @font-face {
   font-family: "Inter";
@@ -128,13 +129,13 @@
   --fg: #1b1b1f;
   --fg-muted: #5f5f68;
   --fg-subtle: #74747c;
-  --accent: #8b7cf6;
-  --accent-solid: #6f5ce4;
-  --accent-solid-hover: #5e4bd4;
-  --accent-strong: #6248d2;
-  --accent-soft: #efecfe;
-  --accent-muted: #cdc6ef;
-  --accent-ring: rgba(139, 124, 246, 0.38);
+  --accent: #3f7fc4;
+  --accent-solid: #2266b3;
+  --accent-solid-hover: #1b579c;
+  --accent-strong: #1a5296;
+  --accent-soft: #e9f1f9;
+  --accent-muted: #bcd2e8;
+  --accent-ring: rgba(34, 102, 179, 0.35);
   --success: #17855c;
   --danger: #c9405c;
   --rec: #c9405c;
@@ -145,9 +146,9 @@
   --dot-color: rgba(120, 120, 130, 0.16);
   --scroll-track: #f0f0f2;
   --scroll-thumb: #c6c6cc;
-  --radius-sm: 6px;
-  --radius: 8px;
-  --radius-lg: 10px;
+  --radius-sm: 4px;
+  --radius: 6px;
+  --radius-lg: 8px;
   --shadow-sm: 0 1px 2px rgba(24, 24, 28, 0.06);
   --shadow-md: 0 1px 2px rgba(24, 24, 28, 0.05), 0 12px 28px -22px rgba(24, 24, 28, 0.34);
   --shadow-lg: 0 2px 4px rgba(24, 24, 28, 0.05), 0 22px 46px -30px rgba(24, 24, 28, 0.4);
@@ -173,13 +174,13 @@
   --fg: #e6e7ea;
   --fg-muted: #a5a6ae;
   --fg-subtle: #92939c;
-  --accent: #8b7cf6;
-  --accent-solid: #6f5ce4;
-  --accent-solid-hover: #8272f2;
-  --accent-strong: #b3a9fb;
-  --accent-soft: rgba(139, 124, 246, 0.16);
-  --accent-muted: #4b4670;
-  --accent-ring: rgba(150, 136, 255, 0.55);
+  --accent: #6fa3dc;
+  --accent-solid: #3d7ec2;
+  --accent-solid-hover: #5290cf;
+  --accent-strong: #a3c4e8;
+  --accent-soft: rgba(61, 126, 194, 0.24);
+  --accent-muted: #3a5a80;
+  --accent-ring: rgba(111, 163, 220, 0.5);
   --success: #3fcf92;
   --danger: #ff6f86;
   --rec: #d64760;
@@ -215,7 +216,7 @@ body {
 }
 
 ::selection {
-  background: rgba(139, 124, 246, 0.26);
+  background: color-mix(in srgb, var(--accent) 26%, transparent);
 }
 
 #app {
@@ -303,12 +304,12 @@ kbd {
 
 .topbar {
   flex: none;
-  height: 58px;
+  height: 46px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 0 18px;
+  padding: 0 12px;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
   user-select: none;
@@ -335,12 +336,12 @@ kbd {
   place-items: center;
   width: 26px;
   height: 26px;
-  border-radius: 8px;
+  border-radius: 6px;
   background: var(--accent-soft);
   color: var(--accent-strong);
   font-size: 14px;
   line-height: 1;
-  box-shadow: inset 0 0 0 1px rgba(139, 124, 246, 0.22);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 22%, transparent);
 }
 
 .brand-mark svg {
@@ -363,7 +364,7 @@ kbd {
   color: var(--fg-subtle);
   background: var(--surface-soft);
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: 4px;
   padding: 2px 7px;
   white-space: nowrap;
 }
@@ -417,7 +418,7 @@ kbd {
 .icon-btn[aria-pressed="true"] {
   color: var(--accent-strong);
   background: var(--accent-soft);
-  border-color: rgba(139, 124, 246, 0.4);
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
 }
 
 /* ------------------------------------------------------- primary buttons */
@@ -559,7 +560,7 @@ kbd {
 
 .chip.is-active {
   background: var(--accent-soft);
-  border-color: rgba(139, 124, 246, 0.45);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
   color: var(--accent-strong);
 }
 
@@ -1133,7 +1134,7 @@ kbd {
 .stroke.is-active {
   background: var(--surface);
   color: var(--accent-strong);
-  box-shadow: var(--shadow-sm), inset 0 0 0 1px rgba(139, 124, 246, 0.42);
+  box-shadow: var(--shadow-sm), inset 0 0 0 1px color-mix(in srgb, var(--accent) 42%, transparent);
 }
 
 .stroke-dot {
@@ -1298,7 +1299,7 @@ kbd {
 .text-toggle.is-active {
   background: var(--accent-soft);
   color: var(--accent-strong);
-  box-shadow: inset 0 0 0 1px rgba(139, 124, 246, 0.55);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent);
 }
 
 /* --------------------------------------------------------- settings modal */
@@ -1331,7 +1332,7 @@ kbd {
   flex-direction: column;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-lg);
   box-shadow: var(--shadow-lg);
   transform: translateY(8px) scale(0.985);
   opacity: 0;
@@ -1507,7 +1508,7 @@ kbd {
 .segmented button.is-active {
   background: var(--accent-soft);
   color: var(--accent-strong);
-  box-shadow: inset 0 0 0 1px rgba(139, 124, 246, 0.45);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent);
 }
 
 .modal-foot {
@@ -1639,8 +1640,8 @@ kbd {
   background: color-mix(in srgb, var(--surface) 92%, transparent);
   backdrop-filter: blur(14px) saturate(1.2);
   border: 1px solid var(--border);
-  border-radius: 10px;
-  box-shadow: 0 18px 44px -22px rgba(18, 14, 34, 0.55), 0 2px 6px -2px rgba(18, 14, 34, 0.18);
+  border-radius: 8px;
+  box-shadow: 0 18px 44px -22px rgba(20, 20, 24, 0.5), 0 2px 6px -2px rgba(20, 20, 24, 0.16);
   color: var(--fg);
   font-size: 12px;
   overflow: hidden;
@@ -1772,12 +1773,12 @@ kbd {
   height: 100%;
   width: 2%;
   border-radius: inherit;
-  background: linear-gradient(90deg, var(--accent-muted), var(--accent-solid));
+  background: var(--accent-solid);
   transition: width 220ms var(--ease);
 }
 
 .scroll-card.has-warning .scroll-bar-fill {
-  background: linear-gradient(90deg, var(--accent-muted), var(--warning));
+  background: var(--warning);
 }
 
 .scroll-warn {
@@ -1912,8 +1913,8 @@ kbd {
   background: color-mix(in srgb, var(--surface) 92%, transparent);
   backdrop-filter: blur(14px) saturate(1.2);
   border: 1px solid var(--border);
-  border-radius: 10px;
-  box-shadow: 0 18px 44px -22px rgba(18, 14, 34, 0.55), 0 2px 6px -2px rgba(18, 14, 34, 0.18);
+  border-radius: 8px;
+  box-shadow: 0 18px 44px -22px rgba(20, 20, 24, 0.5), 0 2px 6px -2px rgba(20, 20, 24, 0.16);
   color: var(--fg);
   font-size: 12px;
   overflow: hidden;
@@ -2181,7 +2182,7 @@ kbd {
 .pills button.is-active {
   background: var(--surface);
   color: var(--accent-strong);
-  box-shadow: inset 0 0 0 1px rgba(139, 124, 246, 0.5), var(--shadow-sm);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 50%, transparent), var(--shadow-sm);
 }
 
 /* Labelled fields (format, quality, filename) */
@@ -2430,13 +2431,9 @@ kbd {
   display: grid;
   place-items: center;
   padding: 20px;
-  background: radial-gradient(
-    circle at 50% 45%,
-    rgba(26, 20, 48, 0.5),
-    rgba(9, 7, 16, 0.82) 70%
-  );
-  backdrop-filter: blur(3px) saturate(1.05);
-  -webkit-backdrop-filter: blur(3px) saturate(1.05);
+  background: var(--scrim);
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
   opacity: 0;
   transition: opacity 140ms var(--ease);
 }
@@ -2457,7 +2454,7 @@ kbd {
   min-width: 240px;
   padding: 24px 38px 20px;
   border: 1px solid var(--border-strong);
-  border-radius: 20px;
+  border-radius: 10px;
   background: var(--surface);
   box-shadow: 0 34px 80px -34px rgba(0, 0, 0, 0.75);
   opacity: 0;
@@ -3499,7 +3496,7 @@ kbd {
   align-items: stretch;
   overflow: hidden;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: 6px;
   background: var(--surface-soft);
   transition: border-color 130ms var(--ease);
 }
@@ -4135,7 +4132,7 @@ kbd {
   padding: 12px 12px 13px;
   border: 1px solid var(--accent-muted);
   border-radius: var(--radius);
-  background: linear-gradient(180deg, var(--accent-soft), transparent 150%);
+  background: var(--surface-soft);
   box-shadow: var(--shadow-sm);
 }
 
@@ -4790,7 +4787,7 @@ body.countdown-hud .countdown {
 }
 
 body.countdown-hud .countdown-card {
-  border-radius: 12px;
+  border-radius: 8px;
   padding: 16px 20px 14px;
   min-width: 0;
 }
@@ -4806,7 +4803,7 @@ body.countdown-hud .countdown-card {
 .file-btn.file-btn-mark .brand-mark {
   width: 26px;
   height: 26px;
-  border-radius: 7px;
+  border-radius: 6px;
 }
 
 .file-btn.file-btn-mark .brand-mark svg {
@@ -4828,7 +4825,7 @@ body.countdown-hud .countdown-card {
   width: 54px;
   height: 54px;
   margin-bottom: 6px;
-  border-radius: 15px;
+  border-radius: 10px;
   background: var(--accent-soft);
   color: var(--accent-strong);
 }

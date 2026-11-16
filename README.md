@@ -63,6 +63,13 @@ share* flow in one lightweight app. SnagCraft fills that gap.
 - **Pause/resume** a take without starting a new file
 
 **Desktop integration**
+- **Single instance** — launching SnagCraft again focuses the running window instead of
+  opening a second one; `snagcraft --capture` / `--region` trigger a capture from any
+  script, shortcut or panel companion
+- **File associations** — installers register SnagCraft as an image editor
+  (PNG/JPEG/WebP/GIF/BMP/AVIF/TIFF): right-click → *Open with SnagCraft*
+- **Panel companions** for GNOME Shell and KDE Plasma 6 in [`integrations/`](integrations/README.md) —
+  one-click capture buttons that talk to the running app
 - System tray with **click-to-restore** (left click or double click opens the window,
   middle click toggles the widget, right click is the menu) and minimise-to-tray
 - **Start at login** — Settings → General registers SnagCraft as a login item

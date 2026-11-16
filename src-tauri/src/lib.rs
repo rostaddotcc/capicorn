@@ -47,6 +47,7 @@ pub fn run() {
             commands::pick_save_dir,
             commands::save_png_to_dir,
             commands::read_image_file,
+            commands::list_folder_media,
             // Wave 11: Save As — native dialog, PNG/JPEG/WebP + quality
             commands::save_image_as,
             commands::recording_diagnostics,

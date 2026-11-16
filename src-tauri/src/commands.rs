@@ -301,6 +301,131 @@ pub async fn copy_png(data_url: String) -> Result<(), String> {
     crate::clipboard::copy_png_data_url(&data_url).map_err(|e| e.to_string())
 }
 
+/// One file in the save folder, shaped for the Recent strip.
+#[derive(serde::Serialize)]
+pub struct FolderMedia {
+    /// Absolute path — what the frontend hands back to open it.
+    pub path: String,
+    /// File name shown in the tooltip.
+    pub name: String,
+    /// `"image"` or `"video"`.
+    pub kind: String,
+    /// Modification time, ms since the epoch (sort key for the strip).
+    pub modified: u64,
+    /// Small PNG data URL, or empty when no thumbnail could be built.
+    pub thumb: String,
+}
+
+/// Image extensions the strip can show, and the ones it treats as video.
+const MEDIA_IMAGE_EXTS: &[&str] = &["png", "jpg", "jpeg", "webp", "bmp", "avif", "tif", "tiff"];
+const MEDIA_VIDEO_EXTS: &[&str] = &["mp4", "webm", "mov", "mkv", "gif"];
+/// Newest first, capped so a huge folder can't stall the strip.
+const MEDIA_LIMIT: usize = 60;
+/// Video thumbnails shell out to ffmpeg; only the newest few get one.
+const MEDIA_VIDEO_THUMBS: usize = 8;
+
+/// Small PNG data URL for an image file (240 px box, aspect kept).
+fn image_thumb(path: &std::path::Path) -> Result<String, String> {
+    let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+    let image = image::load_from_memory(&bytes).map_err(|e| e.to_string())?;
+    let thumb = image.thumbnail(240, 240);
+    let mut png = Vec::new();
+    thumb
+        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .map_err(|e| e.to_string())?;
+    use base64::Engine as _;
+    Ok(format!(
+        "{}{}",
+        crate::capture::PNG_DATA_URL_PREFIX,
+        base64::engine::general_purpose::STANDARD.encode(&png)
+    ))
+}
+
+/// Every image/recording file directly inside `dir`, with its mtime.
+///
+/// Pure and synchronous so the filtering rules are unit-testable without a
+/// Tauri handle (the command wrapping it is async only for the picker's sake).
+fn scan_media(
+    dir: &std::path::Path,
+) -> Result<Vec<(std::path::PathBuf, bool, std::time::SystemTime)>, String> {
+    let mut files: Vec<(std::path::PathBuf, bool, std::time::SystemTime)> = Vec::new();
+    let entries =
+        std::fs::read_dir(dir).map_err(|e| format!("cannot read {}: {e}", dir.display()))?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let Some(ext) = path
+            .extension()
+            .and_then(|value| value.to_str())
+            .map(|value| value.to_ascii_lowercase())
+        else {
+            continue;
+        };
+        let is_video = if MEDIA_VIDEO_EXTS.contains(&ext.as_str()) {
+            true
+        } else if MEDIA_IMAGE_EXTS.contains(&ext.as_str()) {
+            false
+        } else {
+            continue;
+        };
+        let modified = entry
+            .metadata()
+            .and_then(|meta| meta.modified())
+            .unwrap_or(std::time::UNIX_EPOCH);
+        files.push((path, is_video, modified));
+    }
+    Ok(files)
+}
+
+/// List the images and recordings in `dir`, newest first, for the Recent strip.
+///
+/// The folder is the source of truth after a save: a capture made in a previous
+/// session still shows up here, which is the point of a history.
+#[tauri::command]
+pub async fn list_folder_media(dir: String) -> Result<Vec<FolderMedia>, String> {
+    let dir = std::path::PathBuf::from(dir.trim());
+    if !dir.is_dir() {
+        return Ok(Vec::new());
+    }
+
+    let mut files = scan_media(&dir)?;
+    files.sort_by(|a, b| b.2.cmp(&a.2));
+    files.truncate(MEDIA_LIMIT);
+
+    let mut out = Vec::with_capacity(files.len());
+    let mut video_thumbs = 0;
+    for (path, is_video, modified) in files {
+        let name = path
+            .file_name()
+            .map(|value| value.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let modified = modified
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|value| value.as_millis() as u64)
+            .unwrap_or(0);
+        let thumb = if is_video {
+            if video_thumbs < MEDIA_VIDEO_THUMBS {
+                video_thumbs += 1;
+                recording_thumb(path.to_string_lossy().into_owned()).unwrap_or_default()
+            } else {
+                String::new()
+            }
+        } else {
+            image_thumb(&path).unwrap_or_default()
+        };
+        out.push(FolderMedia {
+            path: path.to_string_lossy().into_owned(),
+            name,
+            kind: if is_video { "video" } else { "image" }.to_string(),
+            modified,
+            thumb,
+        });
+    }
+    Ok(out)
+}
+
 /// Copy plain text (an upload link) to the clipboard.
 #[tauri::command]
 pub fn copy_text(text: String) -> Result<(), String> {
@@ -464,5 +589,82 @@ mod tests {
     #[test]
     fn version_is_reported() {
         assert!(!get_version().is_empty());
+    }
+}
+
+#[cfg(test)]
+mod folder_media_tests {
+    use super::*;
+
+    /// A 2×2 PNG on disk, so `image_thumb` has something real to decode.
+    fn write_png(dir: &std::path::Path, name: &str) -> std::path::PathBuf {
+        let png = image::RgbaImage::from_pixel(2, 2, image::Rgba([200, 40, 40, 255]));
+        let path = dir.join(name);
+        png.save(&path).expect("write png");
+        path
+    }
+
+    #[test]
+    fn scan_media_keeps_images_and_videos_and_drops_the_rest() {
+        let dir = std::env::temp_dir().join(format!("snagcraft-scan-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("temp dir");
+
+        write_png(&dir, "a.png");
+        std::fs::write(dir.join("b.mp4"), b"not really a video").expect("write mp4");
+        std::fs::write(dir.join("notes.txt"), b"ignore me").expect("write txt");
+        std::fs::create_dir_all(dir.join("nested")).expect("nested dir");
+
+        let files = scan_media(&dir).expect("scan");
+        let names: Vec<String> = files
+            .iter()
+            .map(|(path, _, _)| path.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+
+        assert!(
+            names.contains(&"a.png".to_string()),
+            "image kept: {names:?}"
+        );
+        assert!(
+            names.contains(&"b.mp4".to_string()),
+            "video kept: {names:?}"
+        );
+        assert!(
+            !names.contains(&"notes.txt".to_string()),
+            "txt dropped: {names:?}"
+        );
+        assert_eq!(names.len(), 2, "nested dirs are not walked: {names:?}");
+        assert!(
+            files
+                .iter()
+                .any(|(path, is_video, _)| path.ends_with("b.mp4") && *is_video),
+            "mp4 classified as video"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn image_thumb_is_a_png_data_url() {
+        let dir = std::env::temp_dir().join(format!("snagcraft-thumb-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = write_png(&dir, "thumb.png");
+
+        let url = image_thumb(&path).expect("thumb");
+        assert!(
+            url.starts_with(crate::capture::PNG_DATA_URL_PREFIX),
+            "prefix"
+        );
+        let png = crate::capture::decode_png_data_url(&url).expect("decodes");
+        assert!(!png.is_empty(), "payload present");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_missing_folder_is_not_an_error() {
+        // The command returns an empty list for a folder that isn't there yet.
+        assert!(scan_media(std::path::Path::new("/nonexistent/snagcraft/nope")).is_err());
     }
 }

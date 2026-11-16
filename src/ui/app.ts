@@ -655,8 +655,21 @@ type RecentShot = {
   label: string;
   /** "video" entries point at a recording file; "image" (default) is a capture. */
   kind?: "image" | "video";
-  /** Absolute path of a recording (video entries only). */
+  /** Absolute path of a recording or a file-backed capture. */
   path?: string;
+  /** File extension for path-backed entries (badge text). */
+  ext?: string;
+  /** File name for path-backed entries (tooltip / status). */
+  name?: string;
+};
+
+/** One row from `list_folder_media` — the save folder's contents. */
+type FolderMedia = {
+  path: string;
+  name: string;
+  kind: "image" | "video";
+  modified: number;
+  thumb: string;
 };
 
 const escapeHtml = (value: string): string =>
@@ -1613,6 +1626,7 @@ export function mountApp(root: HTMLElement): void {
       writeStore(DIR_KEY, trimmed);
       setStatus(`Save folder reset to default: ${trimmed}`, "success");
       panel?.refresh();
+      void refreshRecentFromFolder();
       return trimmed;
     } catch (e) {
       setStatus(`Could not reset the save folder: ${errText(e)}`, "error");
@@ -1629,6 +1643,8 @@ export function mountApp(root: HTMLElement): void {
       writeStore(DIR_KEY, trimmed);
       setStatus(`Save folder: ${trimmed}`);
       panel?.refresh();
+      // The strip follows the folder the user just picked.
+      void refreshRecentFromFolder();
       return trimmed;
     } catch (e) {
       const message = errText(e);
@@ -3763,6 +3779,42 @@ export function mountApp(root: HTMLElement): void {
     filmTrackEl.scrollLeft = 0;
   }
 
+  /**
+   * Rebuild the strip from the configured save folder: images and recordings
+   * written in any session, newest first. Entries from this session that are not
+   * on disk yet (auto-save off) are kept on top.
+   */
+  async function refreshRecentFromFolder(): Promise<void> {
+    const dir = await ensureSaveDir();
+    if (!dir) return;
+    try {
+      const files = await invoke<FolderMedia[]>("list_folder_media", { dir });
+      const fromFolder: RecentShot[] = files.map((file) => {
+        const ext = (file.name.split(".").pop() ?? "").toLowerCase();
+        return {
+          id: `file-${file.path}`,
+          dataUrl: "",
+          thumb: file.thumb,
+          ts: file.modified,
+          format: settings.format,
+          label: file.kind === "video" ? "Recording" : "Image",
+          kind: file.kind,
+          path: file.path,
+          ext,
+          name: file.name,
+        };
+      });
+      const saved = new Set(fromFolder.map((entry) => entry.path));
+      const sessionOnly = recent.filter((entry) => !entry.path || !saved.has(entry.path));
+      recent = [...sessionOnly, ...fromFolder]
+        .sort((a, b) => b.ts - a.ts)
+        .slice(0, RECENT_LIMIT);
+      renderFilm();
+    } catch {
+      /* folder unreadable — keep whatever we already have */
+    }
+  }
+
   function renderFilm(): void {
     const hasAny = recent.length > 0;
     const shown = hasAny && filmOpen;
@@ -3782,12 +3834,17 @@ export function mountApp(root: HTMLElement): void {
     filmTrackEl.innerHTML = recent
       .map((item) => {
         const isVideo = item.kind === "video";
-        const ext = isVideo ? (item.path ?? "").split(".").pop()?.toUpperCase() || "VIDEO" : "";
-        const badge = isVideo ? ext : formatLabel(item.format);
-        const thumbHtml =
-          isVideo && !item.thumb
-            ? `<span class="film-thumb film-thumb-video">${ICONS.film}</span>`
-            : `<span class="film-thumb"><img src="${item.thumb}" alt="" loading="lazy" /></span>`;
+        const ext = (item.ext ?? (item.path ?? "").split(".").pop() ?? "").toUpperCase();
+        const badge = isVideo
+          ? ext || "VIDEO"
+          : ext && ext !== "PNG"
+            ? ext
+            : formatLabel(item.format);
+        const thumbHtml = item.thumb
+          ? `<span class="film-thumb"><img src="${item.thumb}" alt="" loading="lazy" /></span>`
+          : `<span class="film-thumb${isVideo ? " film-thumb-video" : ""}">${
+              isVideo ? ICONS.film : ICONS.full
+            }</span>`;
         return `<button type="button" class="film-item${
           item.id === loadedRecentId ? " is-active" : ""
         }" data-id="${item.id}" role="option" aria-selected="${
@@ -3806,17 +3863,36 @@ export function mountApp(root: HTMLElement): void {
     filmOpen = open;
     writeStore(FILM_KEY, open ? "open" : "closed");
     renderFilm();
+    // Opening the strip is the natural moment to pick up files written since.
+    if (open) void refreshRecentFromFolder();
   }
 
   async function loadRecent(id: string): Promise<void> {
     const item = recent.find((r) => r.id === id);
     if (!item) return;
-    if (item.kind === "video" && item.path) {
+    if (item.path) {
+      if (item.kind === "video") {
+        try {
+          await invoke("open_path", { path: item.path });
+          setStatus(`Opened recording: ${item.path}`, "success");
+        } catch (e) {
+          setStatus(`Could not open the recording: ${errText(e)}`, "error");
+        }
+        return;
+      }
+      // Folder-backed image: read it back from disk (nothing is held in memory).
+      if (hasImage && isDirty() && !window.confirm("Open this image? Unsaved annotations will be lost.")) {
+        return;
+      }
       try {
-        await invoke("open_path", { path: item.path });
-        setStatus(`Opened recording: ${item.path}`, "success");
+        const dataUrl = await invoke<string>("read_image_file", { path: item.path });
+        await editor.load(dataUrl);
+        loadedRecentId = item.id;
+        setImageState(true);
+        renderFilm();
+        setStatus(`Opened ${item.name ?? "image"} — annotate away.`, "success");
       } catch (e) {
-        setStatus(`Could not open the recording: ${errText(e)}`, "error");
+        setStatus(`Could not open that image: ${errText(e)}`, "error");
       }
       return;
     }
@@ -4866,5 +4942,6 @@ export function mountApp(root: HTMLElement): void {
     }
     applyWatermark();
     await ensureSaveDir();
+    void refreshRecentFromFolder();
   })();
 }

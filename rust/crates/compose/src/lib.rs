@@ -16,7 +16,7 @@
 //! W1 gaps, deliberate: `bold`/`italic` flags on `Text` are stored but render
 //! regular, and without a font (`font = None`) all text paths are skipped.
 
-use ab_glyph::{Font, PxScale};
+use ab_glyph::{Font, PxScale, ScaleFont};
 use snagcraft_algo::apply_blur;
 use snagcraft_color::Rgba;
 use snagcraft_doc::{AnnotObject, Document, ShapeKind};
@@ -452,7 +452,7 @@ fn text_width<F: Font>(font: &F, text: &str, scale: PxScale) -> Option<f32> {
     let mut x = 0.0f32;
     for ch in text.chars() {
         let gid = font.glyph_id(ch);
-        let adv = font.h_advance_unscaled(gid) * scale.x;
+        let adv = font.as_scaled(scale).h_advance(gid);
         if !adv.is_finite() {
             return None;
         }
@@ -498,7 +498,7 @@ fn draw_text_at<F: Font>(
                 );
             });
         }
-        let adv = font.h_advance_unscaled(gid) * scale.x;
+        let adv = font.as_scaled(scale).h_advance(gid);
         if !adv.is_finite() {
             return;
         }
@@ -518,7 +518,7 @@ fn draw_text<F: Font>(img: &mut Surface, font: &F, pos: Point, text: &str, color
         return;
     }
     let scale = PxScale::from(size);
-    let baseline = pos.y + font.ascent_unscaled() * scale.y;
+    let baseline = pos.y + font.as_scaled(scale).ascent();
     draw_text_at(img, font, pos.x, baseline, text, color, size);
 }
 
@@ -543,7 +543,7 @@ fn draw_text_centered<F: Font>(
         return;
     };
     let left = center.x - tw / 2.0;
-    let baseline = center.y + font.ascent_unscaled() * scale.y * 0.5;
+    let baseline = center.y + font.as_scaled(scale).ascent() * 0.5;
     draw_text_at(img, font, left, baseline, text, color, size);
 }
 

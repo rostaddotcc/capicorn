@@ -1,0 +1,30 @@
+[package]
+name = "snagcraft-ui-egui"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+snagcraft-engine = { path = "../engine" }
+snagcraft-capture = { path = "../capture" }
+snagcraft-doc = { path = "../doc" }
+snagcraft-compose = { path = "../compose" }
+snagcraft-raster = { path = "../raster" }
+snagcraft-geom = { path = "../geom" }
+snagcraft-color = { path = "../color" }
+egui.workspace = true
+eframe.workspace = true
+ab_glyph.workspace = true
+rfd.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+image.workspace = true
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+egui_kittest.workspace = true

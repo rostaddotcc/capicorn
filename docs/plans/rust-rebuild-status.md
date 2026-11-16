@@ -8,7 +8,7 @@ Baseline: Tauri v1.5.2 (commit d25adb1). Rebuild workspace: `rust/` (not yet cre
 | Wave | Scope | Status |
 |------|-------|--------|
 | W0 | egui editor spike + Wayland viewport probe | built + verified on pn53; KDE manual pass pending rostad |
-| W1 | workspace scaffold, doc model, engine, capture port | in progress — scaffold + L0/doc/ops landed; tracks C1/C2/D/P dispatched |
+| W1 | workspace scaffold, doc model, engine, capture port | core landed + verified (99 tests); desktop capture→editor built; KDE pass pending |
 | W2 | editor tool parity | pending |
 | W3 | shell parity (tray/hotkeys/widget/settings) | pending |
 | W4 | recording, scrolling, OCR, timelapse | pending |
@@ -67,10 +67,43 @@ Baseline: Tauri v1.5.2 (commit d25adb1). Rebuild workspace: `rust/` (not yet cre
 - Next: integrate children → engine (Session + command registry) → ui-egui shell
   (capture→editor) → apps/snagcraft + cli → gates → AppImage → deliver.
 
+### 2026-11-16 — wake #3: W1 integrated end-to-end
+- Children C1/C2/D/P all finished; parent verified artifacts: 39 crate tests green
+  before integration, clippy clean, format compile-guard intact (no `..` rest).
+- Parent landed: engine Session + 16-command registry (7 tests incl. adversarial
+  params), ui-egui engine-driven shell (Capture button → threaded portal capture →
+  editor; Select/Arrow/Rect/Text/Blur; Save native / Export PNG; undo/redo; drag-drop),
+  apps/snagcraft (eframe, --capture/--selftest) + snagcraft-cli (capture/convert/
+  commands/run — every registry command drivable headless).
+- Two real bugs found + fixed by parent verification (not child self-reports):
+  (1) compose text used ab_glyph raw font-unit metrics (ascent 932×scale → baseline
+  off-canvas, silent text loss) → fixed with as_scaled()/ScaleFont pixel metrics;
+  (2) CLI had no fonts because egui's own default features are EMPTY (default_fonts
+  comes via eframe) → workspace egui now enables default_fonts explicitly.
+  Regression probes: ui-egui render_probe tests + CLI text-export pixel check (417 px).
+- Seeded demo scene now uses a detailed synthetic base (white-on-white blur was
+  invisible in the first snapshot).
+- Final gates: fmt ✓ clippy -D warnings ✓ 99 tests / 0 failed / 1 ignored (live
+  portal, locked host) ✓ xtask layers 21 crates ✓. Headless w1_shell snapshot
+  vision-verified: Capture button, 5 tools, arrow+rect+text+blur all render.
+- Desktop release binary + AppImage (10.3 MB) launch-tested on pn53 Wayland (exit 124).
+  CLI smoke: commands lists 16; convert PNG→JPEG→PNG round-trip; run edit.add +
+  export with text verified pixel-wise.
+- ATTRIBUTION.md added (icon original; no committed fonts; dep allowlist check).
+- Parity checklist: docs/plans/rust-rebuild-parity.md — 149 evidence-backed rows,
+  14 sections, baseline v1.5.3 @ 3cec2ee. W1 ticks: capture→editor flow, 8 object
+  kinds, undo/redo, PNG/JPEG/WebP export, native format, CLI automation.
+- Remaining W1 sign-off: rostad's KDE pass — live portal capture (unlocked),
+  annotate → save/export under ten seconds. W2 next: full 13-tool parity.
+
 ## Appendix — measured reality
 
 | Claim | Measured | What changed |
 |---|---|---|
+| ab_glyph `ascent_unscaled() * scale` gives pixel ascent (W0 spike pattern) | Returns RAW font units (Ubuntu-Light ascent=932, upem 1000) → baseline 26 000 px off-canvas → silent text loss in CPU composite | compose uses `font.as_scaled(scale).ascent()` / `.h_advance(gid)` (ScaleFont trait); W0 spike export had the same latent bug (its on-screen text came from egui painter, which masked it) |
+| egui = "0.37" bundles fonts by default | egui's own `default = []`; `default_fonts` is enabled via eframe — CLI (egui-only) got EMPTY FontDefinitions | workspace egui enables `default_fonts` explicitly; CLI text export verified pixel-wise |
+| Child "tests green" claims imply visual correctness | compose passed 7 unit tests yet rendered no text (no font-present pixel test existed) | parent vision + pixel probes are mandatory on render paths; added render_probe regression tests |
+| Blur visible in seeded snapshot | Gaussian blur on a pure-white base is invisible | seeded() loads a synthetic gradient base (load_surface) |
 | photocraft layering forbids ALL same-layer deps | L0 foundation (raster→geom/color) needs same-layer edges | xtask layers allows same-layer edges but rejects cycles (DFS) + any upward edge; UI ban below L6 unchanged |
 | egui main-branch docs match crates.io 0.37 | 0.37 renamed APIs: `Panel::top/bottom` (unified, `.show(ui,…)` not `.show(ctx,…)`), `eframe::App::ui` replaces `update`, `Ui::id`→`scope_id`, `Id::new` deprecated, `DroppedFile` is a trait (`.path()`), `FontData.font` is a `Blob`, `TextEdit::frame` takes `Frame` not bool, ab_glyph `Scale`→`PxScale`, `ascent_unscaled()` takes no args | All fixed against the vendored 0.37 registry source; briefs for W1+ must cite 0.37, not main |
 | `EFRAME_SCREENSHOT_TO` usable for headless shots | Asserts "not yet implemented for wgpu backend" (wgpu_integration.rs:143) | Use `ctx.request_screenshot(cb)` (wgpu-supported) or egui_kittest offscreen |

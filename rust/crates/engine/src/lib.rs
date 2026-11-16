@@ -86,6 +86,11 @@ impl Session {
         self.doc.as_ref().ok_or(CommandError::NoDoc)
     }
 
+    /// Replace the document with a captured/opened surface (clears history).
+    pub fn load_surface(&mut self, surface: Surface) {
+        self.replace_doc(Document::new(surface));
+    }
+
     fn replace_doc(&mut self, doc: Document) {
         self.doc = Some(doc);
         self.history.clear();

@@ -3900,6 +3900,7 @@ name = "snagcraft-cli"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "egui",
  "image",
  "serde_json",
  "snagcraft-engine",
@@ -4016,9 +4017,13 @@ name = "snagcraft-ui-egui"
 version = "0.1.0"
 dependencies = [
  "ab_glyph",
+ "eframe",
  "egui",
+ "egui_kittest",
  "image",
  "rfd",
+ "serde_json",
+ "snagcraft-capture",
  "snagcraft-color",
  "snagcraft-compose",
  "snagcraft-doc",

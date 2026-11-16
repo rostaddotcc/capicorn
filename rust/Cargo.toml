@@ -9,7 +9,7 @@ license = "GPL-3.0-or-later"
 repository = "https://github.com/rostaddotcc/snagcraft"
 
 [workspace.dependencies]
-egui = "0.37"
+egui = { version = "0.37", features = ["default_fonts"] }
 eframe = "0.37"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
 ab_glyph = "0.2"

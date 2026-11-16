@@ -44,6 +44,62 @@ feature) per live Cargo.toml; bindgen needs BINDGEN_EXTRA_CLANG_ARGS (skill reci
   decide: implement simple post-stop trim dialog (ffmpeg -ss/-to re-encode) or
   log as gap. Ask rostad if ambiguous at W4d.
 
+## W4a/W4c LOCKED CONTRACTS (dispatched wake #18)
+
+```rust
+// crates/recording (L4, scaffold pre-wired, bindgen fixed)
+pub struct Region { pub left: i32, pub top: i32, pub width: u32, pub height: u32 }
+pub enum RecordingFormat { Mp4, Gif } // parse/extension
+pub struct AudioSource { pub id: String, pub name: String, pub kind: String }
+pub struct AudioConfig { pub source: Option<String> } // None = silent
+pub struct RecordingConfig { pub format: RecordingFormat, pub region: Option<Region>,
+  pub audio: AudioConfig, pub fps: u32 /*clamp 5..=60, default 30*/, pub output: PathBuf }
+pub enum RecordingEvent { Started { width: u32, height: u32 }, Stopped { path: PathBuf },
+  Failed(String), Paused, Resumed }
+pub struct RecordingHandle; // stop() / pause() / resume() / is_active() / is_paused()
+pub fn spawn_recording(config: RecordingConfig, events: Sender<RecordingEvent>)
+    -> Result<RecordingHandle, RecordingError>;
+pub fn ffmpeg_available() -> bool;
+pub fn list_audio_sources() -> Result<Vec<AudioSource>, RecordingError>;
+pub fn crop_frame_rgb24(frame: &[u8], w: u32, h: u32, region: Region) -> Vec<u8>;
+// PURE + unit-tested: pixel-exact recovery, edge clamping, odd→even padding (yuv420p).
+// Architecture: portal half (ashpd Screencast, tokio multi-thread, session KEPT ALIVE)
+// + capture half (dedicated thread, MainLoopRc !Send) joined by OwnedFd + node id.
+// ffmpeg subprocess lazily on first negotiated frame; stop = close stdin + wait.
+
+// io::ocr (L4 module) — tesseract subprocess (system binary, NOT linked)
+pub fn ocr_available() -> bool; pub fn ocr_languages() -> Vec<String>;
+pub fn sanitize_lang(lang: &str) -> String; pub fn clean_output(raw: &str) -> String;
+pub fn run_ocr(img: &Surface, lang: &str) -> Result<String, IoError>;
+// tmp PNG → tesseract <tmp> stdout -l <sanitized> → clean_output; bounded.
+
+// io::upload (L4 module)
+pub fn open_url(url: &str) -> Result<(), IoError>; // xdg-open/linux, open/mac, cmd/start/win; http(s) only
+
+// capture::timelapse (L4 module)
+pub struct TimelapseConfig { pub period_secs: u32 /*clamp 1..=3600*/, pub count: Option<u32>, pub dir: PathBuf }
+pub fn spawn_timelapse(config, events: Sender<TimelapseEvent>) -> Result<TimelapseHandle, CaptureError>;
+// interval capture.full → save PNG frames; stop handle; events Frame{path}/Done/Failed.
+
+// compose::watermark (L3 addition)
+pub fn apply_watermark<F: Font>(img: &mut Surface, text: &str, opacity: f32 /*0.02..1*/,
+    corner: Corner /*BottomRight default, BottomLeft, TopRight, TopLeft*/, font: Option<&F>, size: f32);
+// live watermark.ts parity: default opacity 0.45, bottom-right, margin ~16px.
+
+// engine commands (parent wires after tracks land): record.start/stop/pause/resume,
+// record.state, audio.sources, ocr.run/available/languages, upload.open,
+// timelapse.start/stop, doc.export watermark params.
+```
+
+**W4a critical pitfalls (from tauri-desktop-app › references/recording.md — READ IT):**
+no `target.object` in stream props (pass node id only to stream.connect AFTER pumping
+the loop until the node appears in the registry, 2s cap); NO SPA_PARAM_Buffers on the
+consumer stream; VideoSize as RANGE choice (not fixed) for window picks; MONITOR|WINDOW
+sources; keep select_sources Request handle alive until start() returns; BGRx→rgb24
+stride-aware; teardown order (dropping pw objects after mainloop.run() deadlocks);
+surface real portal errors + log steps to ~/.cache/snagcraft-portal.log; offline
+Video/Source probe FIRST (ffprobe nb_frames/codec/duration), portal leg = rostad KDE.
+
 ## Appendix — measured reality
 
 | Claim | Measured | What changed |

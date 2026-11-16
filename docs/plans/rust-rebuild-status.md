@@ -11,7 +11,7 @@ Baseline: Tauri v1.5.2 (commit d25adb1). Rebuild workspace: `rust/` (not yet cre
 | W1 | workspace scaffold, doc model, engine, capture port | KDE-approved by rostad 2026-11-16 |
 | W2 | editor tool parity | KDE-approved by rostad 2026-11-16; UI polish pass landed (sliders) |
 | W3 | shell parity (tray/hotkeys/widget/settings) | complete on pn53 (216 tests); KDE live pass pending rostad |
-| W4 | recording, scrolling, OCR, timelapse | pending |
+| W4 | recording, scrolling, OCR, timelapse | in progress — W4a (recording) + W4c (OCR/timelapse/upload/watermark) dispatched |
 | W5 | CLI/JSON/MCP automation + WASM web | pending |
 | W6 | packaging, docs, suite dossier | pending |
 
@@ -292,6 +292,19 @@ Baseline: Tauri v1.5.2 (commit d25adb1). Rebuild workspace: `rust/` (not yet cre
 - Remaining W3 sign-off: rostad KDE live pass — tray click-to-restore,
   Print/Shift+Print portal consent, widget drag/transparency, hide-to-tray,
   settings persistence across restart.
+
+### 2026-11-16 — wake #18: W4 launched (recording + OCR/timelapse/upload/watermark)
+- Fresh check: W3 complete on pn53 (d86b845), KDE live pass still pending rostad.
+- W4 contracts locked in the plan (recording API, io::ocr/upload,
+  capture::timelapse, compose::watermark). Loaded the proven recording recipe
+  (tauri-desktop-app › recording.md) — all cost-real-time gotchas pasted into
+  the W4a brief (target.object prop bug, registry wait, no SPA_PARAM_Buffers on
+  consumer, VideoSize range, BGRx stride, teardown deadlock, offline probe).
+- Dispatched W4a (recording: ScreenCast→PipeWire→ffmpeg, MP4/GIF, region crop,
+  pause/resume, audio sources; offline Video/Source probe first) + W4c
+  (OCR tesseract subprocess, upload open_url, timelapse thread, watermark).
+- W4b (scrolling) follows W4a's ScreenCast source; W4d (UI: Rec live, recording
+  controls, OCR panel, HUD) after backends. Trim question for rostad at W4d.
 
 ## Appendix — measured reality
 

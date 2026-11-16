@@ -45,4 +45,7 @@ feature) per live Cargo.toml; bindgen needs BINDGEN_EXTRA_CLANG_ARGS (skill reci
   log as gap. Ask rostad if ambiguous at W4d.
 
 ## Appendix — measured reality
-(append rows as assumptions break)
+
+| Claim | Measured | What changed |
+|---|---|---|
+| pipewire 0.10 binds out of the box on pn53 | libspa-sys build.rs panicked: clang can't find stdbool.h (no clang driver installed, only libclang) | rust/.cargo/config.toml [env] BINDGEN_EXTRA_CLANG_ARGS="-I/usr/lib/gcc/x86_64-linux-gnu/15/include" — recording scaffold now compiles. Path is pn53-specific (gcc 15); CI ubuntu-latest has a clang driver so the extra -I is harmless there. W4a children inherit a compiling tree. |

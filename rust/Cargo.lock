@@ -3944,6 +3944,8 @@ dependencies = [
  "egui",
  "image",
  "snagcraft-engine",
+ "snagcraft-io",
+ "snagcraft-platform",
  "snagcraft-ui-egui",
  "tracing",
  "tracing-subscriber",
@@ -4108,6 +4110,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "snagcraft-recording"
+version = "0.1.0"
+dependencies = [
+ "ashpd",
+ "pipewire",
+ "snagcraft-geom",
+ "snagcraft-raster",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "snagcraft-text"
 version = "0.1.0"
 dependencies = [
@@ -4132,6 +4147,7 @@ dependencies = [
  "snagcraft-doc",
  "snagcraft-engine",
  "snagcraft-geom",
+ "snagcraft-platform",
  "snagcraft-raster",
  "tracing",
 ]

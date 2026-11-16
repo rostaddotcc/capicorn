@@ -49,6 +49,9 @@ pub struct Session {
     /// Persisted preferences, read once at startup. The engine never writes the
     /// file — persistence is the app's job after `settings.set` is dispatched.
     settings: Settings,
+    /// Running timelapse (W4c): handle + event channel, drained by timelapse.poll.
+    timelapse: Option<snagcraft_capture::timelapse::TimelapseHandle>,
+    timelapse_rx: Option<std::sync::mpsc::Receiver<snagcraft_capture::timelapse::TimelapseEvent>>,
 }
 
 impl Default for Session {
@@ -73,6 +76,8 @@ impl Session {
             history: History::default(),
             faces,
             settings: snagcraft_io::settings::load(),
+            timelapse: None,
+            timelapse_rx: None,
         }
     }
 
@@ -306,10 +311,106 @@ fn cmd_doc_export(s: &mut Session, p: Value) -> Result<Value, CommandError> {
     let path = p_str(&p, "path")?;
     let format = p_format(&p)?;
     let quality = p_quality(&p);
-    let img = s.render()?;
+    let mut img = s.render()?;
+    if let Some(w) = p.get("watermark").filter(|w| w.is_object()) {
+        let text = w.get("text").and_then(Value::as_str).unwrap_or("");
+        if !text.trim().is_empty() {
+            let opacity = w.get("opacity").and_then(Value::as_f64).unwrap_or(0.45) as f32;
+            let size = w.get("size").and_then(Value::as_f64).unwrap_or(24.0) as f32;
+            let corner = match w
+                .get("corner")
+                .and_then(Value::as_str)
+                .unwrap_or("bottom-right")
+            {
+                "bottom-left" => snagcraft_compose::Corner::BottomLeft,
+                "top-right" => snagcraft_compose::Corner::TopRight,
+                "top-left" => snagcraft_compose::Corner::TopLeft,
+                _ => snagcraft_compose::Corner::BottomRight,
+            };
+            let font = s.faces.first().map(|(_, _, f)| f);
+            snagcraft_compose::apply_watermark(&mut img, text, opacity, corner, font, size);
+        }
+    }
     snagcraft_io::save(&img, std::path::Path::new(path), format, quality)
         .map_err(|e| CommandError::Io(e.to_string()))?;
     Ok(json!({"exported": path}))
+}
+
+fn cmd_ocr_available(_s: &mut Session, _p: Value) -> Result<Value, CommandError> {
+    Ok(json!({"available": snagcraft_io::ocr::ocr_available()}))
+}
+
+fn cmd_ocr_languages(_s: &mut Session, _p: Value) -> Result<Value, CommandError> {
+    Ok(json!({"languages": snagcraft_io::ocr::ocr_languages()}))
+}
+
+fn cmd_ocr_run(s: &mut Session, p: Value) -> Result<Value, CommandError> {
+    let lang = p.get("lang").and_then(Value::as_str).unwrap_or("eng");
+    let img = s.render()?;
+    let text =
+        snagcraft_io::ocr::run_ocr(&img, lang).map_err(|e| CommandError::Io(e.to_string()))?;
+    Ok(json!({"text": text}))
+}
+
+fn cmd_upload_open(_s: &mut Session, p: Value) -> Result<Value, CommandError> {
+    let url = p_str(&p, "url")?;
+    snagcraft_io::upload::open_url(url).map_err(|e| CommandError::Io(e.to_string()))?;
+    Ok(json!({"opened": url}))
+}
+
+fn cmd_timelapse_start(s: &mut Session, p: Value) -> Result<Value, CommandError> {
+    if s.timelapse.is_some() {
+        return Err(CommandError::InvalidParams(
+            "timelapse already running".into(),
+        ));
+    }
+    let period = p.get("period_secs").and_then(Value::as_u64).unwrap_or(30) as u32;
+    let count = p.get("count").and_then(Value::as_u64).map(|c| c as u32);
+    let dir = p_str(&p, "dir")?;
+    let (tx, rx) = std::sync::mpsc::channel();
+    let config = snagcraft_capture::timelapse::TimelapseConfig {
+        period_secs: period,
+        count,
+        dir: std::path::PathBuf::from(dir),
+    };
+    let handle = snagcraft_capture::timelapse::spawn_timelapse(config, tx)
+        .map_err(|e| CommandError::Capture(e.to_string()))?;
+    s.timelapse = Some(handle);
+    s.timelapse_rx = Some(rx);
+    Ok(json!({"started": true}))
+}
+
+fn cmd_timelapse_stop(s: &mut Session, _p: Value) -> Result<Value, CommandError> {
+    match &s.timelapse {
+        Some(h) => {
+            h.stop();
+            Ok(json!({"stopped": true}))
+        }
+        None => Ok(json!({"stopped": false})),
+    }
+}
+
+fn cmd_timelapse_poll(s: &mut Session, _p: Value) -> Result<Value, CommandError> {
+    let mut events = Vec::new();
+    if let Some(rx) = &s.timelapse_rx {
+        while let Ok(ev) = rx.try_recv() {
+            let j = match ev {
+                snagcraft_capture::timelapse::TimelapseEvent::Frame { path, index } => {
+                    json!({"type": "frame", "path": path.to_string_lossy(), "index": index})
+                }
+                snagcraft_capture::timelapse::TimelapseEvent::Done { frames } => {
+                    s.timelapse = None;
+                    json!({"type": "done", "frames": frames})
+                }
+                snagcraft_capture::timelapse::TimelapseEvent::Failed(msg) => {
+                    s.timelapse = None;
+                    json!({"type": "failed", "message": msg})
+                }
+            };
+            events.push(j);
+        }
+    }
+    Ok(json!({"events": events, "running": s.timelapse.is_some()}))
 }
 
 fn cmd_edit_add(s: &mut Session, p: Value) -> Result<Value, CommandError> {
@@ -651,6 +752,48 @@ pub fn registry() -> Vec<CommandSpec> {
             run: cmd_edit_reorder,
         },
         CommandSpec {
+            id: "ocr.available",
+            label: "OCR availability",
+            params_doc: "{}",
+            run: cmd_ocr_available,
+        },
+        CommandSpec {
+            id: "ocr.languages",
+            label: "OCR languages",
+            params_doc: "{}",
+            run: cmd_ocr_languages,
+        },
+        CommandSpec {
+            id: "ocr.run",
+            label: "Grab text from the current image",
+            params_doc: "{lang?}",
+            run: cmd_ocr_run,
+        },
+        CommandSpec {
+            id: "upload.open",
+            label: "Open an http(s) URL in the browser",
+            params_doc: "{url}",
+            run: cmd_upload_open,
+        },
+        CommandSpec {
+            id: "timelapse.start",
+            label: "Start interval capture",
+            params_doc: "{period_secs, count?, dir}",
+            run: cmd_timelapse_start,
+        },
+        CommandSpec {
+            id: "timelapse.stop",
+            label: "Stop interval capture",
+            params_doc: "{}",
+            run: cmd_timelapse_stop,
+        },
+        CommandSpec {
+            id: "timelapse.poll",
+            label: "Drain timelapse events",
+            params_doc: "{}",
+            run: cmd_timelapse_poll,
+        },
+        CommandSpec {
             id: "edit.undo",
             label: "Undo",
             params_doc: "{}",
@@ -942,6 +1085,87 @@ mod tests {
         let _ = s.dispatch("clipboard.copy", json!({}));
         let _ = s.dispatch("clipboard.paste", json!({}));
         assert!(s.doc().is_some());
+    }
+
+    #[test]
+    fn ocr_and_upload_commands() {
+        let mut s = Session::new();
+        let a = s.dispatch("ocr.available", json!({})).unwrap();
+        assert_eq!(a["available"], true, "tesseract installed on this host");
+        let l = s.dispatch("ocr.languages", json!({})).unwrap();
+        assert!(l["languages"].as_array().is_some());
+        // scheme guard: file:// must be rejected before any spawn
+        assert!(
+            s.dispatch("upload.open", json!({"url": "file:///etc/passwd"}))
+                .is_err()
+        );
+        assert!(
+            s.dispatch("upload.open", json!({"url": "javascript:alert(1)"}))
+                .is_err()
+        );
+        assert!(s.dispatch("upload.open", json!({})).is_err());
+    }
+
+    #[test]
+    fn timelapse_commands_headless() {
+        let mut s = Session::new();
+        let stop = s.dispatch("timelapse.stop", json!({})).unwrap();
+        assert_eq!(stop["stopped"], false);
+        let poll = s.dispatch("timelapse.poll", json!({})).unwrap();
+        assert_eq!(poll["running"], false);
+        assert!(
+            s.dispatch("timelapse.start", json!({"period_secs": 5}))
+                .is_err()
+        ); // missing dir
+        // double-start guard: start once in a temp dir (portal capture will fail
+        // headless, but the spawn itself must succeed), then reject a second.
+        let dir = std::env::temp_dir().join("snagcraft-tl-test");
+        let ok = s.dispatch(
+            "timelapse.start",
+            json!({"period_secs": 3600, "dir": dir.to_str().unwrap()}),
+        );
+        if ok.is_ok() {
+            assert!(
+                s.dispatch(
+                    "timelapse.start",
+                    json!({"period_secs": 3600, "dir": dir.to_str().unwrap()})
+                )
+                .is_err()
+            );
+            s.dispatch("timelapse.stop", json!({})).unwrap();
+        }
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn export_watermark_changes_corner_pixels() {
+        let dir = std::env::temp_dir().join("snagcraft-wm-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let plain = dir.join("plain.png");
+        let marked = dir.join("marked.png");
+        let mut s = Session::new();
+        s.dispatch("doc.new", json!({"w": 200, "h": 100})).unwrap();
+        s.dispatch("doc.export", json!({"path": plain.to_str().unwrap()}))
+            .unwrap();
+        s.dispatch("doc.export", json!({"path": marked.to_str().unwrap(),
+            "watermark": {"text": "SnagCraft", "opacity": 0.9, "corner": "bottom-right", "size": 20}})).unwrap();
+        let a = snagcraft_io::open(&plain).unwrap();
+        let b = snagcraft_io::open(&marked).unwrap();
+        let mut diff = 0;
+        for y in 60..100 {
+            for x in 100..200 {
+                if a.get_pixel(x, y) != b.get_pixel(x, y) {
+                    diff += 1;
+                }
+            }
+        }
+        assert!(
+            diff > 20,
+            "watermark must alter the bottom-right region: {diff} px"
+        );
+        // top-left untouched
+        assert_eq!(a.get_pixel(5, 5), b.get_pixel(5, 5));
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

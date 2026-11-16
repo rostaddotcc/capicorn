@@ -328,6 +328,18 @@ Baseline: Tauri v1.5.2 (commit d25adb1). Rebuild workspace: `rust/` (not yet cre
 - Next: W4a/W4b land → verify (offline probes) → engine command wiring
   (record/ocr/upload/timelapse/scroll + watermark export params) → W4d UI.
 
+### 2026-11-16 — wake #21: W4c engine wiring landed
+- Parent wired 7 new engine commands (31 total): ocr.available/languages/run
+  (renders composite → tesseract), upload.open (scheme-guarded), timelapse.
+  start/stop/poll (handle + event channel in Session, drained by poll), and
+  doc.export watermark params {text,opacity,corner,size} → compose::apply_watermark.
+- 3 new headless-safe tests (OCR availability + scheme guard, timelapse
+  double-start/stop/missing-dir, watermark corner-pixel diff) — 22 engine tests
+  green, clippy clean.
+- W4a recording: 8 modules / 3084 lines written (capture.rs 802 PipeWire half,
+  probe.rs 536 offline Video/Source probe, portal/session/audio/ffmpeg/crop) —
+  still running. W4b scrolling: reading phase.
+
 ## Appendix — measured reality
 
 | Claim | Measured | What changed |

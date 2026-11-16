@@ -1,3 +1,4 @@
-/target**/tests/snapshots/**/*.diff.png
-**/tests/snapshots/**/*.old.png
-**/tests/snapshots/**/*.new.png
+/target
+*.diff.png
+*.old.png
+*.new.png

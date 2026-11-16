@@ -48,15 +48,15 @@ Effects are applied to the **image layer at export resolution** (scene px × exp
 | Feature | Evidence | rust |
 |---|---|---|
 | Three modes `gaussian` / `pixelate` / `blackout`, persisted in `snagcraft:blur-mode` | `blur.ts:18`; `app.ts:117` (`BlurMode`), `:421` (key), `:570` (fallback to default) | pending — mode enum modeled `rust/crates/doc/src/lib.rs:31-35` |
-| Gaussian via StackBlur convolution (same result on every WebEngine) | `blur.ts:6-11`, `gaussianBlur` `:174` | W0 spike |
-| Pixelate — block-size mosaic | `blur.ts:219`, block size shares the radius setting `:19` | pending |
-| Blackout — solid ink `#111827`, no intensity slider | `blur.ts:32` (`BLACKOUT_INK`), `blackout` `:244`; UI `app.ts:3314` (`usesIntensity = blurMode !== "blackout"`), dimmed slider `app.ts:3480` | pending |
-| Radius/block size 2–60 scene px, **default 12**, clamped | `blur.ts:20-22`, `clampBlurRadius` `:49` | pending |
-| **Redaction honesty:** any blur under `SECURE_BLUR_MIN = 10` is raised to 10 so soft settings cannot leave legible text | `blur.ts:24-25` | pending |
+| Gaussian via StackBlur convolution (same result on every WebEngine) | `blur.ts:6-11`, `gaussianBlur` `:174` | W2 |
+| Pixelate — block-size mosaic | `blur.ts:219`, block size shares the radius setting `:19` | W2 |
+| Blackout — solid ink `#111827`, no intensity slider | `blur.ts:32` (`BLACKOUT_INK`), `blackout` `:244`; UI `app.ts:3314` (`usesIntensity = blurMode !== "blackout"`), dimmed slider `app.ts:3480` | W2 |
+| Radius/block size 2–60 scene px, **default 12**, clamped | `blur.ts:20-22`, `clampBlurRadius` `:49` | W2 |
+| **Redaction honesty:** any blur under `SECURE_BLUR_MIN = 10` is raised to 10 so soft settings cannot leave legible text | `blur.ts:24-25` | W2 |
 | Live dashed outline while dragging; effect baked in on commit through `applyBlurRegion` | `blur.ts:258`, `BlurRegion` `tools.ts:54-104` | pending |
-| Spotlight dim colour `rgba(8, 12, 18, 0.68)` | `blur.ts:30`, `spotlight()` `:283` | pending |
-| Highlighter tint alpha **0.36** | `blur.ts:28` (`HIGHLIGHTER_ALPHA`), `highlighter()` `:311` | pending |
-| Region keeps mode + radius through undo/redo | `BlurRegion` opts `tools.ts:69`; preset round-trip `app.ts:742-743` | pending |
+| Spotlight dim colour `rgba(8, 12, 18, 0.68)` | `blur.ts:30`, `spotlight()` `:283` | W2 |
+| Highlighter tint alpha **0.36** | `blur.ts:28` (`HIGHLIGHTER_ALPHA`), `highlighter()` `:311` | W2 |
+| Region keeps mode + radius through undo/redo | `BlurRegion` opts `tools.ts:69`; preset round-trip `app.ts:742-743` | W2 |
 
 ---
 
@@ -88,9 +88,9 @@ Effects are applied to the **image layer at export resolution** (scene px × exp
 
 | Feature | Evidence | rust |
 |---|---|---|
-| Undo/redo of flattened canvas states, cap **80** entries | `editor.ts:115` (`MAX_HISTORY = 80`), stack :315, cursor :547 | W0 spike |
+| Undo/redo of flattened canvas states, cap **80** entries | `editor.ts:115` (`MAX_HISTORY = 80`), stack :315, cursor :547 | W2 |
 | `Ctrl+Z` undo · `Ctrl+Shift+Z` / `Ctrl+Y` redo | `app.ts:5194-5202`; in-canvas handler `editor.ts:1261-1276` | W0 spike |
-| History reset on new document | `editor.ts:404` | pending |
+| History reset on new document | `editor.ts:404` | W1 |
 | Crop re-sizes history states so undo can restore any earlier canvas size | `editor.ts:254`, :997 | pending |
 | Text caption commit on settle (not per keystroke) | `editor.ts:1178-1179`, :435-436 | pending |
 | Editor-only decorations (crop shading) excluded from history/export | `editor.ts:245`, :1042 | pending |

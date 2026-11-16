@@ -340,7 +340,14 @@ fn draw_shadow<F: Font>(
 
     let mut alpha: Vec<u8> = mask.pixels().map(|p| p.0[3]).collect();
     let radius = usize::try_from(shadow.blur).unwrap_or(usize::MAX).min(60);
-    box_blur_alpha(&mut alpha, mw, mh, radius);
+    // Three box passes ≈ gaussian (live canvas shadowBlur is gaussian-ish);
+    // one pass reads as a hard halo. Same total spread, softer falloff.
+    if radius > 0 {
+        let pass = (radius / 3).max(1);
+        for _ in 0..3 {
+            box_blur_alpha(&mut alpha, mw, mh, pass);
+        }
+    }
 
     let tint = shadow.color;
     for y in 0..mh {
@@ -762,12 +769,28 @@ fn highlighter_tint(img: &mut Surface, rect: Rect, color: Rgba) {
         return;
     }
     let ink = [color.r, color.g, color.b].map(f32::from);
+    // Live rounds the band corners: radius = min(8, min(w,h)/4); <=0.5 → hard
+    // rect (blur.ts:325-333).
+    let radius = 8.0f32.min(rect.w.min(rect.h) / 4.0);
+    let rounded = radius > 0.5;
+    let (cx, cy) = (rect.x + rect.w / 2.0, rect.y + rect.h / 2.0);
+    let (hw, hh) = (rect.w / 2.0, rect.h / 2.0);
     for y in y0..y1 {
         for x in x0..x1 {
+            let cov = if rounded {
+                (0.5 - round_rect_sdf(x as f32 + 0.5, y as f32 + 0.5, cx, cy, hw, hh, radius))
+                    .clamp(0.0, 1.0)
+            } else {
+                1.0
+            };
+            if cov <= 0.0 {
+                continue;
+            }
+            let a_eff = a * cov;
             let dst = img.get_pixel_mut(x, y);
             for c in 0..3 {
                 let d = f32::from(dst.0[c]);
-                dst.0[c] = (d * (1.0 - a + a * ink[c] / 255.0))
+                dst.0[c] = (d * (1.0 - a_eff + a_eff * ink[c] / 255.0))
                     .round()
                     .clamp(0.0, 255.0) as u8;
             }
@@ -794,18 +817,30 @@ fn dim_outside(img: &mut Surface, rect: Rect, dim: f32) {
     let ink = Rgba::new(SPOTLIGHT_INK[0], SPOTLIGHT_INK[1], SPOTLIGHT_INK[2], alpha);
     let (w, h) = img.dimensions();
     let hole = rect.clamp_to(w, h);
+    // Live rounds the hole corners: radius = min(12, min(w,h)/6) (blur.ts:297).
+    let radius = 12.0f32.min(rect.w.min(rect.h) / 6.0).max(0.0);
+    let (cx, cy) = (rect.x + rect.w / 2.0, rect.y + rect.h / 2.0);
+    let (hw, hh) = (rect.w / 2.0, rect.h / 2.0);
     for y in 0..h {
         for x in 0..w {
+            let mut cov = 0.0f32;
             if let Some((x0, y0, x1, y1)) = hole
                 && x >= x0
                 && x < x1
                 && y >= y0
                 && y < y1
             {
+                cov = (0.5
+                    - round_rect_sdf(x as f32 + 0.5, y as f32 + 0.5, cx, cy, hw, hh, radius))
+                .clamp(0.0, 1.0);
+            }
+            let eff = (f32::from(alpha) * (1.0 - cov)).round() as u8;
+            if eff == 0 {
                 continue;
             }
+            let ink_eff = Rgba::new(ink.r, ink.g, ink.b, eff);
             let dst = Rgba::from_array(img.get_pixel(x, y).0);
-            img.get_pixel_mut(x, y).0 = ink.src_over(dst).to_array();
+            img.get_pixel_mut(x, y).0 = ink_eff.src_over(dst).to_array();
         }
     }
 }
@@ -1720,6 +1755,48 @@ mod tests {
     }
 
     // --------------------------------------------------------------- shadows
+
+    #[test]
+    fn highlighter_corners_are_rounded_live_radius() {
+        let mut doc = white_doc();
+        doc.add(AnnotObject::Highlighter {
+            id: 0,
+            rect: Rect::new(10.0, 10.0, 40.0, 20.0),
+            color: Rgba::new(255, 255, 0, 255),
+        });
+        let out = composite::<ab_glyph::FontVec>(&doc, None);
+        // radius = min(8, 20/4) = 5: the very corner pixel is (mostly) outside
+        // the rounded band, the top-edge middle is fully inside.
+        let corner = px(&out, 10, 10);
+        let edge = px(&out, 30, 10);
+        assert!(
+            corner[2] > edge[2] + 20,
+            "corner less tinted than edge: corner {corner:?} edge {edge:?}"
+        );
+        assert!(is_white(px(&out, 5, 5)), "outside untouched");
+    }
+
+    #[test]
+    fn spotlight_hole_corners_are_rounded_live_radius() {
+        let mut doc = white_doc();
+        doc.add(AnnotObject::Spotlight {
+            id: 0,
+            rect: Rect::new(16.0, 16.0, 32.0, 32.0),
+            dim: 1.0,
+        });
+        let out = composite::<ab_glyph::FontVec>(&doc, None);
+        // radius = min(12, 32/6) ≈ 5.3: pixel (17,17) sits on the rounded
+        // corner arc (partial coverage), hole centre untouched, far outside
+        // fully dimmed. The exact corner tip (16,16) is outside the rounding.
+        let corner = px(&out, 17, 17);
+        let inside = px(&out, 32, 32);
+        let outside = px(&out, 2, 2);
+        assert_eq!(inside, [255, 255, 255, 255], "hole centre untouched");
+        assert!(
+            corner[0] > outside[0] + 10 && corner[0] < 250,
+            "corner partially dimmed: {corner:?} vs outside {outside:?}"
+        );
+    }
 
     #[test]
     fn shadow_render_is_offset_tinted_and_behind_the_object() {

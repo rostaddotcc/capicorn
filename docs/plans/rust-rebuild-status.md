@@ -313,6 +313,21 @@ Baseline: Tauri v1.5.2 (commit d25adb1). Rebuild workspace: `rust/` (not yet cre
 - W4b (scrolling) follows W4a's ScreenCast source; W4d (UI: Rec live, recording
   controls, OCR panel, HUD) after backends. Trim question for rostad at W4d.
 
+### 2026-11-16 — wake #20: W4c verified + committed; W4b dispatched
+- W4c formally completed (transcript final line checked): parent-verified
+  16 io + 44 capture + 42 compose tests = 103 (matches child report), clippy
+  clean. Committed 9e7fbfe: io::ocr (tesseract, injection-safe lang, OCR-on-
+  synthetic test), io::upload (http(s)-only), capture::timelapse, compose
+  watermark (export-only by design).
+- W3b straggler widget polish verified + committed f4ff0d3 (wake #19).
+- Dispatched W4b scrolling (deleg_dab56bfb): pure row-signature + MAD aligner
+  + vertical stitcher with synthetic-frame recovery tests first, ScreenCast
+  HIDDEN-cursor source with the shared consumer traps; capture/Cargo.toml
+  pipewire dep approved. W4a recording still running (modules written:
+  lib 593 + audio 172 + crop 248 + ffmpeg 420).
+- Next: W4a/W4b land → verify (offline probes) → engine command wiring
+  (record/ocr/upload/timelapse/scroll + watermark export params) → W4d UI.
+
 ## Appendix — measured reality
 
 | Claim | Measured | What changed |

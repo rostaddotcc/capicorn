@@ -140,6 +140,16 @@ Baseline: Tauri v1.5.2 (commit d25adb1). Rebuild workspace: `rust/` (not yet cre
 - Dispatched full 13-tool UI track (deleg_3ecf00d3): one-row toolbar + contextual
   properties rail + crop/brush/step/callout/magnify/bucket UX + quick font bar.
 - Next: T2 + UI land → full gates → vision contact sheet → AppImage → tick parity.
+- W2a batch closed: T2 final artifacts parent-verified (algo 22 + compose 34 tests,
+  engine 11 re-run against final compose — all green, clippy clean, layers legal).
+  Accepted deviations (cosmetic, logged for W2 polish/W6 gaps): spotlight hole +
+  highlighter are hard rects (live rounds corners); shadow blur = one box pass
+  (live canvas shadowBlur sigma). Arrow head uses the EXACT live formula
+  (thickness=w*2, headLen=max(16,thickness*1.7), headHalf=max(9,thickness)).
+  T3 contract conflict resolved well: ab_glyph FontVec is NOT Clone →
+  resolve_shared/FontArc added as the cheap path (engine already uses it).
+  T1 added sanitize() on add() + format::load (shadow clamps, brush point cap,
+  non-finite point skip) — extra hostile-input hardening beyond contract.
 
 ## Appendix — measured reality
 

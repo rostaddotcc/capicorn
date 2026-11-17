@@ -677,6 +677,18 @@ live pass + gates (trim/relicense/cutover/external post). NO releases published.
 - gaps.md B1 → CLOSED; parity audio row → W4 + W13. Remaining pending = 1
   (Trim, rostad-gated). No release re-publish (pre-release assets are W12-era;
   a refresh is rostad's call). Awaiting KDE live pass + gates.
+- Fresh W13 artifacts built from the committed state (df3b20e, pushed):
+  AppImage 13.9MB launch-tested (exit 124, benign locked-GNOME noise only) +
+  deb 10.3MB, in rust/dist/w13/. CLI smoke: 46 commands, record.start doc
+  shows system_audio. Delivered the AppImage to rostad.
+- **B5 audit (same wake):** item 1 (crop re-grab) is NOT a gap — the live crop
+  overlay is painter-only (selectable/evented false), the "handles" rail hint
+  is prose. Items 2–3 CONFIRMED: no double-click text edit / select-mode resize
+  (live fabric Textbox), no nib preview circle (live app.ts:433/993/3163 —
+  parity row 52 W2 tick overclaimed, corrected). New nuance: live plain-click
+  (<8px MIN_DRAG) resets the crop; rebuild leaves a 0×0 frame. **W14 scope:
+  nib preview + double-click text edit (+resize) + crop click semantics.**
+  The loop continues — editor interaction parity is the last open cluster.
 
 ## Appendix — measured reality
 

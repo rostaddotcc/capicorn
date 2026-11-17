@@ -183,6 +183,28 @@ request construction, response handling, error surfacing).
 
 ### B5 — W2 cosmetic residuals (logged for polish, not re-audited in W6)
 
+> **W13 audit (2026-11-17): re-verified against live v1.5.3 code.**
+> - Item 1 (crop frame re-grab/move): **NOT A GAP — closed.** The live crop
+>   overlay is painter-only (`editor.ts:1654-1672`: frame `selectable:false,
+>   evented:false`; every drag draws a fresh box, `tools.ts:1466-1509`). The
+>   "Drag the handles" rail hint is live prose, not live behavior. The rebuild
+>   matches (W12 verified).
+> - Item 2 (inline callout/text edit): **CONFIRMED gap.** Live Select mode
+>   re-enables committed captions (`tools.ts:1163-1170` settle comment →
+>   `Editor.applyInteractivity()`); fabric Textbox double-click edits in place
+>   and stays width-resizable. Rebuild Select = click-select + drag-move only,
+>   no double-click path, no resize handles.
+> - Item 3 (nib preview): **CONFIRMED gap.** The live rail shows a 48px preview
+>   box with an ink-coloured dot mapped 2–44 px + a "N px" label for the brush
+>   tool (`app.ts:433-435`, `:993-995`, `:3163`). The rebuild has no preview
+>   widget — parity row 52's W2 tick overclaimed this sub-feature (corrected).
+> - New crop nuance found: a live plain click (< 8 px, `MIN_DRAG` `tools.ts:43`)
+>   resets the crop (`setCrop(null)`, `tools.ts:1504-1507`); the rebuild leaves
+>   a 0×0 pending frame and gates Enter at 2 px. Align in W14.
+>
+> **W14 scope:** nib preview widget, double-click text edit (+ select-mode
+> resize handles), crop plain-click semantics.
+
 - **What:** (1) dragging inside an existing crop frame starts a *new* crop
   instead of re-grabbing/moving the frame; (2) existing callouts cannot be edited
   inline after creation; (3) no brush nib cursor preview.

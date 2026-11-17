@@ -4406,7 +4406,6 @@ version = "0.1.0"
 dependencies = [
  "ashpd",
  "pipewire",
- "snagcraft-geom",
  "thiserror 2.0.21",
  "tokio",
  "tracing",

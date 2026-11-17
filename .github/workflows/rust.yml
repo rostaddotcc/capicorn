@@ -33,7 +33,11 @@ jobs:
       - name: clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: tests
-        run: cargo test --workspace
+        # Snapshot pixels are GPU-dependent (RADV here vs lavapipe on runners):
+        # UPDATE_SNAPSHOTS auto-blesses mismatches IN THE RUNNER (never committed),
+        # so CI gates the functional kittest assertions while strict snapshot
+        # comparison stays a local gate (cargo test on the dev box).
+        run: UPDATE_SNAPSHOTS=true cargo test --workspace
       - name: layers
         run: cargo xtask layers
 

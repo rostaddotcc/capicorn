@@ -11,7 +11,7 @@ Baseline: Tauri v1.5.2 (commit d25adb1). Rebuild workspace: `rust/` (not yet cre
 | W1 | workspace scaffold, doc model, engine, capture port | KDE-approved by rostad 2026-11-16 |
 | W2 | editor tool parity | KDE-approved by rostad 2026-11-16; UI polish pass landed (sliders) |
 | W3 | shell parity (tray/hotkeys/widget/settings) | complete on pn53 (216 tests); KDE live pass pending rostad |
-| W4 | recording, scrolling, OCR, timelapse | backends + engine landed (41 commands); W4d UI in flight; CI green |
+| W4 | recording, scrolling, OCR, timelapse | complete on pn53 (363 tests); KDE live pass pending; gaps logged below |
 | W5 | CLI/JSON/MCP automation + WASM web | pending |
 | W6 | packaging, docs, suite dossier | pending |
 
@@ -371,6 +371,28 @@ Baseline: Tauri v1.5.2 (commit d25adb1). Rebuild workspace: `rust/` (not yet cre
   detached child on a helper thread (live blocked on .status()); timelapse
   frames 5-digit padded so ffmpeg glob order = frame order. Unused raster dep
   in recording manifest already dropped by parent.
+
+### 2026-11-17 — wake #32: W4 integrated end-to-end
+- W4d completed (1131s): live widget Rec (V widget-scoped / Ctrl+Alt+V main),
+  recording HUD + region/format/audio options, scrolling overlay → open-in-
+  editor, OCR window + copy-text, timelapse dialog + HUD, watermark export
+  (persisted), autosave-on-capture dedup. Widget recording layout fixed per
+  parent vision QA (filled red Stop square + single Pause + red dot + ×).
+- Parent verification: 40 ui-egui/app tests (12 w4_live gates), **363 tests /
+  0 failed / 5 ignored workspace-wide**, clippy/fmt/layers green. Release +
+  AppImage (13.7 MB) launch-tested (exit 124), CLI 41 commands.
+- Watermark/upload persistence closed both sides (engine fields c0a1bab +
+  SettingsView wiring).
+- Parity: 28 W4 rows ticked HONESTLY — 9 bulk-ticked rows reverted to pending
+  after audit (overclaim catch): OCR lang-select/busy modal, timelapse ffmpeg
+  video assembly (make_timelapse), Ctrl+. stop hotkey, shrunk countdown HUD,
+  upload POST-to-endpoint flow (curl) — current upload = open_url only.
+- W4 remaining gaps (W5/W6 backlog or rostad priority): recording trim
+  (spec lists, live lacks — asked rostad), audio mic+monitor mixing, Recent
+  rail video thumbnails, copy-diagnostics button, the 9 reverted rows above.
+- Delivered W4 AppImage for rostad's KDE live pass: Rec → portal consent →
+  record → stop → file; scrolling capture; OCR; timelapse. Portal legs need
+  his unlocked session (pn53 locked; offline probes proven).
 
 ## Appendix — measured reality
 

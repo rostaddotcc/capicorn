@@ -76,7 +76,7 @@ Effects are applied to the **image layer at export resolution** (scene px × exp
 | **Separate recording folder** (`splitFolders`, default off) | `settings.ts:141`, `settings.ts:919-932`, `getRecDir` `app.ts:4439` | pending |
 | **Copy to clipboard as PNG** (`Ctrl+C`) | `app.ts:4422-4432`, `copy_png` `commands.rs:299-303`, `clipboard.rs:6` | W2 |
 | **Paste** an image from the clipboard into the editor (`Ctrl+V`, `paste` event, first `image/*` item) | `app.ts:5081-5094` | W2 |
-| **Watermark on export** — text, opacity 2–100 (default 45 %), corner bottom-right/bottom-left/top-right/top-left | `watermark.ts:13-49` (`DEFAULT_WATERMARK` :28-33 = opacity 0.45, bottom-right), draw :62-90 (Inter 600), UI `settings.ts:972-984` | pending |
+| **Watermark on export** — text, opacity 2–100 (default 45 %), corner bottom-right/bottom-left/top-right/top-left | `watermark.ts:13-49` (`DEFAULT_WATERMARK` :28-33 = opacity 0.45, bottom-right), draw :62-90 (Inter 600), UI `settings.ts:972-984` | W4 |
 | **New blank canvas** (`Ctrl+N`) — 8 presets (Default 1280×800, HD, Full HD, QHD, 4K UHD, Square 1080², Story 1080×1920, Small 800×600), white or transparent, dims clamped 16–8192 | `app.ts:4939-4975` (`NEW_PRESETS` :4941-4950, `clampDim` :4952, `blankCanvasDataUrl` :4956-4969, `newCanvas` :4962) | pending |
 | **Resize** the canvas (dialog opened from the toolbar, closes on Esc) | `openResize` `app.ts:3622`, popover `:5118-5121` | pending |
 | **Recent strip** — newest-first, in-session cap `RECENT_LIMIT = 12`, plus a folder scan of the save (and recording) folder with thumbnails; clicking reads from disk, recordings open in the OS player | `app.ts:672` (`RECENT_LIMIT`), `refreshRecentFromFolder` `:3946-3980`, `list_folder_media` `commands.rs:386-429`, `open_path` `commands.rs:503-532` | pending |
@@ -103,8 +103,8 @@ Effects are applied to the **image layer at export resolution** (scene px × exp
 | Feature | Evidence | rust |
 |---|---|---|
 | **Floating widget** — frameless always-on-top window, two states: folded tab **58×74**, expanded pill **292×50** (window 304×60) | `windows.rs:186-260` (sizes doc :205-213, `WIDGET_LABEL` :203, `build_widget` :228, always-on-top :259), `widget.css` | W3 |
-| Widget buttons: Full, Region, **Rec** (red dot → Stop square mid-take), fold, close, drag grip; `Rec` tooltip "Record the screen (V)" | `widget-main.ts:9-27` (invoke modes :26-27), buttons :210-245, rec icon :104-105, tip :226 | pending |
-| Widget `V` shortcut → recording; mirrors `recording-state` broadcast from any window | `widget-main.ts:412-416`, tip :226 | pending |
+| Widget buttons: Full, Region, **Rec** (red dot → Stop square mid-take), fold, close, drag grip; `Rec` tooltip "Record the screen (V)" | `widget-main.ts:9-27` (invoke modes :26-27), buttons :210-245, rec icon :104-105, tip :226 | W4 |
+| Widget `V` shortcut → recording; mirrors `recording-state` broadcast from any window | `widget-main.ts:412-416`, tip :226 | W4 (widget V / main Ctrl+Alt+V) |
 | Widget keyboard: Enter/Space activate the tab (a11y) | `widget-main.ts:336-339` | W3 |
 | Widget parks top-right, kept in place across states | `windows.rs:270-287` (`widget_apply_size` :288) | W3 |
 | **Tray**: left/double click restores+focuses main window; menu Show SnagCraft / Capture / Floating widget / ─ / Quit; right-click menu, secondary-activate = middle click | `tray.rs:6-25` (docs), `init_tray` :55-100 (items :56-63, `show_menu_on_left_click(false)` :74, ID_SHOW :76, capture emit :80, quit :85) | W3 |
@@ -128,15 +128,15 @@ Effects are applied to the **image layer at export resolution** (scene px × exp
 
 | Feature | Evidence | rust |
 |---|---|---|
-| Linux pipeline: ScreenCast portal session → PipeWire fd → frame conversion → ffmpeg stdin (two non-shared halves) | `recording.rs:1-18` | pending |
-| Commands: `start_recording(format, dir, filename, region?, audio?, source?)`, `stop_recording`, `is_recording`, `pause_recording`, `resume_recording`, `list_audio_sources` | `recording.rs:19-28` | pending |
-| Containers **MP4** (default) / **GIF**; GIF is silent by construction | `recording.rs:23,31-32`; `RecFormat` `settings.ts:12`; picker `settings.ts:951-955` | pending |
-| **Region recording** — `{left,top,width,height}` in stream px, every frame cropped, ffmpeg sized to even-padded region | `recording.rs:41-44` | pending |
-| **Source** `monitor` (default) vs `window` — narrows what the portal picker offers | `recording.rs:34-35` | pending |
-| **Pause/Resume** — frames dropped consumer-side, session + stream + ffmpeg survive, resume writes the same file; paused time leaves no frames | `recording.rs:37-39`; UI button `app.ts:819`, `recPauseBtn` `:1320`, paused-total bookkeeping `:1472` | pending |
-| **Audio** — mic (`list_audio_sources` id) and/or default output **monitor**, mixed into one AAC track; never an error when empty | `recording.rs:30-32`; pretty-names `:147-200`; UI mic select `settings.ts:855-863`, system-audio switch `settings.ts:866-870`; `list_audio_sources` wiring `app.ts:4453-4461` | pending |
-| `recording-state {recording, path}` events so a window that missed the invoke result resyncs | `recording.rs:46-47`; widget mirrors it `widget-main.ts:412-416` | pending |
-| Elapsed timer pill, repainted every 500 ms while a take runs | `app.ts:2326-2340` | pending |
+| Linux pipeline: ScreenCast portal session → PipeWire fd → frame conversion → ffmpeg stdin (two non-shared halves) | `recording.rs:1-18` | W4 |
+| Commands: `start_recording(format, dir, filename, region?, audio?, source?)`, `stop_recording`, `is_recording`, `pause_recording`, `resume_recording`, `list_audio_sources` | `recording.rs:19-28` | W4 |
+| Containers **MP4** (default) / **GIF**; GIF is silent by construction | `recording.rs:23,31-32`; `RecFormat` `settings.ts:12`; picker `settings.ts:951-955` | W4 |
+| **Region recording** — `{left,top,width,height}` in stream px, every frame cropped, ffmpeg sized to even-padded region | `recording.rs:41-44` | W4 |
+| **Source** `monitor` (default) vs `window` — narrows what the portal picker offers | `recording.rs:34-35` | W4 |
+| **Pause/Resume** — frames dropped consumer-side, session + stream + ffmpeg survive, resume writes the same file; paused time leaves no frames | `recording.rs:37-39`; UI button `app.ts:819`, `recPauseBtn` `:1320`, paused-total bookkeeping `:1472` | W4 |
+| **Audio** — mic (`list_audio_sources` id) and/or default output **monitor**, mixed into one AAC track; never an error when empty | `recording.rs:30-32`; pretty-names `:147-200`; UI mic select `settings.ts:855-863`, system-audio switch `settings.ts:866-870`; `list_audio_sources` wiring `app.ts:4453-4461` | W4 single-source (mixing gap) |
+| `recording-state {recording, path}` events so a window that missed the invoke result resyncs | `recording.rs:46-47`; widget mirrors it `widget-main.ts:412-416` | W4 |
+| Elapsed timer pill, repainted every 500 ms while a take runs | `app.ts:2326-2340` | W4 |
 | Recording thumbnails for the Recent rail | `commands.rs:533-545` (`recording_thumb`) | pending |
 | Copy diagnostics (portal + per-take `.rec.log`) to clipboard | `commands.rs:457-501`, `settings.ts` troubleshooting button `:996-1004` | pending |
 | **Trim** a finished take | *not implemented in v1.5.3* — no trim command or UI (grep `trim` in `recording.rs`/`app.ts` is string-truncation only) | pending |
@@ -148,14 +148,14 @@ Effects are applied to the **image layer at export resolution** (scene px × exp
 
 | Feature | Evidence | rust |
 |---|---|---|
-| Manual-scroll stitching: select region once, cast the monitor, grab the newest frame, align to the last accepted one, append only new rows → one tall PNG. No synthetic input. | `scrolling/mod.rs:1-8` | pending |
-| Commands `scrolling_start(region)`, `scrolling_done() → {dataUrl,width,height}`, `scrolling_cancel()`, `set_click_through(ignore)` | `scrolling/mod.rs:9-14` | pending |
-| `scrolling-status {frames,height,confidence,warning,finished}` events; `finished` fires exactly once | `scrolling/mod.rs:16-21` | pending |
-| Stop rules: 2.5 s idle after scrolling starts, two identical consecutive frames, **40 000 px** height cap, or explicit Done | `scrolling/mod.rs:26-27` | pending |
-| Region is in **physical (stream) px**, not CSS px | `scrolling/mod.rs:23-24` | pending |
-| Teardown order: stitcher thread → PipeWire thread → drop portal `Session` | `scrolling/mod.rs:28-30` | pending |
-| Sub-modules: frame alignment, stitch accumulation, source/cast, capture | `scrolling/align.rs`, `scrolling/stitcher.rs`, `scrolling/source.rs`, `scrolling/cap.rs` (`stitcher.rs:183`) | pending |
-| UI: freeze, select the region, then hand the wheel back to the user; Capture → Scrolling mode | `app.ts:2719`, mode `app.ts:36` | pending |
+| Manual-scroll stitching: select region once, cast the monitor, grab the newest frame, align to the last accepted one, append only new rows → one tall PNG. No synthetic input. | `scrolling/mod.rs:1-8` | W4 |
+| Commands `scrolling_start(region)`, `scrolling_done() → {dataUrl,width,height}`, `scrolling_cancel()`, `set_click_through(ignore)` | `scrolling/mod.rs:9-14` | W4 |
+| `scrolling-status {frames,height,confidence,warning,finished}` events; `finished` fires exactly once | `scrolling/mod.rs:16-21` | W4 |
+| Stop rules: 2.5 s idle after scrolling starts, two identical consecutive frames, **40 000 px** height cap, or explicit Done | `scrolling/mod.rs:26-27` | W4 |
+| Region is in **physical (stream) px**, not CSS px | `scrolling/mod.rs:23-24` | W4 |
+| Teardown order: stitcher thread → PipeWire thread → drop portal `Session` | `scrolling/mod.rs:28-30` | W4 |
+| Sub-modules: frame alignment, stitch accumulation, source/cast, capture | `scrolling/align.rs`, `scrolling/stitcher.rs`, `scrolling/source.rs`, `scrolling/cap.rs` (`stitcher.rs:183`) | W4 |
+| UI: freeze, select the region, then hand the wheel back to the user; Capture → Scrolling mode | `app.ts:2719`, mode `app.ts:36` | W4 |
 
 ---
 
@@ -165,8 +165,8 @@ Effects are applied to the **image layer at export resolution** (scene px × exp
 |---|---|---|
 | Extract text from the current capture; language `eng` \| `swe`, stored in `snagcraft:ocr-lang` | `app.ts:671-676` (`OCR_LANG_KEY`, `OCR_LANGS`), toolbar chip `:906` | pending |
 | Modal: language select, "Extract text", busy "Reading…", read-only textarea, live status | `app.ts:1265-1287` (lang `:1278`, run `:1283`, busy `:1284`, textarea `:1286`) | pending |
-| Backend: `ocr_image(dataUrl, lang?)`, `ocr_available()`, `ocr_languages()` | `ocr.rs:183-206`; `sanitize_lang` `:49`, `clean_output` `:72` | pending |
-| Copy the recognised text to the clipboard | `app.ts:4181` (`copyOcrText`), `copy_text` `commands.rs:431-435` | pending |
+| Backend: `ocr_image(dataUrl, lang?)`, `ocr_available()`, `ocr_languages()` | `ocr.rs:183-206`; `sanitize_lang` `:49`, `clean_output` `:72` | W4 |
+| Copy the recognised text to the clipboard | `app.ts:4181` (`copyOcrText`), `copy_text` `commands.rs:431-435` | W4 |
 
 ---
 
@@ -174,14 +174,14 @@ Effects are applied to the **image layer at export resolution** (scene px × exp
 
 | Feature | Evidence | rust |
 |---|---|---|
-| Interval loop: one PNG per tick named `SnagCraft-interval-*.png` into the save folder; stop converts the run to MP4 — a failed render never costs the shots | `timelapse.rs:1-6` | pending |
+| Interval loop: one PNG per tick named `SnagCraft-interval-*.png` into the save folder; stop converts the run to MP4 — a failed render never costs the shots | `timelapse.rs:1-6` | W4 |
 | `make_timelapse(dir, pattern, fps, out)` — glob resolved inside `dir` (no separators), ffmpeg `-pattern_type glob`, zero-padded numbers give playback order | `timelapse.rs:8-18`, `:100` | pending |
-| Interval period setting (default **30 s**), select "every N s / every 5 min" | `settings.ts:69` (`DEFAULT_INTERVAL`), select `settings.ts:837-842` | pending |
-| Capture → Interval menu entry ("a screenshot every few seconds, then a timelapse") + per-mode banner copy | `app.ts:865-870`, `app.ts:2239-2243` | pending |
+| Interval period setting (default **30 s**), select "every N s / every 5 min" | `settings.ts:69` (`DEFAULT_INTERVAL`), select `settings.ts:837-842` | W4 |
+| Capture → Interval menu entry ("a screenshot every few seconds, then a timelapse") + per-mode banner copy | `app.ts:865-870`, `app.ts:2239-2243` | W4 |
 | **`Ctrl+.`** stops a running interval capture (same as Stop) | `app.ts:5181-5188` | pending |
-| One live loop guarded by an `IntervalRun` record with a zero-padded `seq` counter | `app.ts:2820-2830` | pending |
+| One live loop guarded by an `IntervalRun` record with a zero-padded `seq` counter | `app.ts:2820-2830` | W4 |
 | **Countdown HUD** — the shell shrinks the window to a 280×228 HUD and hides `#app` (`set_hud_mode`), timer parented to `<body>` so it stays visible; older backends fall back to a full-window overlay | `app.ts:1951-1984` (`set_hud_mode(true,280,228)` `:1983`) | pending |
-| Capture delay pills (0 s … 60 s, `DEFAULT_TIMER = 0`) | `settings.ts:64`, `settings.ts:830-836`, `settings.ts:219-227` | pending |
+| Capture delay pills (0 s … 60 s, `DEFAULT_TIMER = 0`) | `settings.ts:64`, `settings.ts:830-836`, `settings.ts:219-227` | W4 |
 
 ---
 
@@ -193,7 +193,7 @@ Effects are applied to the **image layer at export resolution** (scene px × exp
 | Transport is `curl` (no bundled TLS stack) | `upload.rs:8-9` | pending |
 | File → **Upload…** menu item | `app.ts:797`, dispatch `:4572-4573` | pending |
 | Flow: refuse without an image, require an endpoint ("Set an upload endpoint in Settings → Export first"), "Uploading…", then copy the link and say so | `app.ts:4499-4523` (`:4501`, `:4504-4506`, `:4511`, `:4518-4520`) | pending |
-| `open_url` for the returned link | `upload.rs:89` | pending |
+| `open_url` for the returned link | `upload.rs:89` | W4 |
 
 ---
 

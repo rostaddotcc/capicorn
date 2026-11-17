@@ -718,6 +718,11 @@ live pass + gates (trim/relicense/cutover/external post). NO releases published.
   functional gaps remain.** Awaiting rostad: KDE live pass, trim decision,
   relicense, cutover, release-asset refresh. Promo film storyboard still
   awaiting his go (separate track).
+- Fresh W14 artifacts from committed dfca838: AppImage 13.95MB launch-tested
+  (exit 124) in rust/dist/w14/, CLI smoke 48 commands incl. edit.set_text +
+  edit.resize. Delivered to rostad for the KDE live pass.
+- **LOOP BACKLOG EMPTY**: every non-gated parity row and gap register entry is
+  closed. Further iteration needs rostad's gates/feedback → loop completed.
 
 ## Appendix — measured reality
 

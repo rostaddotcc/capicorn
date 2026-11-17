@@ -8,6 +8,17 @@ repository.workspace = true
 publish = false
 
 [dependencies]
+snagcraft-engine = { path = "../engine" }
+snagcraft-io = { path = "../io" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+base64.workspace = true
+rmcp.workspace = true
+tokio.workspace = true
+getrandom.workspace = true
+schemars.workspace = true
 
 [lints]
 workspace = true

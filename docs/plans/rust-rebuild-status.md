@@ -12,7 +12,7 @@ Baseline: Tauri v1.5.2 (commit d25adb1). Rebuild workspace: `rust/` (not yet cre
 | W2 | editor tool parity | KDE-approved by rostad 2026-11-16; UI polish pass landed (sliders) |
 | W3 | shell parity (tray/hotkeys/widget/settings) | complete on pn53 (216 tests); KDE live pass pending rostad |
 | W4 | recording, scrolling, OCR, timelapse | complete on pn53 (363 tests); KDE live pass pending; gaps logged below |
-| W5 | CLI/JSON/MCP automation + WASM web | pending |
+| W5 | CLI/JSON/MCP automation + WASM web | in progress — W5a (automation crate) dispatched; W5b wiring + W5c WASM follow |
 | W6 | packaging, docs, suite dossier | pending |
 
 ## Parity checklist
@@ -393,6 +393,20 @@ Baseline: Tauri v1.5.2 (commit d25adb1). Rebuild workspace: `rust/` (not yet cre
 - Delivered W4 AppImage for rostad's KDE live pass: Rec → portal consent →
   record → stop → file; scrolling capture; OCR; timelapse. Portal legs need
   his unlocked session (pn53 locked; offline probes proven).
+
+### 2026-11-17 — wake #33: W5 launched (automation + WASM)
+- W4 delivered (3b45839), awaiting rostad KDE pass + trim decision. Next: W5.
+- W5 plan: docs/plans/2026-11-17-w5-automation-wasm.md. Recon: photocraft
+  control-protocol.md (loopback + token-file 0600 + first-frame auth +
+  registry methods), rmcp 3.10 on crates.io.
+- Parent pre-wired crates/automation (rmcp 3.10 server/transport-io/macros/
+  schemars + tokio full-ish + getrandom 0.3 + schemars 1), compile-verified.
+- Dispatched W5a (deleg_2502ae8e): TCP JSON control server (auth, commands.list,
+  command.run, session.info, doc.inspect, ui.screenshot PNG-base64) + rmcp MCP
+  stdio server (5 tools from registry), offline integration tests.
+- W5b (parent, after W5a): app --control/--control-token-file flags + CLI
+  mcp/control subcommands. W5c (next wake): WASM web build + xtask wasm gate
+  (L0–L5 wasm32 compile, engine native/web feature split, trunk app).
 
 ## Appendix — measured reality
 

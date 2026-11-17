@@ -13,7 +13,7 @@ Baseline: Tauri v1.5.2 (commit d25adb1). Rebuild workspace: `rust/` (not yet cre
 | W3 | shell parity (tray/hotkeys/widget/settings) | complete on pn53 (216 tests); KDE live pass pending rostad |
 | W4 | recording, scrolling, OCR, timelapse | complete on pn53 (363 tests); KDE live pass pending; gaps logged below |
 | W5 | CLI/JSON/MCP automation + WASM web | complete (3273af1 + watermark fix); web app browser-verified; W6 next |
-| W6 | packaging, docs, suite dossier | pending |
+| W6 | packaging, docs, suite dossier | in progress — W6a (deb/CI artifacts) + W6b (README/gaps/dossier) dispatched |
 
 ## Parity checklist
 
@@ -455,6 +455,20 @@ Baseline: Tauri v1.5.2 (commit d25adb1). Rebuild workspace: `rust/` (not yet cre
   browser-exercised. recording crate has 9 pre-existing warnings on plain
   wasm check (outside web graph; clippy clean).
 - W5 done: TCP control + MCP + CLI (live-verified) + WASM web app. Next W6.
+
+### 2026-11-17 — wake #51: W6 launched (packaging + docs + dossier)
+- W5 complete (794f143). W6 scope (spec §5): packaging polish (AppImage/deb,
+  Windows/macOS aspirational), docs (README/gaps/parity), suite dossier.
+- Scope reality: platform layer LINUX-ONLY (ashpd/ksni/PipeWire) → Windows
+  NSIS/MSI + macOS dmg NOT feasible without platform backends; documented
+  FUTURE in gaps.md. Cross-platform reach NOW via WASM web build.
+- W6 plan: docs/plans/2026-11-17-w6-packaging-docs.md. dpkg-deb present →
+  manual .deb (no cargo-deb). GATES: no release publish, no external posting,
+  relicense/cutover = rostad.
+- Dispatched W6a (sa-0, packaging: deb.sh + AppImage polish + rust-release.yml
+  CI artifact workflow, NO publish) + W6b (sa-1, docs: README rewrite +
+  gaps.md + suite-candidacy.md INTERNAL dossier + parity audit) — parallel,
+  disjoint (packaging/.github vs docs/README).
 
 ## Appendix — measured reality
 

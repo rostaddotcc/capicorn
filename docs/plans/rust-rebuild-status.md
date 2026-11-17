@@ -19,6 +19,7 @@ Baseline: Tauri v1.5.2 (commit d25adb1). Rebuild workspace: `rust/` (not yet cre
 | W9 | parity long-tail (save & recent UX) | complete — filename tokens + Save As + default dir + Recent strip (451 tests) |
 | W10 | parity long-tail (canvas presets + Resize) | complete — New-canvas presets + Resize dialog (459 tests, kittest tolerance) |
 | W11 | parity long-tail (settings + diagnostics + PrintScreen) | complete — settings cluster + diagnostics.copy + PrintScreen fallback (468 tests) |
+| W12 | parity long-tail (shortcuts + About + editor residuals) | in progress — shortcuts overlay + About + editor residuals + ffmpeg msg (75-call budget) |
 
 ## Parity checklist
 

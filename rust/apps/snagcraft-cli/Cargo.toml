@@ -9,6 +9,7 @@ publish = false
 
 [dependencies]
 snagcraft-engine = { path = "../../crates/engine" }
+snagcraft-automation = { path = "../../crates/automation" }
 snagcraft-io = { path = "../../crates/io" }
 snagcraft-raster = { path = "../../crates/raster" }
 clap.workspace = true

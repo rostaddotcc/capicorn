@@ -48,7 +48,7 @@ fn click(h: &mut Harness<'static, SnagCraftApp>, pos: egui::Pos2) {
 
 fn objects(h: &Harness<'static, SnagCraftApp>) -> Vec<AnnotObject> {
     h.state()
-        .session
+        .sess()
         .doc()
         .map(|d| d.objects.clone())
         .unwrap_or_default()
@@ -169,7 +169,8 @@ fn bucket_click_floods_the_base() {
     h.state_mut().color = egui::Color32::from_rgb(255, 0, 0);
     press(&mut h, egui::Key::G);
     click(&mut h, egui::pos2(560.0, 420.0));
-    let doc = h.state().session.doc().expect("doc");
+    let sess = h.state().sess();
+    let doc = sess.doc().expect("doc");
     let (w, h_) = doc.base.dimensions();
     let mut red = 0;
     for y in 0..h_ {
@@ -245,7 +246,7 @@ fn crop_commits_on_enter_and_cancels_on_escape() {
     press(&mut h, egui::Key::Enter);
     let (w, hh) = h
         .state()
-        .session
+        .sess()
         .doc()
         .map(|d| (d.size.w, d.size.h))
         .expect("doc");
@@ -259,7 +260,7 @@ fn crop_commits_on_enter_and_cancels_on_escape() {
     drag(&mut h, egui::pos2(500.0, 390.0), egui::pos2(600.0, 440.0));
     press(&mut h, egui::Key::Escape);
     press(&mut h, egui::Key::Enter);
-    let after = h.state().session.doc().map(|d| (d.size.w, d.size.h));
+    let after = h.state().sess().doc().map(|d| (d.size.w, d.size.h));
     assert_eq!(after, Some((w, hh)), "Esc must cancel the crop");
 }
 

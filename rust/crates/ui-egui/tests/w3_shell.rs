@@ -82,7 +82,7 @@ fn theme_swap_changes_pixels_and_state() {
     // The engine owns the value: settings.set must have applied it too.
     let applied = h
         .state_mut()
-        .session
+        .sess()
         .dispatch("settings.get", serde_json::json!({}))
         .expect("settings.get");
     assert_eq!(applied["theme"], "Dark");

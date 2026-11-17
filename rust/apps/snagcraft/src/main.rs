@@ -6,13 +6,21 @@
     clippy::todo,
     clippy::unreachable
 )]
+// Tests may unwrap: a broken fixture should fail loudly, not be swallowed.
+#![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 //! SnagCraft desktop (Rust edition) — eframe/wgpu shell over the engine.
 //!
 //! W3b: single instance (`acquire_or_forward`), tray + global hotkeys with
 //! graceful headless degradation, `--capture` / `--region` / image-path argv,
 //! and settings persistence (`io::settings::save`) drained after each frame.
 //!
+//! W5b: `--control <port>` serves the automation control channel (W5a) on the
+//! *same* session the UI edits, so an agent drives the document the user sees.
+//! The token lives in `control.token` beside `settings.json` (0600) and is
+//! reused across launches; absent flags mean no control server at all.
+//!
 //! Usage: snagcraft [--capture] [--region] [image] [--selftest --shot-out out.png]
+//!                  [--control <port>] [--control-token-file <path>]
 
 use std::path::PathBuf;
 use std::sync::mpsc;
@@ -52,6 +60,8 @@ fn main() -> eframe::Result<()> {
     let mut selftest = false;
     let mut shot_out = PathBuf::from("snagcraft-selftest.png");
     let mut launch_args: Vec<String> = Vec::new();
+    let mut control_port: Option<u16> = None;
+    let mut control_token_file = snagcraft_io::settings::path().with_file_name("control.token");
     let mut args = argv.iter();
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -61,9 +71,18 @@ fn main() -> eframe::Result<()> {
                     shot_out = PathBuf::from(p);
                 }
             }
+            "--control" => match args.next().and_then(|p| p.parse::<u16>().ok()) {
+                Some(port) => control_port = Some(port),
+                None => return usage_error("--control needs a TCP port (0 = ephemeral)"),
+            },
+            "--control-token-file" => match args.next() {
+                Some(path) => control_token_file = PathBuf::from(path),
+                None => return usage_error("--control-token-file needs a path"),
+            },
             "--help" | "-h" => {
                 tracing::info!(
-                    "snagcraft [--capture] [--region] [image] [--selftest --shot-out out.png]"
+                    "snagcraft [--capture] [--region] [image] [--selftest --shot-out out.png] \
+                     [--control <port>] [--control-token-file <path>]"
                 );
                 return Ok(());
             }
@@ -86,6 +105,20 @@ fn main() -> eframe::Result<()> {
     if let Some(rx) = instance {
         app.attach_instance(rx);
     }
+
+    // ---- control channel (W5b) ---------------------------------------------
+    // Spawned before eframe starts so an agent never races the first frame, and
+    // torn down after the UI loop returns (Drop would do it too — be explicit).
+    let control = match control_port {
+        Some(port) => match start_control(&app, port, &control_token_file) {
+            Ok(handle) => Some(handle),
+            Err(err) => {
+                eprintln!("control: {err}");
+                std::process::exit(1);
+            }
+        },
+        None => None,
+    };
 
     // ---- tray --------------------------------------------------------------
     let (tray_tx, tray_rx) = mpsc::channel::<TrayEvent>();
@@ -116,14 +149,55 @@ fn main() -> eframe::Result<()> {
             .with_title("SnagCraft"),
         ..Default::default()
     };
-    eframe::run_native(
+    let result = eframe::run_native(
         "snagcraft",
         options,
         Box::new(|cc| {
             snagcraft_ui_egui::apply_theme(&cc.egui_ctx, app.settings.theme);
             Ok(Box::new(Shell { app }))
         }),
-    )
+    );
+    if let Some(handle) = &control {
+        handle.shutdown();
+    }
+    result
+}
+
+/// Bad CLI usage: say what was wrong on stderr and stop with a non-zero code.
+fn usage_error(message: &str) -> eframe::Result<()> {
+    eprintln!("snagcraft: {message}");
+    std::process::exit(2);
+}
+
+/// Token for the control channel: reuse the file when present (so a client's
+/// stored token keeps working across launches), otherwise mint one and write it
+/// `0600`.
+fn control_token(path: &std::path::Path) -> Result<String, String> {
+    if path.exists() {
+        return snagcraft_automation::read_token_file(path).map_err(|e| e.to_string());
+    }
+    let token = snagcraft_automation::generate_token();
+    snagcraft_automation::write_token_file(path, &token).map_err(|e| e.to_string())?;
+    Ok(token)
+}
+
+/// Bind the loopback control channel to the app's own session and report where
+/// it listens. The one line on stderr is the machine-readable handshake.
+fn start_control(
+    app: &SnagCraftApp,
+    port: u16,
+    token_file: &std::path::Path,
+) -> Result<snagcraft_automation::ControlHandle, String> {
+    let token = control_token(token_file)?;
+    let handle = snagcraft_automation::spawn_control(app.session_arc(), port, token)
+        .map_err(|e| e.to_string())?;
+    let addr = handle.local_addr();
+    eprintln!(
+        "control: listening on {addr} (token file {})",
+        token_file.display()
+    );
+    tracing::info!(%addr, token_file = %token_file.display(), "control channel ready");
+    Ok(handle)
 }
 
 /// eframe shell wrapper: the one job the UI crate cannot do itself is
@@ -137,7 +211,7 @@ fn persist_settings(app: &mut SnagCraftApp) {
     if !app.take_settings_dirty() {
         return;
     }
-    let settings = app.session.settings().clone();
+    let settings = app.sess().settings().clone();
     if let Err(err) = snagcraft_io::settings::save(&settings) {
         tracing::warn!("settings save failed: {err}");
         app.status = format!("Could not save settings: {err}");
@@ -159,5 +233,51 @@ impl eframe::App for Shell {
 
     fn clear_color(&self, visuals: &egui::Visuals) -> [f32; 4] {
         eframe::App::clear_color(&self.app, visuals)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A token file in a per-test scratch directory.
+    fn token_path(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("snagcraft-w5b-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("scratch dir");
+        dir.join("control.token")
+    }
+
+    #[test]
+    fn token_is_minted_once_then_reused() {
+        let path = token_path("reuse");
+        let first = control_token(&path).expect("mint a token");
+        assert!(snagcraft_automation::is_valid_token(&first));
+        use std::os::unix::fs::PermissionsExt as _;
+        let mode = std::fs::metadata(&path)
+            .expect("stat token")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o600, "token file must be private");
+        // A second launch keeps the token: a client's stored copy stays valid.
+        assert_eq!(control_token(&path).expect("reuse the token"), first);
+    }
+
+    #[test]
+    fn corrupt_token_file_fails_loudly() {
+        let path = token_path("corrupt");
+        std::fs::write(&path, "not-a-token").expect("write fixture");
+        assert!(control_token(&path).is_err(), "must not silently rotate");
+    }
+
+    #[test]
+    fn start_control_serves_the_app_session() {
+        let app = SnagCraftApp::new();
+        let path = token_path("live");
+        let handle = start_control(&app, 0, &path).expect("start the control channel");
+        assert!(handle.local_addr().ip().is_loopback(), "loopback only");
+        assert!(path.exists(), "the token file is written for clients");
+        handle.shutdown();
     }
 }

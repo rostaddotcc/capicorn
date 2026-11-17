@@ -9,6 +9,7 @@ publish = false
 
 [dependencies]
 snagcraft-ui-egui = { path = "../../crates/ui-egui" }
+snagcraft-automation = { path = "../../crates/automation" }
 snagcraft-engine = { path = "../../crates/engine" }
 snagcraft-platform = { path = "../../crates/platform" }
 snagcraft-io = { path = "../../crates/io" }
@@ -17,6 +18,10 @@ egui.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 image.workspace = true
+
+[dev-dependencies]
+# Test-only: the wiring gate speaks the control protocol's JSON frames.
+serde_json.workspace = true
 
 [lints]
 workspace = true

@@ -5,7 +5,7 @@ use snagcraft_ui_egui::SnagCraftApp;
 #[test]
 fn seeded_render_contains_text_pixels() {
     let app = SnagCraftApp::seeded();
-    let img = app.session.render().unwrap();
+    let img = app.sess().render().unwrap();
     // Text "SnagCraft W1 (Rust)" at (424,96), size 28, near-black.
     let mut dark = 0;
     for y in 90..140 {

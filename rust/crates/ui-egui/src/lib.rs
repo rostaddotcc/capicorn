@@ -20,6 +20,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use egui::{
@@ -613,7 +614,8 @@ pub struct OcrState {
 }
 
 pub struct SnagCraftApp {
-    pub session: Session,
+    /// Shared with the control server (W5a/W5b): one document, two doors.
+    pub session: Arc<Mutex<Session>>,
     pub tool: Tool,
     pub color: Color32,
     pub stroke_width: f32,
@@ -685,13 +687,27 @@ pub struct SnagCraftApp {
 
 impl SnagCraftApp {
     pub fn new() -> Self {
-        let mut session = Session::new();
-        let _ = session.dispatch("doc.new", serde_json::json!({"w": 1000, "h": 640}));
-        // The engine loaded the settings file in `Session::new` — mirror it.
-        let settings = session
-            .dispatch("settings.get", serde_json::json!({}))
-            .map(|v| SettingsView::from_json(&v))
-            .unwrap_or_default();
+        Self::with_shared_session(Arc::new(Mutex::new(Session::new())))
+    }
+
+    /// Build the app around a session the caller already holds — the desktop
+    /// shell spawns the control server on the same `Arc` before the UI starts,
+    /// so both doors see one document. Poisoning is recovered, not propagated:
+    /// the UI is the only writer and a half-applied command must not brick it.
+    pub fn with_shared_session(session: Arc<Mutex<Session>>) -> Self {
+        let settings = {
+            let mut guard = session
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if guard.doc().is_none() {
+                let _ = guard.dispatch("doc.new", serde_json::json!({"w": 1000, "h": 640}));
+            }
+            // The engine loaded the settings file in `Session::new` — mirror it.
+            guard
+                .dispatch("settings.get", serde_json::json!({}))
+                .map(|v| SettingsView::from_json(&v))
+                .unwrap_or_default()
+        };
         Self {
             session,
             tool: Tool::Arrow,
@@ -750,19 +766,36 @@ impl SnagCraftApp {
         }
     }
 
+    /// Locked session. Poison is recovered (`into_inner`) rather than unwrapped:
+    /// a panicking command must not take the whole UI down with it.
+    pub fn sess(&self) -> MutexGuard<'_, Session> {
+        self.session
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// The shared handle — `spawn_control` serves this exact session.
+    pub fn session_arc(&self) -> Arc<Mutex<Session>> {
+        Arc::clone(&self.session)
+    }
+
+    /// Dispatch through the shared lock and return an owned result, so the
+    /// engine mutex is never held while the caller touches `self` again.
+    fn exec(&self, cmd: &str, params: serde_json::Value) -> Result<serde_json::Value, String> {
+        self.sess().dispatch(cmd, params).map_err(|e| e.to_string())
+    }
+
     /// Seeded demo scene (selftest + kittest snapshot), built through commands:
     /// one of every object kind the engine renders.
     pub fn seeded() -> Self {
         let mut app = Self::new();
         // Detailed base so blur/spotlight/magnify have visible work to do.
-        app.session.load_surface(synthetic_base(900, 600));
+        app.sess().load_surface(synthetic_base(900, 600));
         let shadow = serde_json::json!({
             "enabled": true, "color": [0, 0, 0, 115], "blur": 6,
             "offset_x": 3.0, "offset_y": 4.0});
         let add = |app: &mut Self, obj: serde_json::Value| {
-            let _ = app
-                .session
-                .dispatch("edit.add", serde_json::json!({"object": obj}));
+            let _ = app.exec("edit.add", serde_json::json!({"object": obj}));
         };
         // Spotlight first: it dims the base outside its hole, later objects stay bright.
         add(
@@ -770,7 +803,7 @@ impl SnagCraftApp {
             serde_json::json!({"kind": "Spotlight", "id": 0,
                 "rect": {"x": 40.0, "y": 40.0, "w": 380.0, "h": 250.0}, "dim": 0.45}),
         );
-        let _ = app.session.dispatch(
+        let _ = app.exec(
             "edit.blur",
             serde_json::json!({"rect": {"x": 700.0, "y": 60.0, "w": 150.0, "h": 90.0},
                 "mode": "gaussian", "radius": 12}),
@@ -899,7 +932,7 @@ impl SnagCraftApp {
                 // Autosave a copy first: the document below is a separate
                 // in-memory surface, so this never touches the original file.
                 let autosaved = self.autosave_capture(&surface);
-                self.session.load_surface(surface);
+                self.sess().load_surface(surface);
                 self.redraw = true;
                 // A fresh capture starts a clean document.
                 self.doc_dirty = false;
@@ -925,7 +958,7 @@ impl SnagCraftApp {
     }
 
     fn dispatch(&mut self, cmd: &str, params: serde_json::Value) {
-        match self.session.dispatch(cmd, params) {
+        match self.exec(cmd, params) {
             Ok(_) => {
                 self.redraw = true;
                 // Dirty tracking: edits make the document unsaved, while
@@ -942,10 +975,7 @@ impl SnagCraftApp {
 
     /// Copy the flattened composite to the system clipboard (Ctrl+C / menu).
     fn copy_to_clipboard(&mut self) {
-        match self
-            .session
-            .dispatch("clipboard.copy", serde_json::json!({}))
-        {
+        match self.exec("clipboard.copy", serde_json::json!({})) {
             Ok(v) => {
                 self.status = format!(
                     "Copied {}×{} image to clipboard — paste anywhere.",
@@ -958,10 +988,7 @@ impl SnagCraftApp {
 
     /// Paste an image from the system clipboard (Ctrl+V / menu).
     fn paste_from_clipboard(&mut self) {
-        match self
-            .session
-            .dispatch("clipboard.paste", serde_json::json!({}))
-        {
+        match self.exec("clipboard.paste", serde_json::json!({})) {
             Ok(v) => {
                 if v["pasted"].as_bool().unwrap_or(false) {
                     self.redraw = true;
@@ -1121,7 +1148,7 @@ impl SnagCraftApp {
 
     fn add_step(&mut self, pos: Point) {
         let number = self
-            .session
+            .sess()
             .doc()
             .map_or(1, |d| next_step_number(&d.objects));
         let radius = (self.step_diameter.clamp(STEP_DIAM_MIN, STEP_DIAM_MAX)) / 2.0;
@@ -1322,7 +1349,7 @@ impl SnagCraftApp {
         if let Some(rect) = region {
             params["region"] = rect_json(rect);
         }
-        match self.session.dispatch("record.start", params) {
+        match self.exec("record.start", params) {
             Ok(_) => {
                 self.rec.armed = true;
                 self.rec.active = false;
@@ -1338,7 +1365,7 @@ impl SnagCraftApp {
 
     /// `record.stop` — the encoder finalises and reports `stopped`.
     pub fn stop_recording(&mut self) {
-        match self.session.dispatch("record.stop", serde_json::json!({})) {
+        match self.exec("record.stop", serde_json::json!({})) {
             Ok(_) => self.status = "Stopping the recording…".into(),
             Err(err) => self.status = format!("Record stop: {err}"),
         }
@@ -1347,10 +1374,7 @@ impl SnagCraftApp {
     /// `audio.sources` for the picker (once per session — enumerating devices
     /// spawns pactl, so it is not a per-frame call).
     pub fn refresh_audio_sources(&mut self) {
-        if let Ok(v) = self
-            .session
-            .dispatch("audio.sources", serde_json::json!({}))
-        {
+        if let Ok(v) = self.exec("audio.sources", serde_json::json!({})) {
             self.rec.sources = v["sources"]
                 .as_array()
                 .map(|list| {
@@ -1375,7 +1399,7 @@ impl SnagCraftApp {
         } else {
             "record.pause"
         };
-        match self.session.dispatch(cmd, serde_json::json!({})) {
+        match self.exec(cmd, serde_json::json!({})) {
             Ok(_) => {}
             Err(err) => self.status = format!("Record pause: {err}"),
         }
@@ -1498,7 +1522,7 @@ impl SnagCraftApp {
             "region": rect_json(region),
             "output": path.to_string_lossy(),
         });
-        match self.session.dispatch("scroll.start", params) {
+        match self.exec("scroll.start", params) {
             Ok(_) => {
                 self.scroll = ScrollState {
                     armed: true,
@@ -1516,7 +1540,7 @@ impl SnagCraftApp {
 
     /// Enter / Stop: stitch what was captured and open it in the editor.
     pub fn stop_scrolling(&mut self) {
-        match self.session.dispatch("scroll.stop", serde_json::json!({})) {
+        match self.exec("scroll.stop", serde_json::json!({})) {
             Ok(_) => self.status = "Finishing the scrolling capture…".into(),
             Err(err) => self.status = format!("Scroll stop: {err}"),
         }
@@ -1545,7 +1569,7 @@ impl SnagCraftApp {
         {
             params["count"] = serde_json::json!(count);
         }
-        match self.session.dispatch("timelapse.start", params) {
+        match self.exec("timelapse.start", params) {
             Ok(_) => {
                 self.timelapse.armed = true;
                 self.timelapse.running = true;
@@ -1559,10 +1583,7 @@ impl SnagCraftApp {
     }
 
     pub fn stop_timelapse(&mut self) {
-        match self
-            .session
-            .dispatch("timelapse.stop", serde_json::json!({}))
-        {
+        match self.exec("timelapse.stop", serde_json::json!({})) {
             Ok(_) => self.status = "Timelapse stopping…".into(),
             Err(err) => self.status = format!("Timelapse stop: {err}"),
         }
@@ -1572,10 +1593,7 @@ impl SnagCraftApp {
 
     /// `ocr.run` on the current document, shown in the result window.
     pub fn run_ocr(&mut self) {
-        match self
-            .session
-            .dispatch("ocr.run", serde_json::json!({"lang": "eng"}))
-        {
+        match self.exec("ocr.run", serde_json::json!({"lang": "eng"})) {
             Ok(v) => {
                 self.ocr.text = v["text"].as_str().unwrap_or_default().to_string();
                 self.ocr.open = true;
@@ -1595,8 +1613,7 @@ impl SnagCraftApp {
             return available;
         }
         let available = self
-            .session
-            .dispatch("ocr.available", serde_json::json!({}))
+            .exec("ocr.available", serde_json::json!({}))
             .ok()
             .and_then(|v| v["available"].as_bool())
             .unwrap_or(false);
@@ -1617,10 +1634,7 @@ impl SnagCraftApp {
                 format!("Set an upload URL in Settings — Export (e.g. {UPLOAD_URL_DEFAULT}).");
             return;
         };
-        match self
-            .session
-            .dispatch("upload.open", serde_json::json!({"url": url}))
-        {
+        match self.exec("upload.open", serde_json::json!({"url": url})) {
             Ok(_) => self.status = format!("Opened {url}"),
             Err(err) => self.status = format!("Upload page: {err}"),
         }
@@ -1671,7 +1685,7 @@ impl SnagCraftApp {
     }
 
     fn poll_record(&mut self) {
-        match self.session.dispatch("record.poll", serde_json::json!({})) {
+        match self.exec("record.poll", serde_json::json!({})) {
             Ok(v) => {
                 let events = v["events"].as_array().cloned().unwrap_or_default();
                 for event in events {
@@ -1710,7 +1724,7 @@ impl SnagCraftApp {
             }
         }
         if self.rec.armed
-            && let Ok(v) = self.session.dispatch("record.state", serde_json::json!({}))
+            && let Ok(v) = self.exec("record.state", serde_json::json!({}))
         {
             if let Some(active) = v["active"].as_bool() {
                 self.rec.active = active;
@@ -1722,7 +1736,7 @@ impl SnagCraftApp {
     }
 
     fn poll_scroll(&mut self) {
-        match self.session.dispatch("scroll.poll", serde_json::json!({})) {
+        match self.exec("scroll.poll", serde_json::json!({})) {
             Ok(v) => {
                 let events = v["events"].as_array().cloned().unwrap_or_default();
                 for event in events {
@@ -1781,10 +1795,7 @@ impl SnagCraftApp {
     }
 
     fn poll_timelapse(&mut self) {
-        match self
-            .session
-            .dispatch("timelapse.poll", serde_json::json!({}))
-        {
+        match self.exec("timelapse.poll", serde_json::json!({})) {
             Ok(v) => {
                 let events = v["events"].as_array().cloned().unwrap_or_default();
                 for event in events {
@@ -2162,10 +2173,7 @@ impl SnagCraftApp {
     /// persistence hook, then the live effects.
     pub fn push_settings(&mut self, next: SettingsView) {
         let payload = next.to_json();
-        match self
-            .session
-            .dispatch("settings.set", serde_json::json!({"settings": payload}))
-        {
+        match self.exec("settings.set", serde_json::json!({"settings": payload})) {
             Ok(applied) => {
                 // The engine owns every field, watermark/upload included, so
                 // the answer is the truth — no local mirror to reconcile.
@@ -4098,12 +4106,16 @@ pub fn app_ui(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
                     if settings_button(ui).clicked() {
                         app.settings_open = true;
                     }
-                    ui.add_enabled_ui(app.session.can_redo(), |ui| {
+                    let (can_redo, can_undo) = {
+                        let sess = app.sess();
+                        (sess.can_redo(), sess.can_undo())
+                    };
+                    ui.add_enabled_ui(can_redo, |ui| {
                         if ui.button("Redo").on_hover_text("Ctrl+Shift+Z").clicked() {
                             app.dispatch("edit.redo", serde_json::json!({}));
                         }
                     });
-                    ui.add_enabled_ui(app.session.can_undo(), |ui| {
+                    ui.add_enabled_ui(can_undo, |ui| {
                         if ui.button("Undo").on_hover_text("Ctrl+Z").clicked() {
                             app.dispatch("edit.undo", serde_json::json!({}));
                         }
@@ -4191,9 +4203,9 @@ pub fn app_ui(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
         )
         .show(ui, |ui| {
             ui.horizontal(|ui| {
-                if let Some(d) = app.session.doc() {
+                if let Some((w, h)) = app.sess().doc().map(|d| (d.size.w, d.size.h)) {
                     ui.label(
-                        egui::RichText::new(format!("{}×{}", d.size.w, d.size.h))
+                        egui::RichText::new(format!("{w}×{h}"))
                             .color(pal_muted(ui))
                             .size(11.0),
                     );
@@ -4234,11 +4246,10 @@ pub fn app_ui(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
                 return;
             }
             let avail = ui.available_rect_before_wrap();
-            let Some(doc) = app.session.doc() else {
+            let Some((iw, ih)) = app.sess().doc().map(|d| (d.size.w, d.size.h)) else {
                 ui.label("No document — Capture or Open to begin.");
                 return;
             };
-            let (iw, ih) = (doc.size.w, doc.size.h);
             if iw == 0 || ih == 0 {
                 return;
             }
@@ -4254,9 +4265,12 @@ pub fn app_ui(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
                 |p: Point| Point::new(p.x.clamp(0.0, iw as f32), p.y.clamp(0.0, ih as f32));
 
             // CPU composite → texture, cached until the next mutation.
-            if (app.redraw || app.tex.is_none())
-                && let Ok(img) = app.session.render()
-            {
+            let rendered = if app.redraw || app.tex.is_none() {
+                app.sess().render().ok()
+            } else {
+                None
+            };
+            if let Some(img) = rendered {
                 let color_img = egui::ColorImage::from_rgba_unmultiplied(
                     [img.width() as usize, img.height() as usize],
                     img.as_raw(),
@@ -4285,7 +4299,7 @@ pub fn app_ui(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
 
             // Selection outline (objects are baked into the composite).
             if let Some(id) = app.selected
-                && let Some(obj) = app.session.doc().and_then(|d| d.get(id))
+                && let Some(obj) = app.sess().doc().and_then(|d| d.get(id))
             {
                 let b = obj.bounds();
                 let r = Rect::from_min_size(
@@ -4327,13 +4341,16 @@ pub fn app_ui(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
                     if resp.clicked()
                         && let Some(p) = hover_img
                     {
-                        app.selected = app.session.doc().and_then(|d| d.hit_test(p));
+                        app.selected = {
+                            let sess = app.sess();
+                            sess.doc().and_then(|d| d.hit_test(p))
+                        };
                     }
                     if resp.drag_started()
                         && let (Some(p), Some(id)) = (press_img, app.selected)
                     {
                         let inside = app
-                            .session
+                            .sess()
                             .doc()
                             .and_then(|d| d.get(id))
                             .is_some_and(|o| o.bounds().contains(p));
@@ -4360,7 +4377,7 @@ pub fn app_ui(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
                         }
                     }
                     if let (Some(Drag::Move { id, start }), Some(cur)) = (&app.drag, app.drag_cur)
-                        && let Some(obj) = app.session.doc().and_then(|d| d.get(*id))
+                        && let Some(obj) = app.sess().doc().and_then(|d| d.get(*id))
                     {
                         let b = obj.bounds();
                         let r = Rect::from_min_size(
@@ -4632,7 +4649,10 @@ pub fn app_ui(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
             if resp.secondary_clicked()
                 && let Some(p) = pointer_img.or(hover_img)
             {
-                app.selected = app.session.doc().and_then(|d| d.hit_test(p));
+                app.selected = {
+                    let sess = app.sess();
+                    sess.doc().and_then(|d| d.hit_test(p))
+                };
             }
             resp.context_menu(|ui| {
                 ui.set_min_width(230.0);
@@ -4659,12 +4679,16 @@ pub fn app_ui(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
                     }
                 }
                 ui.separator();
-                ui.add_enabled_ui(app.session.can_undo(), |ui| {
+                let (can_undo, can_redo) = {
+                    let sess = app.sess();
+                    (sess.can_undo(), sess.can_redo())
+                };
+                ui.add_enabled_ui(can_undo, |ui| {
                     if menu_row(ui, "Undo", "Ctrl+Z") {
                         app.dispatch("edit.undo", serde_json::json!({}));
                     }
                 });
-                ui.add_enabled_ui(app.session.can_redo(), |ui| {
+                ui.add_enabled_ui(can_redo, |ui| {
                     if menu_row(ui, "Redo", "Ctrl+Shift+Z") {
                         app.dispatch("edit.redo", serde_json::json!({}));
                     }

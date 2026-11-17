@@ -99,6 +99,16 @@ verified, WASM web app browser-verified (status log, W5 wake #50).
   copyable blob; the live Tauri app has such a button, the rebuild does not.
 - **Where logged:** status wake #32.
 
+### W12 shortcuts + About + editor residuals (2026-11-17) — CLOSED
+
+Shortcuts overlay (? key + File→Keyboard shortcuts, real bindings sheet with
+always-visible scrollbar; newly wired Ctrl+O + Ctrl+scroll zoom 0.25–4.0), About
+modal (File→About SnagCraft, logo+name+version 0.1.0+tagline+repo, Esc/OK),
+derived dirty-state (engine saved_depth + dirty()/history_depth(); save point
+moves on save/export, undo-to-save-point is clean), ffmpeg-absent actionable
+message. Editor residuals verified (caption settles on blur/Enter; crop shading
+painter-only). Only TRIM remains pending — rostad-gated (not in live v1.5.3).
+
 ### W11 settings cluster + diagnostics + PrintScreen (2026-11-17) — CLOSED
 
 Interval period, mic source (audio.sources dropdown), system audio toggle,

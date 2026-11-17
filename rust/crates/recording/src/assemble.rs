@@ -346,7 +346,8 @@ pub fn assemble_timelapse(
         .spawn()
         .map_err(|err| {
             AssembleError::Ffmpeg(format!(
-                "cannot start ffmpeg ({err}); is ffmpeg installed and on PATH?"
+                "cannot start ffmpeg ({err}) — install it: sudo apt install ffmpeg \
+                 (or point SNAGCRAFT_FFMPEG at a binary)"
             ))
         })?;
 

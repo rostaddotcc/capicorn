@@ -66,6 +66,10 @@ pub struct CommandSpec {
 pub struct Session {
     doc: Option<Document>,
     history: History,
+    /// `history.depth()` when the document was last saved/exported/replaced.
+    /// Dirty state is derived from this pair, never from a hand-set flag, so
+    /// undoing back to the saved state makes the document clean again.
+    saved_depth: usize,
     /// Bundled OFL faces for CPU text raster (family, bold, face). Built once
     /// from the text crate's embedded FontDb — identical in UI, CLI and export.
     faces: Vec<(String, bool, ab_glyph::FontArc)>,
@@ -127,6 +131,7 @@ impl Session {
         Self {
             doc: None,
             history: History::default(),
+            saved_depth: 0,
             faces,
             settings: snagcraft_io::settings::load(),
             #[cfg(feature = "native")]
@@ -172,6 +177,18 @@ impl Session {
         self.history.can_redo()
     }
 
+    /// Unsaved work: the history has moved since the last save/export/open.
+    /// Undo back to the save point reports clean again, which a sticky flag
+    /// could never do.
+    pub fn dirty(&self) -> bool {
+        self.history.depth() != self.saved_depth
+    }
+
+    /// Number of undo steps held — what `dirty` compares against.
+    pub fn history_depth(&self) -> usize {
+        self.history.depth()
+    }
+
     fn require_doc(&self) -> Result<&Document, CommandError> {
         self.doc.as_ref().ok_or(CommandError::NoDoc)
     }
@@ -184,14 +201,21 @@ impl Session {
     fn replace_doc(&mut self, doc: Document) {
         self.doc = Some(doc);
         self.history.clear();
+        self.saved_depth = 0;
     }
 
     pub fn dispatch(&mut self, id: &str, params: Value) -> Result<Value, CommandError> {
         let spec = registry().into_iter().find(|c| c.id == id);
-        match spec {
+        let result = match spec {
             Some(c) => (c.run)(self, params),
             None => Err(CommandError::UnknownCommand(id.to_string())),
+        };
+        // A successful write to disk is the save point the dirty flag compares
+        // against; `doc.open`/`doc.new`/captures reset it in `replace_doc`.
+        if result.is_ok() && matches!(id, "doc.save" | "doc.save_as" | "doc.export") {
+            self.saved_depth = self.history.depth();
         }
+        result
     }
 
     /// Composite the current document to a flat surface (export/preview).
@@ -376,8 +400,9 @@ fn cmd_session_info(s: &mut Session, _p: Value) -> Result<Value, CommandError> {
         Some(d) => json!({
             "has_doc": true, "width": d.size.w, "height": d.size.h,
             "objects": d.objects.len(), "can_undo": s.can_undo(), "can_redo": s.can_redo(),
+            "dirty": s.dirty(), "history_depth": s.history_depth(),
         }),
-        None => json!({"has_doc": false, "can_undo": false, "can_redo": false}),
+        None => json!({"has_doc": false, "can_undo": false, "can_redo": false, "dirty": false}),
     })
 }
 
@@ -1651,6 +1676,72 @@ mod tests {
         let info = s.dispatch("session.info", json!({})).unwrap();
         assert_eq!(info["objects"], 1);
         assert_eq!(info["width"], 64);
+    }
+
+    /// Dirty state is derived from history depth vs the last save point, so an
+    /// edit dirties, an undo back to the save point cleans, and a fresh
+    /// document/capture starts clean.
+    #[test]
+    fn dirty_tracks_history_depth() {
+        let mut s = Session::new();
+        s.dispatch("doc.new", json!({"w": 32, "h": 32})).unwrap();
+        assert!(!s.dirty(), "a new document is clean");
+        assert_eq!(
+            s.dispatch("session.info", json!({})).unwrap()["dirty"],
+            false
+        );
+
+        s.dispatch(
+            "edit.add",
+            json!({"object": {"kind": "Shape", "id": 0, "shape": "Rect",
+            "rect": {"x": 1.0, "y": 1.0, "w": 4.0, "h": 4.0}, "color": [0, 0, 0, 255],
+            "width": 1.0}}),
+        )
+        .unwrap();
+        assert!(s.dirty());
+        assert_eq!(
+            s.dispatch("session.info", json!({})).unwrap()["dirty"],
+            true
+        );
+
+        s.dispatch("edit.undo", json!({})).unwrap();
+        assert!(!s.dirty(), "undoing back to the save point is clean again");
+
+        s.dispatch("edit.redo", json!({})).unwrap();
+        assert!(s.dirty(), "redo past the save point is dirty again");
+    }
+
+    /// A successful export/`.snagcraft` save is a save point: the same document
+    /// with no further edits reports clean.
+    #[test]
+    fn save_marks_clean_and_later_edit_dirties() {
+        let mut s = Session::new();
+        s.dispatch("doc.new", json!({"w": 24, "h": 24})).unwrap();
+        s.dispatch(
+            "edit.add",
+            json!({"object": {"kind": "Shape", "id": 0, "shape": "Rect",
+            "rect": {"x": 1.0, "y": 1.0, "w": 4.0, "h": 4.0}, "color": [0, 0, 0, 255],
+            "width": 1.0}}),
+        )
+        .unwrap();
+        assert!(s.dirty());
+        let dir = std::env::temp_dir().join("snagcraft-w12-dirty");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("dirty.png");
+        s.dispatch(
+            "doc.export",
+            json!({"path": path.to_string_lossy(), "format": "png", "quality": 90}),
+        )
+        .unwrap();
+        assert!(!s.dirty(), "export is a save point");
+        s.dispatch(
+            "edit.add",
+            json!({"object": {"kind": "Shape", "id": 0, "shape": "Rect",
+            "rect": {"x": 2.0, "y": 2.0, "w": 4.0, "h": 4.0}, "color": [0, 0, 0, 255],
+            "width": 1.0}}),
+        )
+        .unwrap();
+        assert!(s.dirty(), "an edit after saving dirties again");
     }
 
     #[test]

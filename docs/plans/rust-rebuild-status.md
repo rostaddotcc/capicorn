@@ -19,7 +19,13 @@ Baseline: Tauri v1.5.2 (commit d25adb1). Rebuild workspace: `rust/` (not yet cre
 | W9 | parity long-tail (save & recent UX) | complete — filename tokens + Save As + default dir + Recent strip (451 tests) |
 | W10 | parity long-tail (canvas presets + Resize) | complete — New-canvas presets + Resize dialog (459 tests, kittest tolerance) |
 | W11 | parity long-tail (settings + diagnostics + PrintScreen) | complete — settings cluster + diagnostics.copy + PrintScreen fallback (468 tests) |
-| W12 | parity long-tail (shortcuts + About + editor residuals) | in progress — shortcuts overlay + About + editor residuals + ffmpeg msg (75-call budget) |
+| W12 | parity long-tail (shortcuts + About + editor residuals) | complete — shortcuts overlay + About + derived dirty-state + ffmpeg msg (474 tests) |
+
+**PARITY REACHED 2026-11-17 (wake #100):** every checklist row ticked with
+evidence except **Trim** — rostad-gated (not implemented in live v1.5.3 either;
+his decision). W0–W12 built; 474 tests / 0 failed; native AppImage + .deb + CLI
++ TCP/MCP automation + WASM web app, one Rust engine. Remaining: rostad's KDE
+live pass + gates (trim/relicense/cutover/external post). NO releases published.
 
 ## Parity checklist
 
@@ -612,6 +618,27 @@ Baseline: Tauri v1.5.2 (commit d25adb1). Rebuild workspace: `rust/` (not yet cre
 - Parity 14 rows W11; README 46; gaps W11 note. Remaining pending ~14 rows:
   editor residuals (text-caption settle, dirty-state, crop decorations) +
   recording thumbnails (real video) + rostad gates.
+
+### 2026-11-17 — wake #100: W12 COMPLETE — FULL PARITY REACHED
+- W12 done (65 calls, within budget): shortcuts overlay (? + File→Keyboard
+  shortcuts, real-bindings SHORTCUTS const next to handle_keys; newly wired
+  Ctrl+O + Ctrl+scroll zoom 0.25–4.0, default 1.0 byte-identical), About modal
+  (File→About SnagCraft, accent mark + name + version 0.1.0 + tagline + repo,
+  Esc/OK), derived dirty-state (engine saved_depth + dirty()/history_depth();
+  save point moves on save/save_as/export, resets on new/open/capture; undo to
+  save point clean again — sticky flag couldn't), ffmpeg-absent actionable
+  message (Encoder::spawn + assemble). Editor residuals VERIFIED not rebuilt
+  (caption settles on lost_focus; crop dim/frame painter-only, no doc write).
+- Registry UNCHANGED (only session.info fields) → no automation bump.
+- Parent polish: shortcuts ScrollArea scrollbar AlwaysVisible (vision flagged
+  bottom rows "clipped" — actually below scroll fold; made affordance obvious),
+  re-blessed w12_shortcuts. About snapshot reviewed: perfect.
+- Parent-verified: workspace 474 passed / 0 failed / 5 ignored, clippy/fmt/
+  layers/wasm clean. Parity 13 rows W12 → **pending = 1 (Trim, rostad-gated)**.
+- Delivered fresh AppImage (13.9MB, launch-tested exit 124, CLI 46 commands) to
+  rostad on his "När finns en version redo att testa?" — full feature set.
+- MISSION: W0–W12 built, full parity except gated Trim. Awaiting rostad KDE
+  live pass + gates (trim/relicense/cutover/external post). No releases.
 
 ## Appendix — measured reality
 

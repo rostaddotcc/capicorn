@@ -808,6 +808,14 @@ pub struct SnagCraftApp {
     pub resize_w: f32,
     pub resize_h: f32,
     pub resize_error: Option<String>,
+    /// Keyboard-shortcuts sheet (`?`, Help → Keyboard shortcuts): the one
+    /// place where every real binding is listed.
+    pub shortcuts_open: bool,
+    /// About modal (File → About SnagCraft…).
+    pub about_open: bool,
+    /// Canvas view zoom on top of the fit-to-window scale (Ctrl+scroll).
+    /// 1.0 is the untouched fit, so a fresh session renders byte-identically.
+    pub view_zoom: f32,
     /// Floating widget: folded tab vs expanded pill.
     pub widget_expanded: bool,
     /// Tray icon actually registered (hide-to-tray is only safe then).
@@ -857,6 +865,39 @@ pub struct SnagCraftApp {
     #[cfg(not(feature = "native"))]
     drop_rx: Option<mpsc::Receiver<Result<(u32, u32), String>>>,
 }
+
+/// Canvas zoom range for Ctrl+scroll: 25 %–400 % of the fit-to-window view.
+const VIEW_ZOOM_MIN: f32 = 0.25;
+const VIEW_ZOOM_MAX: f32 = 4.0;
+
+/// Project home, shown in About (links are inert text — nothing is fetched).
+const REPO_URL: &str = "https://github.com/rostaddotcc/snagcraft";
+
+/// Release string: the crate version the binary was built from.
+pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Every binding the shortcuts sheet lists. Kept honest by `handle_keys`: a row
+/// here that no handler consumes would be a lie, and the sheet is the only
+/// documentation a user reads.
+const SHORTCUTS: &[(&str, &str)] = &[
+    ("Ctrl + scroll", "Zoom the canvas"),
+    ("Ctrl + N", "New canvas"),
+    ("Ctrl + O", "Open an image"),
+    ("Ctrl + S", "Save to the save folder"),
+    ("Ctrl + Shift + S", "Save As…"),
+    ("Ctrl + Z / Ctrl + Shift + Z", "Undo / redo"),
+    ("Ctrl + C / Ctrl + V", "Copy / paste image"),
+    ("Ctrl + D", "Duplicate selection"),
+    ("Delete / Backspace", "Delete selection"),
+    ("Ctrl + ,", "Settings"),
+    ("Ctrl + .", "Stop a running timelapse"),
+    ("Ctrl + Alt + V", "Start / stop a recording"),
+    ("PrintScreen", "Capture the full screen"),
+    ("Shift + PrintScreen", "Capture a region"),
+    ("V C A T R B G E L H K S M", "Tool letters"),
+    ("?", "This sheet"),
+    ("Esc", "Close a dialog / cancel"),
+];
 
 impl SnagCraftApp {
     pub fn new() -> Self {
@@ -912,6 +953,9 @@ impl SnagCraftApp {
             doc_dirty: false,
             force_quit: false,
             confirm_close: false,
+            shortcuts_open: false,
+            about_open: false,
+            view_zoom: 1.0,
             settings_open: false,
             new_canvas_open: false,
             new_canvas_w: 1280.0,
@@ -1171,13 +1215,11 @@ impl SnagCraftApp {
         match self.exec(cmd, params) {
             Ok(_) => {
                 self.redraw = true;
-                // Dirty tracking: edits make the document unsaved, while
-                // save/export/open/new all leave it clean.
-                if cmd.starts_with("edit.") {
-                    self.doc_dirty = true;
-                } else if matches!(cmd, "doc.save" | "doc.export" | "doc.open" | "doc.new") {
-                    self.doc_dirty = false;
-                }
+                // Dirty tracking is the engine's: history depth vs the last
+                // save point, so undo back to the saved state is clean again
+                // (a hand-set flag could never do that).
+                let dirty = self.sess().dirty();
+                self.doc_dirty = dirty;
             }
             Err(e) => self.status = format!("{cmd}: {e}"),
         }
@@ -2749,6 +2791,120 @@ impl SnagCraftApp {
                 self.status = format!("Resized to {} × {} px", v["width"], v["height"]);
             }
             Err(e) => self.resize_error = Some(format!("Resize failed: {e}")),
+        }
+    }
+
+    /// Ctrl+scroll: multiply the fit scale, clamped so a wild spin cannot lose
+    /// the canvas. Non-finite deltas (hostile input) fall back to the fit.
+    pub fn zoom_view(&mut self, factor: f32) {
+        let next = self.view_zoom * factor;
+        self.view_zoom = if next.is_finite() {
+            next.clamp(VIEW_ZOOM_MIN, VIEW_ZOOM_MAX)
+        } else {
+            1.0
+        };
+    }
+
+    /// Reset the canvas view to the plain fit scale.
+    pub fn zoom_reset(&mut self) {
+        self.view_zoom = 1.0;
+    }
+
+    /// `?` / Help → Keyboard shortcuts: the sheet listing the real bindings.
+    fn shortcuts_dialog(&mut self, ctx: &egui::Context) {
+        if !self.shortcuts_open {
+            return;
+        }
+        let mut open = true;
+        let mut close = false;
+        egui::Window::new("Keyboard shortcuts")
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .default_width(430.0)
+            .show(ctx, |ui| {
+                ui.label(
+                    egui::RichText::new("Every binding below works in this build.")
+                        .size(11.5)
+                        .weak(),
+                );
+                ui.add_space(6.0);
+                egui::ScrollArea::vertical()
+                    .max_height(430.0)
+                    .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
+                    .show(ui, |ui| {
+                        egui::Grid::new("shortcuts-grid")
+                            .num_columns(2)
+                            .spacing([18.0, 6.0])
+                            .striped(true)
+                            .show(ui, |ui| {
+                                for (keys, what) in SHORTCUTS {
+                                    ui.label(egui::RichText::new(*keys).monospace().strong());
+                                    ui.label(egui::RichText::new(*what).size(12.0));
+                                    ui.end_row();
+                                }
+                            });
+                    });
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Close").clicked() {
+                        close = true;
+                    }
+                    ui.weak("Esc also closes this sheet.");
+                });
+            });
+        if close || !open {
+            self.shortcuts_open = false;
+        }
+    }
+
+    /// File → About SnagCraft…: mark, name, version, one line, repo.
+    fn about_dialog(&mut self, ctx: &egui::Context) {
+        if !self.about_open {
+            return;
+        }
+        let mut open = true;
+        let mut close = false;
+        egui::Window::new("About SnagCraft")
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .default_width(380.0)
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    let (rect, _) = ui.allocate_exact_size(vec2(48.0, 48.0), egui::Sense::hover());
+                    ui.painter()
+                        .rect_filled(rect, CornerRadius::same(11), pal_accent(ui));
+                    ui.painter().text(
+                        rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        "S",
+                        egui::FontId::proportional(28.0),
+                        Color32::WHITE,
+                    );
+                    ui.vertical(|ui| {
+                        ui.label(egui::RichText::new("SnagCraft").size(20.0).strong());
+                        ui.label(
+                            egui::RichText::new(format!("version {APP_VERSION}"))
+                                .size(11.5)
+                                .weak(),
+                        );
+                    });
+                });
+                ui.add_space(8.0);
+                ui.label("Screenshot, annotate and share — one window, no cloud.");
+                ui.add_space(6.0);
+                ui.hyperlink_to(REPO_URL, REPO_URL);
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if ui.button("OK").clicked() {
+                        close = true;
+                    }
+                    ui.weak("Esc also closes.");
+                });
+            });
+        if close || !open {
+            self.about_open = false;
         }
     }
 
@@ -4925,6 +5081,16 @@ fn rail(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
 // ------------------------------------------------------------------ shortcuts
 
 fn handle_keys(ctx: &egui::Context, app: &mut SnagCraftApp) {
+    // Read-only sheets: Esc closes, every other key is theirs. Checked first so
+    // a stray `?` or letter cannot act on the canvas behind the sheet.
+    if app.shortcuts_open || app.about_open {
+        if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape)) {
+            app.shortcuts_open = false;
+            app.about_open = false;
+        }
+        return;
+    }
+
     if app.editing.is_some() {
         // While typing, Esc throws the inline editor away; keys belong to the box.
         let cancel = ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape));
@@ -4960,7 +5126,18 @@ fn handle_keys(ctx: &egui::Context, app: &mut SnagCraftApp) {
         return;
     }
 
+    // Ctrl+scroll zooms the canvas: egui folds ctrl+wheel into `zoom_delta`,
+    // so the raw wheel delta is already gone by the time keys are read.
+    let zoom = ctx.input(|i| i.zoom_delta());
+    if (zoom - 1.0).abs() > 1e-4 {
+        app.zoom_view(zoom);
+    }
+
     ctx.input_mut(|i| {
+        // `?` opens the keyboard-shortcuts sheet — live app.ts:5138-5146.
+        if i.consume_key(Modifiers::SHIFT, Key::Questionmark) {
+            app.shortcuts_open = true;
+        }
         // W11: PrintScreen is the in-app fallback while global hotkeys are off
         // (or the portal refused them) — live app.ts:5128-5132.
         if i.consume_key(Modifiers::SHIFT, Key::PrintScreen) {
@@ -5004,6 +5181,10 @@ fn handle_keys(ctx: &egui::Context, app: &mut SnagCraftApp) {
         // Ctrl+N: the New-canvas dialog (live app.ts new-canvas).
         if i.consume_key(Modifiers::CTRL, Key::N) {
             app.open_new_canvas();
+        }
+        // Ctrl+O: open an image file into the editor (File → Open…).
+        if i.consume_key(Modifiers::CTRL, Key::O) {
+            app.open_dialog();
         }
         // Ctrl+S saves a flattened capture into the save folder, Ctrl+Shift+S is
         // Save As… — the live toolbar's two buttons on the keyboard.
@@ -5263,6 +5444,17 @@ fn file_menu(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
             .clicked()
         {
             app.upload_image_now();
+            ui.close();
+        }
+        ui.separator();
+        // Help lives under File so the sheet is one click away from anywhere.
+        if menu_row(ui, "Keyboard shortcuts", "?") {
+            app.shortcuts_open = true;
+            ui.close();
+        }
+        // The version doubles as the menu hint, like every other row's keys.
+        if menu_row(ui, "About SnagCraft…", APP_VERSION) {
+            app.about_open = true;
             ui.close();
         }
     });
@@ -5866,9 +6058,9 @@ pub fn app_ui(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
             if iw == 0 || ih == 0 {
                 return;
             }
-            let scale = (avail.width() / iw as f32)
-                .min(avail.height() / ih as f32)
-                .clamp(0.01, 8.0);
+            let fit = (avail.width() / iw as f32).min(avail.height() / ih as f32);
+            // Ctrl+scroll multiplies the fit scale; 1.0 keeps the old view.
+            let scale = (fit * app.view_zoom).clamp(0.01, 8.0);
             let size = vec2(iw as f32 * scale, ih as f32 * scale);
             let origin = avail.center() - size * 0.5;
             let img_rect = Rect::from_min_size(origin, size);
@@ -6367,6 +6559,8 @@ pub fn app_ui(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
         });
 
     app.settings_window(&ctx);
+    app.shortcuts_dialog(&ctx);
+    app.about_dialog(&ctx);
     app.close_modal(&ctx);
     app.ocr_window(&ctx);
     app.timelapse_dialog(&ctx);

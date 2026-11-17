@@ -186,7 +186,8 @@ impl Encoder {
             .spawn()
             .map_err(|error| {
                 RecordingError::Ffmpeg(format!(
-                    "cannot start ffmpeg ({error}); is ffmpeg installed and on PATH?"
+                    "cannot start ffmpeg ({error}) — install it: sudo apt install ffmpeg \
+                     (or point SNAGCRAFT_FFMPEG at a binary)"
                 ))
             })?;
 

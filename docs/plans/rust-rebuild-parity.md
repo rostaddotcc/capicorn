@@ -106,9 +106,9 @@ Effects are applied to the **image layer at export resolution** (scene px × exp
 | `Ctrl+Z` undo · `Ctrl+Shift+Z` / `Ctrl+Y` redo | `app.ts:5194-5202`; in-canvas handler `editor.ts:1261-1276` | W0 spike |
 | History reset on new document | `editor.ts:404` | W1 |
 | Crop re-sizes history states so undo can restore any earlier canvas size | `editor.ts:254`, :997 | W2 |
-| Text caption commit on settle (not per keystroke) | `editor.ts:1178-1179`, :435-436 | pending |
-| Editor-only decorations (crop shading) excluded from history/export | `editor.ts:245`, :1042 | pending |
-| Dirty-state derived from history depth → gates Save | `app.ts:1916-1917` (`isDirty`) | pending |
+| Text caption commit on settle (not per keystroke) | `editor.ts:1178-1179`, :435-436 | W12 |
+| Editor-only decorations (crop shading) excluded from history/export | `editor.ts:245`, :1042 | W12 |
+| Dirty-state derived from history depth → gates Save | `app.ts:1916-1917` (`isDirty`) | W12 |
 
 ---
 
@@ -154,7 +154,7 @@ Effects are applied to the **image layer at export resolution** (scene px × exp
 | Recording thumbnails for the Recent rail | `commands.rs:533-545` (`recording_thumb`) | W9 (film-icon placeholder) |
 | Copy diagnostics (portal + per-take `.rec.log`) to clipboard | `commands.rs:457-501`, `settings.ts` troubleshooting button `:996-1004` | W11 |
 | **Trim** a finished take | *not implemented in v1.5.3* — no trim command or UI (grep `trim` in `recording.rs`/`app.ts` is string-truncation only) | pending |
-| ffmpeg is a hard runtime dependency; absence is reported as an actionable message | `timelapse.rs:17-18` (same convention for recording), README:128 | pending |
+| ffmpeg is a hard runtime dependency; absence is reported as an actionable message | `timelapse.rs:17-18` (same convention for recording), README:128 | W12 |
 
 ---
 
@@ -265,16 +265,16 @@ Sections rendered: General, Capture, Recording audio, Global hotkeys, Save locat
 | `Ctrl+Shift+Z` · `Ctrl+Y` | Redo | `app.ts:1203`, `:5196-5202` | W0 spike |
 | `Ctrl+C` | Copy to clipboard | `app.ts:1204`, `:5203-5205` | W2 |
 | `Ctrl+V` | Paste an image to annotate | `app.ts:1205`, listener `:5081` | W2 |
-| `Ctrl+scroll` | Zoom in / out | `app.ts:1206` | pending |
+| `Ctrl+scroll` | Zoom in / out | `app.ts:1206` | W12 |
 | `V` `C` `A` `T` `R` `B` `E` `G` `L` `H` `K` `S` `M` | Select, Crop, Arrow, Text, Shapes, Blur, Brush, Fill, Spotlight, Highlighter, Callout, Step, Magnify | `app.ts:1207-1226`, map `:5156-5170` | W2 |
-| `Ctrl+N` | New blank canvas | `app.ts:1227`, `:5213-5216` | pending |
-| `Ctrl+O` | Open an image | `app.ts:1228`, `:5210-5212` | pending |
-| `Ctrl+S` | Save | `app.ts:1229`, `:5206-5209` | pending |
-| `Ctrl+Shift+S` | Save As… | `app.ts:1230`, `:5208` | pending |
+| `Ctrl+N` | New blank canvas | `app.ts:1227`, `:5213-5216` | W12 |
+| `Ctrl+O` | Open an image | `app.ts:1228`, `:5210-5212` | W12 |
+| `Ctrl+S` | Save | `app.ts:1229`, `:5206-5209` | W12 |
+| `Ctrl+Shift+S` | Save As… | `app.ts:1230`, `:5208` | W12 |
 | `Ctrl+,` | Settings | `app.ts:1231`, `:5189-5193` | W3 |
-| `Delete` / `Backspace` | Delete selected annotation | `app.ts:1232` | pending |
+| `Delete` / `Backspace` | Delete selected annotation | `app.ts:1232` | W12 |
 | `Esc` | Cancel / deselect / close (also closes About, New, Resize, Shortcuts) | `app.ts:1233`, `:5108-5127` | W2 |
-| `?` | Shortcuts help | `app.ts:1234`, `:5138-5146` | pending |
+| `?` | Shortcuts help | `app.ts:1234`, `:5138-5146` | W12 |
 | `Ctrl+.` | Stop interval capture (documented in code, not in the sheet) | `app.ts:5181-5188` | W8 |
 | `Enter` in crop | Commit the crop | `tools.ts` crop `1462-1557`, hint `app.ts:354` | W2 |
 | `Enter`/`NumpadEnter` in text | Commit the caption | `app.ts:2691` | W2 |
@@ -286,8 +286,8 @@ Sections rendered: General, Capture, Recording audio, Global hotkeys, Save locat
 
 | Feature | Evidence | rust |
 |---|---|---|
-| Modal with logo mark, name, version (from backend `get_version`), one-line description, repo `github.com/rostaddotcc/snagcraft`, license `GPL-3.0-or-later · commercial license available`, OK button | `app.ts:1169-1188` (version `:1181`, repo `:1183`, license `:1184`), `commands.rs:437-444` | pending |
-| Opened from File → About (menu shows the version as its shortcut hint); Esc / OK close it | `app.ts:803`, `:4582`, `openAbout` `:4854-4866` | pending |
+| Modal with logo mark, name, version (from backend `get_version`), one-line description, repo `github.com/rostaddotcc/snagcraft`, license `GPL-3.0-or-later · commercial license available`, OK button | `app.ts:1169-1188` (version `:1181`, repo `:1183`, license `:1184`), `commands.rs:437-444` | W12 |
+| Opened from File → About (menu shows the version as its shortcut hint); Esc / OK close it | `app.ts:803`, `:4582`, `openAbout` `:4854-4866` | W12 |
 
 ---
 

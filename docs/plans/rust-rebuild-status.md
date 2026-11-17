@@ -15,6 +15,7 @@ Baseline: Tauri v1.5.2 (commit d25adb1). Rebuild workspace: `rust/` (not yet cre
 | W5 | CLI/JSON/MCP automation + WASM web | complete (3273af1 + watermark fix); web app browser-verified; W6 next |
 | W6 | packaging, docs, suite dossier | complete (bbd2683 + docs); all waves W0–W6 BUILT |
 | W7 | parity backlog (gaps B4#1–3) | complete — timelapse.assemble + OCR lang picker + busy modal (390 tests, ffprobe-verified) |
+| W8 | parity backlog (gaps B4#4–9) | in progress — upload POST flow + Ctrl+. stop + countdown HUD dispatched |
 
 ## Parity checklist
 

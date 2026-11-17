@@ -22,6 +22,9 @@ pub const MAX_SETTINGS_BYTES: u64 = 1024 * 1024;
 /// Container formats the export path understands (`png`, `jpeg`, `webp`).
 pub const EXPORT_FORMATS: [&str; 3] = ["png", "jpeg", "webp"];
 
+/// Longest accepted OCR language code (tesseract codes are short: `eng`, `swe`).
+pub const MAX_OCR_LANG_LEN: usize = 32;
+
 /// UI theme. Persisted verbatim as `Light` / `Dark`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Theme {
@@ -57,6 +60,8 @@ pub struct Settings {
     pub watermark_corner: String,
     /// Upload page URL (http/https only; empty = feature disabled). W4d.
     pub upload_url: String,
+    /// Tesseract language code for `ocr.run` (`eng`, `swe`, …). W7.
+    pub ocr_lang: String,
 }
 
 impl Default for Settings {
@@ -78,6 +83,7 @@ impl Default for Settings {
             watermark_opacity: 45,
             watermark_corner: "bottom-right".to_string(),
             upload_url: String::new(),
+            ocr_lang: "eng".to_string(),
         }
     }
 }
@@ -106,6 +112,9 @@ impl Settings {
         {
             return Err(IoError::Unsupported);
         }
+        if !valid_ocr_lang(&self.ocr_lang) {
+            return Err(IoError::Unsupported);
+        }
         Ok(())
     }
 }
@@ -113,6 +122,17 @@ impl Settings {
 /// True for the format names [`Settings::default_format`] accepts.
 pub fn is_supported_format(format: &str) -> bool {
     EXPORT_FORMATS.contains(&format)
+}
+
+/// True for a tesseract language code that is safe to hand to `ocr.run`:
+/// non-empty, short, ASCII alphanumeric plus `-`/`_` (never a tesseract option
+/// or a path).
+pub fn valid_ocr_lang(lang: &str) -> bool {
+    !lang.is_empty()
+        && lang.len() <= MAX_OCR_LANG_LEN
+        && lang
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
 }
 
 /// `$XDG_CONFIG_HOME/snagcraft/settings.json`, else `$HOME/.config/snagcraft/settings.json`.
@@ -240,6 +260,7 @@ mod tests {
             watermark_opacity: 70,
             watermark_corner: "top-left".to_string(),
             upload_url: "https://example.com/upload".to_string(),
+            ocr_lang: "swe".to_string(),
         }
     }
 
@@ -273,6 +294,38 @@ mod tests {
         let old: Settings = serde_json::from_str(old_json).unwrap();
         assert_eq!(old.watermark_opacity, 45);
         assert_eq!(old.watermark_corner, "bottom-right");
+        assert_eq!(old.ocr_lang, "eng", "pre-W7 files keep working");
+    }
+
+    #[test]
+    fn ocr_lang_default_round_trip_and_validation() {
+        assert_eq!(Settings::default().ocr_lang, "eng");
+        // A saved language survives the file round trip.
+        let s = Settings {
+            ocr_lang: "swe".to_string(),
+            ..Settings::default()
+        };
+        let json = serde_json::to_string(&s).unwrap();
+        let back: Settings = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.ocr_lang, "swe");
+
+        // Hostile codes are refused, not passed through to tesseract.
+        for bad in ["", " ", "eng swe", "eng;rm", "../eng", "eng+swe", "·"] {
+            let bad_settings = Settings {
+                ocr_lang: bad.to_string(),
+                ..Settings::default()
+            };
+            assert!(bad_settings.validate().is_err(), "{bad:?} must be rejected");
+            assert!(!valid_ocr_lang(bad));
+        }
+        assert!(valid_ocr_lang("eng"));
+        assert!(valid_ocr_lang("swe"));
+        assert!(valid_ocr_lang("chi_sim"));
+        assert!(valid_ocr_lang("pt-BR"));
+        assert!(!valid_ocr_lang(&"a".repeat(MAX_OCR_LANG_LEN + 1)));
+        // A missing field in a partial document keeps the default.
+        let partial: Settings = serde_json::from_str(r#"{"default_quality":75}"#).unwrap();
+        assert_eq!(partial.ocr_lang, "eng");
     }
 
     #[test]
@@ -290,6 +343,7 @@ mod tests {
         assert_eq!(d.filename_pattern, "SnagCraft-{date}-{time}");
         assert_eq!(d.hotkey_full, "Print");
         assert_eq!(d.hotkey_region, "SHIFT+Print");
+        assert_eq!(d.ocr_lang, "eng");
         d.validate().unwrap();
     }
 

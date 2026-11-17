@@ -36,6 +36,7 @@ use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
+mod assemble;
 mod audio;
 #[cfg(target_os = "linux")]
 mod capture;
@@ -48,6 +49,10 @@ mod probe;
 #[cfg(target_os = "linux")]
 mod session;
 
+pub use assemble::{
+    AssembleError, AssembleReport, DEFAULT_OUTPUT_NAME, assemble_timelapse, clamp_fps,
+    count_frames, glob_match, validate_pattern,
+};
 pub use crop::crop_frame_rgb24;
 
 /// Frame rate used when a config asks for 0 (the UI sent nothing).

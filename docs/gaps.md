@@ -101,15 +101,20 @@ verified, WASM web app browser-verified (status log, W5 wake #50).
 
 ### B4 — The nine reverted parity rows
 
+> **W7 update (2026-11-17): rows 1–3 CLOSED** — OCR language picker
+> (persisted `ocr_lang`), OCR busy modal (off-thread, cleared on result/error),
+> and `timelapse.assemble` (ffmpeg glob → h264 mp4, ffprobe-verified). Rows 4–9
+> remain pending (Ctrl+., countdown HUD, upload POST). See status log wake #65.
+
 At W4 close, nine checklist rows were **bulk-ticked and then reverted** after
 audit because the code did not back them (see
 `docs/plans/rust-rebuild-parity.md`). They remain pending:
 
 | # | Row | What exists now | What is missing |
 |---|-----|-----------------|-----------------|
-| 1 | OCR language select (UI) | `ocr.languages` lists installed tesseract languages; `ocr.run` takes a `lang` param | no language picker in the OCR window |
-| 2 | OCR busy modal | OCR runs off the UI thread with a status line | no modal/progress dialog while tesseract runs |
-| 3 | Timelapse video assembly (`make_timelapse`) | frame capture at an interval + `timelapse.start/stop/poll` | no ffmpeg assembly of frames into a video file |
+| 1 | OCR language select (UI) | **CLOSED W7**: ComboBox from `ocr.languages`, persisted `ocr_lang` | — |
+| 2 | OCR busy modal | **CLOSED W7**: off-thread worker, spinner + disabled Extract, cleared on result/error/dead worker | — |
+| 3 | Timelapse video assembly (`make_timelapse`) | **CLOSED W7**: `timelapse.assemble` ffmpeg glob → h264 mp4 (ffprobe: 34×22 yuv420p, 5 frames) | no "Make video" dialog button yet (command + tests only) |
 | 4 | `Ctrl+.` stop hotkey | stop via HUD button / `record.stop` | the live app's `Ctrl+.` global-ish stop shortcut |
 | 5 | Shrunk countdown HUD | countdown HUD before recording starts | the shrunk/compact countdown variant |
 | 6–9 | Upload POST-to-endpoint flow | `upload.open` opens an `http(s)` URL only (scheme-guarded) | POSTing the file bytes to an endpoint via `curl` as the live app does |

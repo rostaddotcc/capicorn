@@ -14,7 +14,7 @@ Baseline: Tauri v1.5.2 (commit d25adb1). Rebuild workspace: `rust/` (not yet cre
 | W4 | recording, scrolling, OCR, timelapse | complete on pn53 (363 tests); KDE live pass pending; gaps logged below |
 | W5 | CLI/JSON/MCP automation + WASM web | complete (3273af1 + watermark fix); web app browser-verified; W6 next |
 | W6 | packaging, docs, suite dossier | complete (bbd2683 + docs); all waves W0–W6 BUILT |
-| W7 | parity backlog (gaps B4#1–3) | in progress — timelapse.assemble + OCR lang picker + busy modal dispatched |
+| W7 | parity backlog (gaps B4#1–3) | complete — timelapse.assemble + OCR lang picker + busy modal (390 tests, ffprobe-verified) |
 
 ## Parity checklist
 
@@ -505,6 +505,26 @@ Baseline: Tauri v1.5.2 (commit d25adb1). Rebuild workspace: `rust/` (not yet cre
   Rows 4–9 (Ctrl+., countdown HUD, upload POST) deferred (live/network scope).
 - Dispatched W7 (deleg_b4966464, one track, 3 features). ffmpeg 8.0.1 +
   tesseract confirmed present. Parent commits + ticks parity/gaps after.
+
+### 2026-11-17 — wake #65: W7 COMPLETE (parity backlog B4#1–3 closed)
+- W7 done (808s, 14 new tests): timelapse.assemble (recording/assemble.rs
+  glob→h264 mp4, hostile-safe pattern, in-crate glob matcher, 300s bounded
+  wait+kill, stderr log; engine native command, registry 41→42), OCR language
+  picker (io ocr_lang persisted + ComboBox from ocr.languages), OCR busy modal
+  (off-thread worker, spinner + disabled Extract, cleared on result/error/dead).
+- ffprobe evidence: 5 odd 33×21 PNGs → h264 34×22 yuv420p nb_frames=5
+  duration=0.416667 (even-dims pad works, decoy ignored).
+- Parent fixed the sole red gate: automation control test hardcoded 41 →
+  bumped to 42 (automation parent-owned, outside child scope) + rustfmt wrap.
+- Parent-verified: workspace 390 passed / 0 failed / 5 ignored, clippy/fmt/
+  layers/web-check clean. README 41→42 (web stays 21, assemble native-only).
+- Parity B4#1–3 ticked W7; gaps.md B4 rows 1–3 marked CLOSED.
+- Undone (documented): no "Make video" button in timelapse dialog (command +
+  tests only, as scoped); ocr_lang single codes only (no eng+swe under the
+  alnum/-/_ contract). Rows B4#4–9 still pending (Ctrl+., countdown HUD,
+  upload POST — live/network scope).
+- Child over-reconned early (steered to write) + vision-looped late (steered
+  to cargo gates) — both steers effective.
 
 ## Appendix — measured reality
 

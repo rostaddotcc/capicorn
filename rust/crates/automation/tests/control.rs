@@ -146,7 +146,11 @@ fn commands_list_exposes_the_whole_registry() {
     let res = client.call(1, "commands.list", json!({}));
     assert_eq!(res["ok"], true, "{res}");
     let commands = res["result"].as_array().expect("array of commands");
-    assert_eq!(commands.len(), 41, "W5 engine registry has 41 commands");
+    assert_eq!(
+        commands.len(),
+        42,
+        "W7 engine registry has 42 commands (41 + timelapse.assemble)"
+    );
     assert_eq!(commands.len(), snagcraft_engine::registry().len());
     for entry in commands {
         assert!(entry["id"].is_string(), "{entry}");

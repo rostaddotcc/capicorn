@@ -12,7 +12,7 @@
 //!
 //! # Feature split (`native` / web core)
 //!
-//! The default `native` feature is the desktop engine, unchanged: 41 commands,
+//! The default `native` feature is the desktop engine, unchanged: 42 commands,
 //! including capture, recording, scrolling capture, timelapse, OCR, upload and
 //! clipboard. `--no-default-features` builds the web core, which compiles for
 //! `wasm32-unknown-unknown`: `snagcraft-capture`, `snagcraft-recording` and
@@ -495,6 +495,49 @@ fn cmd_timelapse_poll(s: &mut Session, _p: Value) -> Result<Value, CommandError>
         }
     }
     Ok(json!({"events": events, "running": s.timelapse.is_some()}))
+}
+
+#[cfg(feature = "native")]
+fn cmd_timelapse_assemble(_s: &mut Session, p: Value) -> Result<Value, CommandError> {
+    let dir = p_str(&p, "dir")?;
+    let dir_path = std::path::Path::new(dir);
+    if !dir_path.is_dir() {
+        return Err(CommandError::InvalidParams(format!(
+            "frame folder does not exist: {dir}"
+        )));
+    }
+    // Default glob = exactly the names timelapse.start writes.
+    let pattern = p
+        .get("pattern")
+        .and_then(Value::as_str)
+        .unwrap_or(snagcraft_capture::timelapse::FRAME_GLOB);
+    let fps = p
+        .get("fps")
+        .and_then(Value::as_u64)
+        .unwrap_or(10)
+        .min(u64::from(u32::MAX)) as u32;
+    let out = match p.get("out").and_then(Value::as_str) {
+        Some(out) if !out.trim().is_empty() => std::path::PathBuf::from(out),
+        _ => dir_path.join(snagcraft_recording::DEFAULT_OUTPUT_NAME),
+    };
+    let report =
+        snagcraft_recording::assemble_timelapse(dir_path, pattern, fps, &out).map_err(|err| {
+            match err {
+                // Caller mistakes stay InvalidParams; only the child/disk is IO.
+                snagcraft_recording::AssembleError::NoFrames(msg) => {
+                    CommandError::InvalidParams(format!("no timelapse frames: {msg}"))
+                }
+                snagcraft_recording::AssembleError::Pattern(msg) => {
+                    CommandError::InvalidParams(msg)
+                }
+                other => CommandError::Io(other.to_string()),
+            }
+        })?;
+    Ok(json!({
+        "video": report.video.to_string_lossy(),
+        "frames": report.frames,
+        "fps": report.fps,
+    }))
 }
 
 #[cfg(feature = "native")]
@@ -1125,6 +1168,13 @@ pub fn registry() -> Vec<CommandSpec> {
         },
         #[cfg(feature = "native")]
         CommandSpec {
+            id: "timelapse.assemble",
+            label: "Assemble timelapse frames into an MP4",
+            params_doc: "{dir, pattern?, fps?, out?}",
+            run: cmd_timelapse_assemble,
+        },
+        #[cfg(feature = "native")]
+        CommandSpec {
             id: "record.start",
             label: "Start screen recording",
             params_doc: "{format: mp4|gif, region?, audio_source?, fps?, output}",
@@ -1542,6 +1592,122 @@ mod tests {
     }
 
     #[test]
+    fn timelapse_assemble_writes_an_h264_mp4() {
+        if !snagcraft_recording::ffmpeg_available() {
+            return; // skip-if-no-ffmpeg (offline evidence still runs on pn53)
+        }
+        let dir =
+            std::env::temp_dir().join(format!("snagcraft-engine-assemble-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // Odd frame size on purpose: the pad filter must make it even.
+        let mut s = Session::new();
+        s.dispatch("doc.new", json!({"w": 33, "h": 21})).unwrap();
+        for index in 1..=5u32 {
+            let frame = dir.join(format!("snagcraft-timelapse-{index:05}.png"));
+            s.dispatch("doc.export", json!({"path": frame.to_str().unwrap()}))
+                .unwrap();
+        }
+        // A decoy that the default glob must ignore.
+        s.dispatch(
+            "doc.export",
+            json!({"path": dir.join("other.png").to_str().unwrap()}),
+        )
+        .unwrap();
+
+        let r = s
+            .dispatch(
+                "timelapse.assemble",
+                json!({"dir": dir.to_str().unwrap(), "fps": 12}),
+            )
+            .unwrap();
+        assert_eq!(r["frames"], 5, "only the timelapse frames are counted");
+        assert_eq!(r["fps"], 12);
+        let video = r["video"].as_str().unwrap_or_default().to_string();
+        assert_eq!(video, dir.join("timelapse.mp4").to_string_lossy());
+        assert!(std::fs::metadata(&video).unwrap().len() > 1000);
+
+        // ffprobe is the evidence: real h264, the frame count, even dimensions.
+        let probe = std::process::Command::new("ffprobe")
+            .args([
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=codec_name,nb_frames,width,height",
+                "-of",
+                "default=nw=1",
+                &video,
+            ])
+            .output()
+            .unwrap();
+        let text = String::from_utf8_lossy(&probe.stdout);
+        eprintln!("ffprobe {}: {}", video, text.trim().replace('\n', " "));
+        assert!(text.contains("codec_name=h264"), "ffprobe said: {text}");
+        assert!(text.contains("nb_frames=5"), "ffprobe said: {text}");
+        assert!(text.contains("width=34"), "padded to even: {text}");
+        assert!(text.contains("height=22"), "padded to even: {text}");
+        // Evidence runs (`SNAGCRAFT_KEEP_ASSEMBLE_ARTIFACTS=1`) keep the MP4
+        // around for a manual ffprobe; normal runs leave no scratch behind.
+        if std::env::var_os("SNAGCRAFT_KEEP_ASSEMBLE_ARTIFACTS").is_none() {
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+    }
+
+    #[test]
+    fn timelapse_assemble_is_hostile_safe() {
+        let dir = std::env::temp_dir().join(format!(
+            "snagcraft-engine-assemble-hostile-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let dir_str = dir.to_str().unwrap().to_string();
+
+        // Missing dir, empty dir, traversal, absolute path, shell metachars.
+        assert!(matches!(
+            s_dispatch_assemble(json!({"dir": dir.join("nope").to_str().unwrap()})),
+            Err(CommandError::InvalidParams(_))
+        ));
+        assert!(matches!(
+            s_dispatch_assemble(json!({"dir": dir_str})),
+            Err(CommandError::InvalidParams(_))
+        ));
+        for pattern in [
+            "../*.png",
+            "..",
+            "/etc/*.png",
+            "*.png; rm -rf /",
+            "$(id)*.png",
+        ] {
+            assert!(
+                matches!(
+                    s_dispatch_assemble(json!({"dir": dir_str, "pattern": pattern})),
+                    Err(CommandError::InvalidParams(_))
+                ),
+                "pattern {pattern:?} must be rejected before any spawn"
+            );
+        }
+        // No 'dir' at all, and a non-string dir.
+        assert!(matches!(
+            s_dispatch_assemble(json!({})),
+            Err(CommandError::InvalidParams(_))
+        ));
+        assert!(matches!(
+            s_dispatch_assemble(json!({"dir": 42})),
+            Err(CommandError::InvalidParams(_))
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn s_dispatch_assemble(params: Value) -> Result<Value, CommandError> {
+        let mut s = Session::new();
+        s.dispatch("timelapse.assemble", params)
+    }
+
+    #[test]
     fn export_watermark_changes_corner_pixels() {
         let dir = std::env::temp_dir().join("snagcraft-wm-test");
         std::fs::create_dir_all(&dir).unwrap();
@@ -1651,16 +1817,17 @@ mod tests {
     }
 
     #[test]
-    fn native_registry_keeps_all_41_commands() {
+    fn native_registry_keeps_all_42_commands() {
         // Desktop contract: every command the UI, CLI and MCP know is present.
         // Bump deliberately when a wave adds a command.
         let ids: Vec<&str> = registry().iter().map(|c| c.id).collect();
-        assert_eq!(ids.len(), 41, "native registry drifted: {ids:?}");
+        assert_eq!(ids.len(), 42, "native registry drifted: {ids:?}");
         for native_only in [
             "capture.full",
             "record.start",
             "scroll.poll",
             "timelapse.start",
+            "timelapse.assemble",
             "ocr.run",
             "upload.open",
             "clipboard.copy",

@@ -140,6 +140,8 @@ pub struct SettingsView {
     pub watermark_corner: String,
     /// Share/upload page opened by `upload.open` (empty = feature off).
     pub upload_url: String,
+    /// Tesseract language code for `ocr.run` (`eng`, `swe`, …). W7.
+    pub ocr_lang: String,
 }
 
 impl Default for SettingsView {
@@ -161,6 +163,7 @@ impl Default for SettingsView {
             watermark_opacity: WATERMARK_OPACITY_DEFAULT,
             watermark_corner: "bottom-right".to_string(),
             upload_url: String::new(),
+            ocr_lang: "eng".to_string(),
         }
     }
 }
@@ -217,6 +220,12 @@ impl SettingsView {
                 _ => d.watermark_corner,
             },
             upload_url: s("upload_url", &d.upload_url),
+            // A hostile/invalid code falls back to `eng` here, so a bad file
+            // can never make every `settings.set` from the panel fail.
+            ocr_lang: match v.get("ocr_lang").and_then(|x| x.as_str()) {
+                Some(lang) if snagcraft_io::settings::valid_ocr_lang(lang) => lang.to_string(),
+                _ => d.ocr_lang,
+            },
         }
     }
 
@@ -239,6 +248,7 @@ impl SettingsView {
             "watermark_opacity": self.watermark_opacity,
             "watermark_corner": self.watermark_corner,
             "upload_url": self.upload_url,
+            "ocr_lang": self.ocr_lang,
         })
     }
 }
@@ -621,6 +631,11 @@ impl Default for TimelapseState {
 pub struct OcrState {
     pub open: bool,
     pub text: String,
+    /// `ocr.run` is in flight on a worker thread: the window shows progress and
+    /// Extract/Copy stay disabled until the result lands.
+    pub busy: bool,
+    /// `ocr.languages` cached after the first probe (`None` = not asked yet).
+    pub languages: Option<Vec<String>>,
 }
 
 pub struct SnagCraftApp {
@@ -692,6 +707,8 @@ pub struct SnagCraftApp {
     pub ocr: OcrState,
     /// `ocr.available` cached: it probes for the tesseract binary.
     pub ocr_available: Option<bool>,
+    /// Off-thread `ocr.run`: the worker sends the extracted text (or its error).
+    ocr_rx: Option<mpsc::Receiver<Result<String, String>>>,
     pick: Option<RegionPick>,
     pick_rx: Option<mpsc::Receiver<Result<Surface, String>>>,
     /// Web open path: in-flight browser file read (`w`, `h`) or its error.
@@ -776,6 +793,7 @@ impl SnagCraftApp {
             timelapse: TimelapseState::default(),
             ocr: OcrState::default(),
             ocr_available: None,
+            ocr_rx: None,
             pick: None,
             pick_rx: None,
             #[cfg(not(feature = "native"))]
@@ -1718,19 +1736,130 @@ impl SnagCraftApp {
 
     // ---- OCR / upload -------------------------------------------------------
 
+    /// The OCR language the picker and `ocr.run` use (invalid → `eng`).
+    pub fn selected_ocr_lang(&self) -> String {
+        let lang = self.settings.ocr_lang.trim();
+        if snagcraft_io::settings::valid_ocr_lang(lang) {
+            lang.to_string()
+        } else {
+            "eng".to_string()
+        }
+    }
+
+    /// `ocr.languages`, probed once and cached; `["eng"]` when tesseract (or
+    /// the web core, which has no OCR command) cannot answer. The persisted
+    /// language is always in the list so the picker can show it.
+    pub fn ocr_languages(&mut self) -> Vec<String> {
+        if let Some(languages) = &self.ocr.languages {
+            return languages.clone();
+        }
+        let mut languages = self
+            .exec("ocr.languages", serde_json::json!({}))
+            .ok()
+            .and_then(|v| v["languages"].as_array().cloned())
+            .map(|list| {
+                list.iter()
+                    .filter_map(|code| code.as_str())
+                    .filter(|code| snagcraft_io::settings::valid_ocr_lang(code))
+                    .map(str::to_string)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        if languages.is_empty() {
+            languages.push("eng".to_string());
+        }
+        let selected = self.selected_ocr_lang();
+        if !languages.contains(&selected) {
+            languages.insert(0, selected);
+        }
+        self.ocr.languages = Some(languages.clone());
+        languages
+    }
+
+    /// Persist the OCR language through `settings.set` (the engine owns it).
+    pub fn set_ocr_lang(&mut self, lang: String) {
+        if !snagcraft_io::settings::valid_ocr_lang(&lang) {
+            self.status = format!("OCR language '{lang}' is not a valid code.");
+            return;
+        }
+        let mut next = self.settings.clone();
+        next.ocr_lang = lang;
+        self.push_settings(next);
+    }
+
     /// `ocr.run` on the current document, shown in the result window.
+    ///
+    /// Rendering the composite and tesseract both take long enough to stall a
+    /// frame, so the call runs on a worker thread and the window shows progress
+    /// until [`Self::poll_ocr`] collects the text (or the error).
     pub fn run_ocr(&mut self) {
-        match self.exec("ocr.run", serde_json::json!({"lang": "eng"})) {
-            Ok(v) => {
-                self.ocr.text = v["text"].as_str().unwrap_or_default().to_string();
+        if self.ocr.busy {
+            return; // one extraction at a time
+        }
+        let lang = self.selected_ocr_lang();
+        self.ocr.open = true;
+        self.ocr.busy = true;
+        self.status = format!("Reading text ({lang})…");
+        self.redraw = true;
+        let session = Arc::clone(&self.session);
+        let (tx, rx) = mpsc::channel();
+        let params = serde_json::json!({ "lang": lang });
+        let spawned = std::thread::Builder::new()
+            .name("snagcraft-ocr".to_string())
+            .spawn(move || {
+                let outcome = {
+                    let mut guard = session
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner());
+                    guard
+                        .dispatch("ocr.run", params)
+                        .map(|v| v["text"].as_str().unwrap_or_default().to_string())
+                        .map_err(|err| err.to_string())
+                };
+                let _ = tx.send(outcome);
+            });
+        if let Err(err) = spawned {
+            self.ocr.busy = false;
+            self.ocr_rx = None;
+            self.status = format!("OCR: cannot start the worker ({err})");
+            return;
+        }
+        self.ocr_rx = Some(rx);
+    }
+
+    /// Collect the worker's result. Clears the busy flag on success, error and
+    /// a dead worker alike, so the window can never stay stuck.
+    fn poll_ocr(&mut self) {
+        let Some(rx) = self.ocr_rx.as_ref() else {
+            return;
+        };
+        let outcome = rx.try_recv();
+        let pending = matches!(outcome, Err(std::sync::mpsc::TryRecvError::Empty));
+        match outcome {
+            Ok(Ok(text)) => {
+                self.ocr.text = text;
+                self.ocr.busy = false;
                 self.ocr.open = true;
+                self.ocr_rx = None;
                 self.status = format!(
                     "OCR extracted {} characters.",
                     self.ocr.text.chars().count()
                 );
-                self.redraw = true;
             }
-            Err(err) => self.status = format!("OCR: {err}"),
+            Ok(Err(err)) => {
+                self.ocr.busy = false;
+                self.ocr_rx = None;
+                self.status = format!("OCR: {err}");
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {}
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.ocr.busy = false;
+                self.ocr_rx = None;
+                self.status = "OCR: the worker stopped without a result.".into();
+            }
+        }
+        if !pending {
+            self.redraw = true;
         }
     }
 
@@ -1799,6 +1928,7 @@ impl SnagCraftApp {
     /// `logic` — eframe skips `ui` while the window is hidden, and a recording
     /// started from the widget must still report its `stopped` event.
     fn poll_media(&mut self) {
+        self.poll_ocr();
         self.poll_pick();
         if self.rec.armed {
             self.poll_record();
@@ -1965,29 +2095,53 @@ impl SnagCraftApp {
 
     // ---- windows ------------------------------------------------------------
 
-    /// OCR result: selectable text plus one-click copy (the document is never
-    /// touched — this is a read of the composite).
+    /// OCR window: language picker, an Extract button and the text. While
+    /// `ocr.run` runs on its worker thread the body is a progress row instead of
+    /// the text, and Extract/Copy are disabled — the document is never touched.
     fn ocr_window(&mut self, ctx: &egui::Context) {
         if !self.ocr.open {
             return;
         }
+        let busy = self.ocr.busy;
+        let ready = self.ocr_ready();
+        let languages = self.ocr_languages();
+        let mut lang = self.selected_ocr_lang();
+        let mut picked: Option<String> = None;
         let mut open = true;
         let mut copy = false;
         let mut close = false;
+        let mut extract = false;
         egui::Window::new("Extracted text")
             .open(&mut open)
             .resizable(true)
             .default_width(440.0)
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label(
-                        egui::RichText::new(
-                            "Read from the current image — the document is untouched.",
-                        )
-                        .size(11.0)
-                        .weak(),
-                    );
+                    ui.label("Language");
+                    egui::ComboBox::from_id_salt("ocr-language")
+                        .width(170.0)
+                        .selected_text(ocr_language_label(&lang))
+                        .show_ui(ui, |ui| {
+                            for code in &languages {
+                                if ui
+                                    .selectable_value(
+                                        &mut lang,
+                                        code.clone(),
+                                        ocr_language_label(code),
+                                    )
+                                    .changed()
+                                {
+                                    picked = Some(code.clone());
+                                }
+                            }
+                        });
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        let button = ui
+                            .add_enabled(!busy && ready, egui::Button::new("Extract"))
+                            .on_hover_text("Read the text in the current image");
+                        if button.clicked() {
+                            extract = true;
+                        }
                         ui.label(
                             egui::RichText::new(format!(
                                 "{} characters",
@@ -1999,15 +2153,31 @@ impl SnagCraftApp {
                     });
                 });
                 ui.add_space(4.0);
-                let mut buf = self.ocr.text.clone();
-                ui.add(
-                    egui::TextEdit::multiline(&mut buf)
-                        .desired_rows(12)
-                        .desired_width(f32::INFINITY)
-                        .code_editor(),
-                );
+                if busy {
+                    ui.horizontal(|ui| {
+                        ui.add(egui::Spinner::new());
+                        ui.label("Reading text…");
+                    });
+                    ui.add_space(2.0);
+                    ui.label(
+                        egui::RichText::new("The image is only read, never changed.")
+                            .size(11.0)
+                            .weak(),
+                    );
+                } else {
+                    let mut buf = self.ocr.text.clone();
+                    ui.add(
+                        egui::TextEdit::multiline(&mut buf)
+                            .desired_rows(12)
+                            .desired_width(f32::INFINITY)
+                            .code_editor(),
+                    );
+                }
                 ui.horizontal(|ui| {
-                    if ui.button("Copy text").clicked() {
+                    if ui
+                        .add_enabled(!busy, egui::Button::new("Copy text"))
+                        .clicked()
+                    {
                         copy = true;
                     }
                     if ui.button("Close").clicked() {
@@ -2015,6 +2185,12 @@ impl SnagCraftApp {
                     }
                 });
             });
+        if let Some(code) = picked {
+            self.set_ocr_lang(code);
+        }
+        if extract {
+            self.run_ocr();
+        }
         if copy {
             ctx.copy_text(self.ocr.text.clone());
             self.status = "Extracted text copied to the clipboard.".into();
@@ -2670,6 +2846,36 @@ fn picture_icon(ui: &mut egui::Ui) {
 fn section(ui: &mut egui::Ui, title: &str) {
     ui.add_space(4.0);
     ui.label(egui::RichText::new(title).strong().size(12.5));
+}
+
+/// Human label for a tesseract language code (`swe` → "Swedish (swe)").
+/// Unknown codes are shown verbatim — the picker never hides a language the
+/// engine reported.
+fn ocr_language_label(code: &str) -> String {
+    let name = match code {
+        "eng" => "English",
+        "swe" => "Swedish",
+        "dan" => "Danish",
+        "nor" => "Norwegian",
+        "fin" => "Finnish",
+        "deu" | "ger" => "German",
+        "fra" | "fre" => "French",
+        "spa" => "Spanish",
+        "ita" => "Italian",
+        "por" => "Portuguese",
+        "nld" | "dut" => "Dutch",
+        "pol" => "Polish",
+        "rus" => "Russian",
+        "ukr" => "Ukrainian",
+        "ara" => "Arabic",
+        "hin" => "Hindi",
+        "jpn" => "Japanese",
+        "kor" => "Korean",
+        "chi_sim" => "Chinese (simplified)",
+        "chi_tra" => "Chinese (traditional)",
+        _ => return code.to_string(),
+    };
+    format!("{name} ({code})")
 }
 
 /// The settings body. Pure UI: it mutates `next` and reports what happened.

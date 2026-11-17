@@ -177,8 +177,8 @@ Effects are applied to the **image layer at export resolution** (scene px × exp
 
 | Feature | Evidence | rust |
 |---|---|---|
-| Extract text from the current capture; language `eng` \| `swe`, stored in `snagcraft:ocr-lang` | `app.ts:671-676` (`OCR_LANG_KEY`, `OCR_LANGS`), toolbar chip `:906` | pending |
-| Modal: language select, "Extract text", busy "Reading…", read-only textarea, live status | `app.ts:1265-1287` (lang `:1278`, run `:1283`, busy `:1284`, textarea `:1286`) | pending |
+| Extract text from the current capture; language `eng` \| `swe`, stored in `snagcraft:ocr-lang` | `app.ts:671-676` (`OCR_LANG_KEY`, `OCR_LANGS`), toolbar chip `:906` | W7 |
+| Modal: language select, "Extract text", busy "Reading…", read-only textarea, live status | `app.ts:1265-1287` (lang `:1278`, run `:1283`, busy `:1284`, textarea `:1286`) | W7 |
 | Backend: `ocr_image(dataUrl, lang?)`, `ocr_available()`, `ocr_languages()` | `ocr.rs:183-206`; `sanitize_lang` `:49`, `clean_output` `:72` | W4 |
 | Copy the recognised text to the clipboard | `app.ts:4181` (`copyOcrText`), `copy_text` `commands.rs:431-435` | W4 |
 
@@ -189,7 +189,7 @@ Effects are applied to the **image layer at export resolution** (scene px × exp
 | Feature | Evidence | rust |
 |---|---|---|
 | Interval loop: one PNG per tick named `SnagCraft-interval-*.png` into the save folder; stop converts the run to MP4 — a failed render never costs the shots | `timelapse.rs:1-6` | W4 |
-| `make_timelapse(dir, pattern, fps, out)` — glob resolved inside `dir` (no separators), ffmpeg `-pattern_type glob`, zero-padded numbers give playback order | `timelapse.rs:8-18`, `:100` | pending |
+| `make_timelapse(dir, pattern, fps, out)` — glob resolved inside `dir` (no separators), ffmpeg `-pattern_type glob`, zero-padded numbers give playback order | `timelapse.rs:8-18`, `:100` | W7 |
 | Interval period setting (default **30 s**), select "every N s / every 5 min" | `settings.ts:69` (`DEFAULT_INTERVAL`), select `settings.ts:837-842` | W4 |
 | Capture → Interval menu entry ("a screenshot every few seconds, then a timelapse") + per-mode banner copy | `app.ts:865-870`, `app.ts:2239-2243` | W4 |
 | **`Ctrl+.`** stops a running interval capture (same as Stop) | `app.ts:5181-5188` | pending |

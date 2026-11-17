@@ -35,6 +35,10 @@ pub const STOP_POLL: Duration = Duration::from_millis(100);
 /// lexicographic order (what ffmpeg's `glob` pattern uses) is frame order.
 const FRAME_PREFIX: &str = "snagcraft-timelapse-";
 
+/// Glob matching exactly the frames [`frame_path`] writes in one folder — the
+/// default `timelapse.assemble` pattern. Keep in step with [`FRAME_PREFIX`].
+pub const FRAME_GLOB: &str = "snagcraft-timelapse-*.png";
+
 /// What to capture and where to put it.
 #[derive(Clone, Debug)]
 pub struct TimelapseConfig {
@@ -251,6 +255,19 @@ mod tests {
                 frame_path(&dir, 10)
             ]
         );
+    }
+
+    #[test]
+    fn the_default_glob_matches_every_frame_name() {
+        // `timelapse.assemble` defaults to FRAME_GLOB; it must select exactly
+        // what the capture loop writes and nothing else in the folder.
+        assert_eq!(FRAME_GLOB, format!("{FRAME_PREFIX}*.png"));
+        let name = frame_path(Path::new("/tmp/shots"), 7)
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let (prefix, suffix) = name.split_once("00007").unwrap_or(("", ""));
+        assert_eq!(format!("{prefix}*{suffix}"), FRAME_GLOB);
     }
 
     #[test]

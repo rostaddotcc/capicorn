@@ -49,6 +49,14 @@ pub struct Settings {
     pub filename_pattern: String,
     pub hotkey_full: String,
     pub hotkey_region: String,
+    /// Export watermark text (empty = no watermark). W4d.
+    pub watermark_text: String,
+    /// Watermark opacity percent, 2..=100 (live default 45). W4d.
+    pub watermark_opacity: u8,
+    /// `bottom-right` | `bottom-left` | `top-right` | `top-left`. W4d.
+    pub watermark_corner: String,
+    /// Upload page URL (http/https only; empty = feature disabled). W4d.
+    pub upload_url: String,
 }
 
 impl Default for Settings {
@@ -66,6 +74,10 @@ impl Default for Settings {
             filename_pattern: "SnagCraft-{date}-{time}".to_string(),
             hotkey_full: "Print".to_string(),
             hotkey_region: "SHIFT+Print".to_string(),
+            watermark_text: String::new(),
+            watermark_opacity: 45,
+            watermark_corner: "bottom-right".to_string(),
+            upload_url: String::new(),
         }
     }
 }
@@ -78,6 +90,20 @@ impl Settings {
             return Err(IoError::Unsupported);
         }
         if !is_supported_format(&self.default_format) {
+            return Err(IoError::Unsupported);
+        }
+        if !(2..=100).contains(&self.watermark_opacity) {
+            return Err(IoError::Unsupported);
+        }
+        if !matches!(
+            self.watermark_corner.as_str(),
+            "bottom-right" | "bottom-left" | "top-right" | "top-left"
+        ) {
+            return Err(IoError::Unsupported);
+        }
+        if !self.upload_url.is_empty()
+            && !(self.upload_url.starts_with("http://") || self.upload_url.starts_with("https://"))
+        {
             return Err(IoError::Unsupported);
         }
         Ok(())
@@ -207,7 +233,43 @@ mod tests {
             filename_pattern: "shot-{datetime}".to_string(),
             hotkey_full: "CTRL+Print".to_string(),
             hotkey_region: "CTRL+SHIFT+Print".to_string(),
+            watermark_text: "\u{a9} Rostad".to_string(),
+            watermark_opacity: 70,
+            watermark_corner: "top-left".to_string(),
+            upload_url: "https://example.com/upload".to_string(),
         }
+    }
+
+    #[test]
+    fn watermark_upload_defaults_and_validation() {
+        let d = Settings::default();
+        assert_eq!(d.watermark_text, "");
+        assert_eq!(d.watermark_opacity, 45);
+        assert_eq!(d.watermark_corner, "bottom-right");
+        assert_eq!(d.upload_url, "");
+        assert!(d.validate().is_ok());
+        let mut bad = d.clone();
+        bad.watermark_opacity = 1;
+        assert!(bad.validate().is_err());
+        bad = d.clone();
+        bad.watermark_corner = "middle".to_string();
+        assert!(bad.validate().is_err());
+        bad = d.clone();
+        bad.upload_url = "file:///etc".to_string();
+        assert!(bad.validate().is_err());
+        bad = d.clone();
+        bad.upload_url = "https://ok.example/u".to_string();
+        assert!(bad.validate().is_ok());
+        // round-trip carries the new fields
+        let c = custom();
+        let json = serde_json::to_string(&c).unwrap();
+        let back: Settings = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, c);
+        // old files without the new fields load with defaults
+        let old_json = r#"{"default_format":"png","default_quality":90}"#;
+        let old: Settings = serde_json::from_str(old_json).unwrap();
+        assert_eq!(old.watermark_opacity, 45);
+        assert_eq!(old.watermark_corner, "bottom-right");
     }
 
     #[test]

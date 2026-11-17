@@ -91,8 +91,8 @@ Effects are applied to the **image layer at export resolution** (scene px × exp
 | **Copy to clipboard as PNG** (`Ctrl+C`) | `app.ts:4422-4432`, `copy_png` `commands.rs:299-303`, `clipboard.rs:6` | W2 |
 | **Paste** an image from the clipboard into the editor (`Ctrl+V`, `paste` event, first `image/*` item) | `app.ts:5081-5094` | W2 |
 | **Watermark on export** — text, opacity 2–100 (default 45 %), corner bottom-right/bottom-left/top-right/top-left | `watermark.ts:13-49` (`DEFAULT_WATERMARK` :28-33 = opacity 0.45, bottom-right), draw :62-90 (Inter 600), UI `settings.ts:972-984` | W4 |
-| **New blank canvas** (`Ctrl+N`) — 8 presets (Default 1280×800, HD, Full HD, QHD, 4K UHD, Square 1080², Story 1080×1920, Small 800×600), white or transparent, dims clamped 16–8192 | `app.ts:4939-4975` (`NEW_PRESETS` :4941-4950, `clampDim` :4952, `blankCanvasDataUrl` :4956-4969, `newCanvas` :4962) | pending |
-| **Resize** the canvas (dialog opened from the toolbar, closes on Esc) | `openResize` `app.ts:3622`, popover `:5118-5121` | pending |
+| **New blank canvas** (`Ctrl+N`) — 8 presets (Default 1280×800, HD, Full HD, QHD, 4K UHD, Square 1080², Story 1080×1920, Small 800×600), white or transparent, dims clamped 16–8192 | `app.ts:4939-4975` (`NEW_PRESETS` :4941-4950, `clampDim` :4952, `blankCanvasDataUrl` :4956-4969, `newCanvas` :4962) | W10 |
+| **Resize** the canvas (dialog opened from the toolbar, closes on Esc) | `openResize` `app.ts:3622`, popover `:5118-5121` | W10 |
 | **Recent strip** — newest-first, in-session cap `RECENT_LIMIT = 12`, plus a folder scan of the save (and recording) folder with thumbnails; clicking reads from disk, recordings open in the OS player | `app.ts:672` (`RECENT_LIMIT`), `refreshRecentFromFolder` `:3946-3980`, `list_folder_media` `commands.rs:386-429`, `open_path` `commands.rs:503-532` | W9 |
 | **Pin** (pin-a-shot-to-screen) — *removed*, must NOT be rebuilt | `CHANGELOG.md:201` ("Removed Pin") | n/a |
 

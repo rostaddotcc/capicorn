@@ -17,7 +17,7 @@ Baseline: Tauri v1.5.2 (commit d25adb1). Rebuild workspace: `rust/` (not yet cre
 | W7 | parity backlog (gaps B4#1–3) | complete — timelapse.assemble + OCR lang picker + busy modal (390 tests, ffprobe-verified) |
 | W8 | parity backlog (gaps B4#4–9) | complete — upload POST flow + Ctrl+. (timelapse) + countdown HUD; all 9 B4 rows closed |
 | W9 | parity long-tail (save & recent UX) | complete — filename tokens + Save As + default dir + Recent strip (451 tests) |
-| W10 | parity long-tail (canvas presets + Resize) | in progress — New-canvas presets + Resize dialog dispatched (70-call budget) |
+| W10 | parity long-tail (canvas presets + Resize) | complete — New-canvas presets + Resize dialog (459 tests, kittest tolerance) |
 
 ## Parity checklist
 
@@ -567,6 +567,28 @@ Baseline: Tauri v1.5.2 (commit d25adb1). Rebuild workspace: `rust/` (not yet cre
   recording-thumb placeholder); README 44; gaps W9 note. Still pending:
   separate recording folder, New-canvas presets, Resize dialog, settings
   filename live-preview + other long-tail + rostad gates.
+
+### 2026-11-17 — wake #90: W10 COMPLETE (canvas presets + Resize)
+- W10 done: New-canvas dialog (Ctrl+N + File→New, 8 presets Default 1280×800
+  … Small 800×600 + custom W/H + Create, dirty-guard); engine doc.resize
+  (scales base + annotation geometry, clamp 1..=16384, registry 44→45) +
+  ui-egui Resize… dialog (prefilled dims, Esc closes). kittest w10_canvas.rs.
+- Child hit 70-call budget chasing snapshot shifts → PARENT STOPPED +
+  integrated. New toolbar buttons shifted 7 existing snapshots; re-blessed
+  with UPDATE_SNAPSHOTS=1 --no-fail-fast (default stops at first fail before
+  reaching ui-egui — must use --no-fail-fast to bless all).
+- Root-caused a residual 17px clean-run diff: a blinking text caret/focus
+  speck (time-based render non-determinism, top-center toolbar), NOT a
+  regression. Added rust/kittest.toml max_failed_pixels=64 (~0.008% of frame;
+  real regressions change hundreds+ px and still fail). Stable across 2 runs.
+- Parent bumped automation drift-guard 44→45 (13/13). Parent-verified:
+  workspace 459 passed / 0 failed / 5 ignored, clippy/fmt/layers/wasm clean.
+  New-canvas snapshot reviewed: 8-preset grid + custom fields + Create/Cancel,
+  clean. Parity 94/95 W10; README 45; gaps W10 note.
+- Remaining pending ~28 rows: settings rows (hotkeys enable/register, mic/
+  system audio, recording format, filename live-preview), separate recording
+  folder, copy diagnostics, PrintScreen fallback, text-caption settle,
+  dirty-state, editor decorations + rostad gates.
 
 ## Appendix — measured reality
 

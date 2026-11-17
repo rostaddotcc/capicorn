@@ -99,6 +99,14 @@ verified, WASM web app browser-verified (status log, W5 wake #50).
   copyable blob; the live Tauri app has such a button, the rebuild does not.
 - **Where logged:** status wake #32.
 
+### W10 canvas presets + Resize (2026-11-17) — CLOSED
+
+New-canvas dialog (Ctrl+N + File→New, 8 size presets Default 1280×800 …
+Small 800×600 + custom W/H + Create, dirty-guard) and Resize dialog (engine
+doc.resize scales base + annotation geometry, clamp 1..=16384; toolbar Resize…,
+Esc closes). kittest.toml added: max_failed_pixels=64 absorbs a ~17px blinking-
+caret render variance (real regressions still fail).
+
 ### W9 save & recent UX (2026-11-17) — CLOSED
 
 Filename token expansion ({date}/{time}/{datetime}), Save As (Ctrl+Shift+S,

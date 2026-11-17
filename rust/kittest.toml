@@ -1,0 +1,12 @@
+# egui_kittest snapshot tolerance.
+#
+# A handful of snapshots show a tiny (~17 px) time-based variance between runs:
+# a blinking text caret / focus speck in the toolbar advances phase between the
+# blessing run and the comparison run. That is render non-determinism, not a UI
+# regression. Allow a small failing-pixel budget so a caret blink does not fail
+# an otherwise-identical snapshot.
+#
+# 64 px is ~0.008% of a 1100x760 frame — far below any real layout/colour
+# regression (which changes hundreds to thousands of pixels), so genuine
+# changes still fail. Keep this tight; do not raise it to paper over a real diff.
+max_failed_pixels = 64

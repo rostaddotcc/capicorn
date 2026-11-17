@@ -12,7 +12,7 @@
 //!
 //! # Feature split (`native` / web core)
 //!
-//! The default `native` feature is the desktop engine, unchanged: 44 commands,
+//! The default `native` feature is the desktop engine, unchanged: 45 commands,
 //! including capture, recording, scrolling capture, timelapse, OCR, upload and
 //! clipboard. `--no-default-features` builds the web core, which compiles for
 //! `wasm32-unknown-unknown`: `snagcraft-capture`, `snagcraft-recording` and
@@ -28,14 +28,14 @@
 //!
 //! ## Web core commands
 //! `session.info`, `commands.list`, `settings.get`, `settings.set`, `doc.new`,
-//! `doc.open`, `doc.close`, `doc.inspect`, `doc.save`, `doc.save_as`,
+//! `doc.resize`, `doc.open`, `doc.close`, `doc.inspect`, `doc.save`, `doc.save_as`,
 //! `doc.load`, `doc.export`,
 //! `edit.add`, `edit.remove`, `edit.move`, `edit.blur`, `edit.crop`,
 //! `edit.bucket`, `edit.duplicate`, `edit.reorder`, `edit.undo`, `edit.redo`.
 
 use serde_json::{Value, json};
 use snagcraft_doc::{AnnotObject, BlurMode, Document};
-use snagcraft_geom::Size;
+use snagcraft_geom::{Point, Rect, Size};
 use snagcraft_io::settings::Settings;
 use snagcraft_ops::History;
 use snagcraft_raster::Surface;
@@ -411,6 +411,99 @@ fn cmd_doc_new(s: &mut Session, p: Value) -> Result<Value, CommandError> {
     }
     s.replace_doc(Document::white(Size::new(w as u32, h as u32)));
     Ok(json!({"width": w as u32, "height": h as u32}))
+}
+
+/// `doc.resize {w,h}` — re-sample the base to a new canvas size and carry the
+/// annotations with it, mirroring the live `resizeImage` (editor.ts:1000): the
+/// ink follows the image's box, so every coordinate scales by `(sx, sy)` and
+/// strokes/type by the geometric mean of the two. Hostile `w`/`h` are clamped
+/// into `1..=MAX_DIM` instead of rejected, so no caller can allocate past cap.
+fn cmd_doc_resize(s: &mut Session, p: Value) -> Result<Value, CommandError> {
+    let w = p_f32(&p, "w")?;
+    let h = p_f32(&p, "h")?;
+    if !w.is_finite() || !h.is_finite() {
+        return Err(CommandError::InvalidParams("size must be finite".into()));
+    }
+    let cap = snagcraft_raster::MAX_DIM as f32;
+    let new_w = w.round().clamp(1.0, cap) as u32;
+    let new_h = h.round().clamp(1.0, cap) as u32;
+    let d = s.doc.as_ref().ok_or(CommandError::NoDoc)?;
+    let (ow, oh) = (d.size.w, d.size.h);
+    if ow == 0 || oh == 0 {
+        return Err(CommandError::InvalidParams("document has no canvas".into()));
+    }
+    if new_w == ow && new_h == oh {
+        return Ok(json!({"width": new_w, "height": new_h, "resized": false}));
+    }
+    let base = snagcraft_algo::resize_region(
+        &d.base,
+        Rect::new(0.0, 0.0, ow as f32, oh as f32),
+        new_w,
+        new_h,
+    );
+    let sx = new_w as f32 / ow as f32;
+    let sy = new_h as f32 / oh as f32;
+    let objects: Vec<AnnotObject> = d.objects.iter().map(|o| scale_object(o, sx, sy)).collect();
+    let next_id = d.next_id;
+    let mut next = Document::new(base);
+    next.objects = objects;
+    next.next_id = next_id;
+    s.history.record(d);
+    s.doc = Some(next);
+    Ok(json!({"width": new_w, "height": new_h, "resized": true}))
+}
+
+/// Scale one annotation with the canvas — the engine twin of the live editor's
+/// ink-rebase in `layout()`: points by `(sx, sy)`, pens/type by their mean.
+fn scale_object(obj: &AnnotObject, sx: f32, sy: f32) -> AnnotObject {
+    let s = (sx * sy).sqrt();
+    let mut out = obj.clone();
+    match &mut out {
+        AnnotObject::Arrow {
+            from, to, width, ..
+        } => {
+            *from = Point::new(from.x * sx, from.y * sy);
+            *to = Point::new(to.x * sx, to.y * sy);
+            *width *= s;
+        }
+        AnnotObject::Shape { rect, width, .. } => {
+            scale_rect(rect, sx, sy);
+            *width *= s;
+        }
+        AnnotObject::Text { pos, size, .. } => {
+            *pos = Point::new(pos.x * sx, pos.y * sy);
+            *size *= s;
+        }
+        AnnotObject::Blur { rect, radius, .. } => {
+            scale_rect(rect, sx, sy);
+            *radius = ((*radius as f32) * s).round().clamp(1.0, 512.0) as u32;
+        }
+        AnnotObject::Step { pos, radius, .. } => {
+            *pos = Point::new(pos.x * sx, pos.y * sy);
+            *radius *= s;
+        }
+        AnnotObject::Callout { rect, size, .. } => {
+            scale_rect(rect, sx, sy);
+            *size *= s;
+        }
+        AnnotObject::Highlighter { rect, .. }
+        | AnnotObject::Spotlight { rect, .. }
+        | AnnotObject::Magnify { rect, .. } => scale_rect(rect, sx, sy),
+        AnnotObject::BrushStroke { points, width, .. } => {
+            for pt in points.iter_mut() {
+                *pt = Point::new(pt.x * sx, pt.y * sy);
+            }
+            *width *= s;
+        }
+    }
+    out
+}
+
+fn scale_rect(rect: &mut Rect, sx: f32, sy: f32) {
+    rect.x *= sx;
+    rect.y *= sy;
+    rect.w *= sx;
+    rect.h *= sy;
 }
 
 fn cmd_doc_open(s: &mut Session, p: Value) -> Result<Value, CommandError> {
@@ -1156,6 +1249,12 @@ pub fn registry() -> Vec<CommandSpec> {
             label: "New white canvas",
             params_doc: "{w, h}",
             run: cmd_doc_new,
+        },
+        CommandSpec {
+            id: "doc.resize",
+            label: "Resize canvas",
+            params_doc: "{w, h} — clamped to 1..=16384; annotations scale with the canvas",
+            run: cmd_doc_resize,
         },
         CommandSpec {
             id: "doc.open",
@@ -2182,11 +2281,11 @@ mod tests {
     }
 
     #[test]
-    fn native_registry_keeps_all_44_commands() {
+    fn native_registry_keeps_all_45_commands() {
         // Desktop contract: every command the UI, CLI and MCP know is present.
         // Bump deliberately when a wave adds a command.
         let ids: Vec<&str> = registry().iter().map(|c| c.id).collect();
-        assert_eq!(ids.len(), 44, "native registry drifted: {ids:?}");
+        assert_eq!(ids.len(), 45, "native registry drifted: {ids:?}");
         for native_only in [
             "capture.full",
             "record.start",
@@ -2310,5 +2409,70 @@ mod tests {
         // Session state stays coherent and serializable.
         let got = s.dispatch("settings.get", json!({})).unwrap();
         assert!(got.is_object());
+    }
+}
+
+#[cfg(test)]
+mod w10_canvas_tests {
+    #![allow(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::float_cmp
+    )]
+
+    use super::*;
+
+    fn seeded() -> Session {
+        let mut s = Session::new();
+        s.dispatch("doc.new", json!({"w": 400, "h": 200})).unwrap();
+        s.dispatch(
+            "edit.add",
+            json!({"object": {"kind": "Shape", "id": 0, "shape": "Rect",
+                "rect": {"x": 100.0, "y": 50.0, "w": 80.0, "h": 40.0},
+                "color": [255, 0, 0, 255], "width": 2.0}}),
+        )
+        .unwrap();
+        s
+    }
+
+    #[test]
+    fn doc_resize_scales_canvas_and_annotations() {
+        let mut s = seeded();
+        let out = s
+            .dispatch("doc.resize", json!({"w": 800, "h": 400}))
+            .unwrap();
+        assert_eq!(out["width"], 800);
+        assert_eq!(out["resized"], true);
+        let d = s.doc().unwrap();
+        assert_eq!((d.size.w, d.size.h), (800, 400));
+        assert_eq!(d.base.dimensions(), (800, 400));
+        assert_eq!(d.objects.len(), 1, "annotations survive the resize");
+        // rect 100,50,80,40 at 2x, stroke 2 -> 4, bounds pad = width.
+        let b = d.objects[0].bounds();
+        assert!((b.x - 196.0).abs() < 0.5, "x scaled: {b:?}");
+        assert!((b.y - 96.0).abs() < 0.5, "y scaled: {b:?}");
+        assert!((b.w - 168.0).abs() < 0.5, "w scaled: {b:?}");
+        assert_eq!(d.next_id, 2, "id counter is preserved");
+        assert!(s.can_undo(), "resize is undoable like crop");
+        s.dispatch("edit.undo", json!({})).unwrap();
+        assert_eq!(s.doc().unwrap().size.w, 400, "undo restores the canvas");
+    }
+
+    #[test]
+    fn doc_resize_clamps_hostile_sizes_and_is_a_noop_at_the_same_size() {
+        let mut s = seeded();
+        // 0 clamps up to 1, 999_999 clamps down to MAX_DIM (no allocation bomb).
+        let out = s
+            .dispatch("doc.resize", json!({"w": 0, "h": 999_999}))
+            .unwrap();
+        assert_eq!(out["width"], 1);
+        assert_eq!(out["height"], snagcraft_raster::MAX_DIM);
+        let mut same = seeded();
+        let out = same
+            .dispatch("doc.resize", json!({"w": 400, "h": 200}))
+            .unwrap();
+        assert_eq!(out["resized"], false, "same size is a no-op");
+        assert_eq!(same.doc().unwrap().size.w, 400);
     }
 }

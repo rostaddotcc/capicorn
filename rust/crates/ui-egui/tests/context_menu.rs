@@ -45,6 +45,9 @@ fn context_menu_opens_with_classic_items() {
     for label in ["Copy Image", "Paste", "Save As…", "Export PNG…"] {
         let _ = h.get_by_label(label);
     }
+    // Let the menu's fade-in settle: the first frame is mid-animation, so the
+    // pixels (and the snapshot) would otherwise depend on the frame history.
+    h.run_steps(2);
     h.snapshot("w2_context_menu");
 }
 

@@ -713,6 +713,15 @@ pub struct SnagCraftApp {
     /// "Unsaved changes" modal visible.
     pub confirm_close: bool,
     pub settings_open: bool,
+    /// New-canvas dialog (Ctrl+N / File → New…): eight presets + custom size.
+    pub new_canvas_open: bool,
+    pub new_canvas_w: f32,
+    pub new_canvas_h: f32,
+    /// Resize dialog (toolbar Resize…): prefilled with the current canvas.
+    pub resize_open: bool,
+    pub resize_w: f32,
+    pub resize_h: f32,
+    pub resize_error: Option<String>,
     /// Floating widget: folded tab vs expanded pill.
     pub widget_expanded: bool,
     /// Tray icon actually registered (hide-to-tray is only safe then).
@@ -816,6 +825,13 @@ impl SnagCraftApp {
             force_quit: false,
             confirm_close: false,
             settings_open: false,
+            new_canvas_open: false,
+            new_canvas_w: 1280.0,
+            new_canvas_h: 800.0,
+            resize_open: false,
+            resize_w: 0.0,
+            resize_h: 0.0,
+            resize_error: None,
             widget_expanded: false,
             tray_ok: false,
             hidden: false,
@@ -2506,6 +2522,253 @@ impl SnagCraftApp {
         }
         if cancel || !open {
             self.timelapse.dialog_open = false;
+        }
+    }
+}
+
+/// The live New-canvas sizes (`app.ts:4931` NEW_PRESETS) — the eight buttons.
+const NEW_CANVAS_PRESETS: [(&str, u32, u32); 8] = [
+    ("Default", 1280, 800),
+    ("HD", 1280, 720),
+    ("Full HD", 1920, 1080),
+    ("QHD", 2560, 1440),
+    ("4K UHD", 3840, 2160),
+    ("Square", 1080, 1080),
+    ("Story", 1080, 1920),
+    ("Small", 800, 600),
+];
+/// Live `clampDim`: a new canvas is 16..=8192 on either side.
+const NEW_CANVAS_MIN: f32 = 16.0;
+const NEW_CANVAS_MAX: f32 = 8192.0;
+/// Engine cap for `doc.resize` (`snagcraft_raster::MAX_DIM`).
+const RESIZE_MAX: f32 = 16384.0;
+
+fn clamp_canvas_dim(n: f32) -> f32 {
+    if n.is_finite() {
+        n.round().clamp(NEW_CANVAS_MIN, NEW_CANVAS_MAX)
+    } else {
+        NEW_CANVAS_MIN
+    }
+}
+
+impl SnagCraftApp {
+    /// Ctrl+N / File → New…: open the dialog seeded with the live defaults.
+    pub fn open_new_canvas(&mut self) {
+        if self.new_canvas_open {
+            return;
+        }
+        self.new_canvas_w = 1280.0;
+        self.new_canvas_h = 800.0;
+        self.new_canvas_open = true;
+    }
+
+    /// Replace the document with a blank white canvas. Mirrors the live
+    /// `newCanvas()`: a dirty document is saved into the save folder first
+    /// (no prompt, no work lost), then `doc.new` swaps in the blank canvas.
+    pub fn create_new_canvas(&mut self, w: f32, h: f32) {
+        let w = clamp_canvas_dim(w);
+        let h = clamp_canvas_dim(h);
+        #[cfg(feature = "native")]
+        if self.doc_dirty {
+            self.save_now();
+        }
+        match self.exec("doc.new", serde_json::json!({"w": w, "h": h})) {
+            Ok(_) => {
+                self.doc_dirty = false;
+                self.selected = None;
+                self.crop = None;
+                self.tex = None;
+                self.redraw = true;
+                self.new_canvas_open = false;
+                self.status =
+                    format!("New canvas {w}×{h} — draw away, or press PrintScreen to capture.");
+            }
+            Err(e) => self.status = format!("Could not create canvas: {e}"),
+        }
+    }
+
+    /// Toolbar Resize…: open the dialog with the current dimensions filled in.
+    pub fn open_resize(&mut self) {
+        let dims = self.sess().doc().map(|d| (d.size.w, d.size.h));
+        match dims {
+            Some((w, h)) => {
+                self.resize_w = w as f32;
+                self.resize_h = h as f32;
+                self.resize_error = None;
+                self.resize_open = true;
+            }
+            None => self.status = "Nothing to resize — capture a screen first.".into(),
+        }
+    }
+
+    /// Validate the dialog's two fields, then hand the size to `doc.resize`.
+    pub fn apply_resize(&mut self) {
+        let (w, h) = (self.resize_w.round(), self.resize_h.round());
+        if !w.is_finite() || !h.is_finite() || w < 1.0 || h < 1.0 {
+            self.resize_error = Some("Width and height must each be at least 1 pixel.".into());
+            return;
+        }
+        if w > RESIZE_MAX || h > RESIZE_MAX {
+            self.resize_error = Some(format!(
+                "{} px is the maximum on either side.",
+                RESIZE_MAX as u32
+            ));
+            return;
+        }
+        match self.exec("doc.resize", serde_json::json!({"w": w, "h": h})) {
+            Ok(v) => {
+                self.doc_dirty = true;
+                self.tex = None;
+                self.redraw = true;
+                self.selected = None;
+                self.resize_open = false;
+                self.resize_error = None;
+                self.status = format!("Resized to {} × {} px", v["width"], v["height"]);
+            }
+            Err(e) => self.resize_error = Some(format!("Resize failed: {e}")),
+        }
+    }
+
+    /// The New-canvas dialog: eight one-click presets plus custom fields.
+    fn new_canvas_dialog(&mut self, ctx: &egui::Context) {
+        if !self.new_canvas_open {
+            return;
+        }
+        let mut open = true;
+        let mut create: Option<(f32, f32)> = None;
+        let mut cancel = false;
+        egui::Window::new("New canvas")
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .default_width(400.0)
+            .show(ctx, |ui| {
+                ui.label(
+                    egui::RichText::new("A blank white canvas — pick a size, or type your own.")
+                        .size(11.5)
+                        .weak(),
+                );
+                ui.add_space(4.0);
+                egui::Grid::new("new-canvas-presets")
+                    .num_columns(2)
+                    .spacing([6.0, 6.0])
+                    .show(ui, |ui| {
+                        for (i, (name, w, h)) in NEW_CANVAS_PRESETS.iter().enumerate() {
+                            let label = format!("{name}  {w} × {h}");
+                            if ui
+                                .add_sized(
+                                    vec2(188.0, 26.0),
+                                    egui::Button::new(egui::RichText::new(label).size(12.0)),
+                                )
+                                .on_hover_text("Create this canvas now")
+                                .clicked()
+                            {
+                                create = Some((*w as f32, *h as f32));
+                            }
+                            if i % 2 == 1 {
+                                ui.end_row();
+                            }
+                        }
+                    });
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    ui.label("Width");
+                    ui.add(
+                        egui::DragValue::new(&mut self.new_canvas_w)
+                            .range(NEW_CANVAS_MIN..=NEW_CANVAS_MAX)
+                            .speed(4.0)
+                            .max_decimals(0)
+                            .suffix(" px"),
+                    );
+                    ui.label("Height");
+                    ui.add(
+                        egui::DragValue::new(&mut self.new_canvas_h)
+                            .range(NEW_CANVAS_MIN..=NEW_CANVAS_MAX)
+                            .speed(4.0)
+                            .max_decimals(0)
+                            .suffix(" px"),
+                    );
+                });
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Create").clicked() {
+                        create = Some((self.new_canvas_w, self.new_canvas_h));
+                    }
+                    if ui.button("Cancel").clicked() {
+                        cancel = true;
+                    }
+                });
+            });
+        if let Some((w, h)) = create {
+            self.create_new_canvas(w, h);
+        } else if cancel || !open {
+            self.new_canvas_open = false;
+        }
+    }
+
+    /// The Resize dialog: current dims prefilled, Esc / Cancel close it.
+    fn resize_dialog(&mut self, ctx: &egui::Context) {
+        if !self.resize_open {
+            return;
+        }
+        let Some((cw, ch)) = self.sess().doc().map(|d| (d.size.w, d.size.h)) else {
+            self.resize_open = false;
+            return;
+        };
+        let mut open = true;
+        let mut apply = false;
+        let mut cancel = false;
+        egui::Window::new("Resize image")
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .default_width(330.0)
+            .show(ctx, |ui| {
+                ui.label(
+                    egui::RichText::new(format!("Current: {cw} × {ch} px"))
+                        .size(11.5)
+                        .weak(),
+                );
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    ui.label("Width");
+                    ui.add(
+                        egui::DragValue::new(&mut self.resize_w)
+                            .range(1.0..=RESIZE_MAX)
+                            .speed(1.0)
+                            .max_decimals(0)
+                            .suffix(" px"),
+                    );
+                    ui.label("Height");
+                    ui.add(
+                        egui::DragValue::new(&mut self.resize_h)
+                            .range(1.0..=RESIZE_MAX)
+                            .speed(1.0)
+                            .max_decimals(0)
+                            .suffix(" px"),
+                    );
+                });
+                if let Some(err) = &self.resize_error {
+                    ui.label(
+                        egui::RichText::new(err)
+                            .size(11.0)
+                            .color(Color32::from_rgb(0xd0, 0x3a, 0x3a)),
+                    );
+                }
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Apply").clicked() {
+                        apply = true;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        cancel = true;
+                    }
+                });
+            });
+        if apply {
+            self.apply_resize();
+        } else if cancel || !open {
+            self.resize_open = false;
         }
     }
 }
@@ -4338,6 +4601,15 @@ fn handle_keys(ctx: &egui::Context, app: &mut SnagCraftApp) {
         return;
     }
 
+    // A canvas dialog owns Esc (and the keyboard) while it is up.
+    if app.new_canvas_open || app.resize_open {
+        if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape)) {
+            app.new_canvas_open = false;
+            app.resize_open = false;
+        }
+        return;
+    }
+
     ctx.input_mut(|i| {
         // Ctrl+Alt+V: start/stop a recording. Bare V stays the Select tool
         // (the 13-tool map owns every unmodified letter).
@@ -4370,6 +4642,10 @@ fn handle_keys(ctx: &egui::Context, app: &mut SnagCraftApp) {
         }
         if i.consume_key(Modifiers::CTRL, Key::Comma) {
             app.settings_open = true;
+        }
+        // Ctrl+N: the New-canvas dialog (live app.ts new-canvas).
+        if i.consume_key(Modifiers::CTRL, Key::N) {
+            app.open_new_canvas();
         }
         // Ctrl+S saves a flattened capture into the save folder, Ctrl+Shift+S is
         // Save As… — the live toolbar's two buttons on the keyboard.
@@ -4597,6 +4873,15 @@ fn media_hud(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
 fn file_menu(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
     ui.menu_button("File", |ui| {
         ui.set_min_width(250.0);
+        if ui
+            .button("New…")
+            .on_hover_text("A blank canvas in eight preset sizes (Ctrl+N)")
+            .clicked()
+        {
+            app.open_new_canvas();
+            ui.close();
+        }
+        ui.separator();
         if ui
             .button("Save")
             .on_hover_text("Save a flattened copy into your save folder (Ctrl+S)")
@@ -5066,6 +5351,13 @@ pub fn app_ui(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
                             app.dispatch("edit.undo", serde_json::json!({}));
                         }
                     });
+                    if ui
+                        .button("Resize…")
+                        .on_hover_text("Resize the canvas — annotations scale with it")
+                        .clicked()
+                    {
+                        app.open_resize();
+                    }
                     if ui
                         .button("Export")
                         .on_hover_text("Export the flattened image")
@@ -5720,6 +6012,8 @@ pub fn app_ui(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
     app.close_modal(&ctx);
     app.ocr_window(&ctx);
     app.timelapse_dialog(&ctx);
+    app.new_canvas_dialog(&ctx);
+    app.resize_dialog(&ctx);
     app.floating_widget(&ctx);
 
     if let Some(st) = &mut app.selftest {

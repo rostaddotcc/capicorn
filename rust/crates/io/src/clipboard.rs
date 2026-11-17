@@ -16,6 +16,29 @@ pub enum ClipboardError {
     Read(String),
     #[error("clipboard image is empty or too large")]
     InvalidImage,
+    #[error("diagnostics text is too large for the clipboard")]
+    TextTooLarge,
+}
+
+/// Hostile-input cap on text put on the clipboard (1 MiB): a runaway log tail
+/// can never hand arboard a multi-megabyte string.
+pub const MAX_TEXT_BYTES: usize = 1024 * 1024;
+
+/// Write plain text to the system clipboard (Copy diagnostics, OCR results).
+/// Empty text is a no-op success; oversized text is refused, never truncated
+/// silently.
+pub fn copy_text(text: &str) -> Result<(), ClipboardError> {
+    if text.len() > MAX_TEXT_BYTES {
+        return Err(ClipboardError::TextTooLarge);
+    }
+    if text.is_empty() {
+        return Ok(());
+    }
+    let mut clipboard =
+        arboard::Clipboard::new().map_err(|e| ClipboardError::Open(e.to_string()))?;
+    clipboard
+        .set_text(text.to_string())
+        .map_err(|e| ClipboardError::Write(e.to_string()))
 }
 
 /// Write a surface to the system clipboard as an RGBA image (pastes into

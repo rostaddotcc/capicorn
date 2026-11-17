@@ -23,6 +23,22 @@ fn harness(show_widget: bool) -> Harness<'static, SnagCraftApp> {
         .build_ui_state(|ui, app: &mut SnagCraftApp| app_ui(ui, app), app)
 }
 
+/// The settings panel is tall (W11 added a row per section): these tests need a
+/// viewport that shows every row, so a click lands on the widget it names.
+fn harness_tall(show_widget: bool) -> Harness<'static, SnagCraftApp> {
+    let mut app = SnagCraftApp::seeded();
+    app.settings = SettingsView {
+        show_widget,
+        ..SettingsView::default()
+    };
+    app.widget_expanded = true;
+    Harness::builder()
+        .with_size(egui::vec2(1100.0, 1_400.0))
+        .with_accessibility_check(false)
+        .with_context_setup(|ctx| apply_theme(ctx, Theme::Light))
+        .build_ui_state(|ui, app: &mut SnagCraftApp| app_ui(ui, app), app)
+}
+
 /// Inject the eframe close request (`ViewportEvent::Close`, viewport_info.rs:35).
 /// The event is consumed by the next frame, so the caller runs one step before
 /// reading the emitted viewport commands.
@@ -43,7 +59,7 @@ fn root_commands(h: &Harness<'static, SnagCraftApp>) -> Vec<egui::ViewportComman
 
 #[test]
 fn settings_window_opens_from_the_gear_button() {
-    let mut h = harness(false);
+    let mut h = harness_tall(false);
     h.run_steps(3);
     h.get_by_label("Settings (Ctrl+,)").click();
     h.run_steps(2);
@@ -61,7 +77,7 @@ fn settings_window_opens_from_the_gear_button() {
 
 #[test]
 fn settings_window_opens_with_ctrl_comma() {
-    let mut h = harness(false);
+    let mut h = harness_tall(false);
     h.run_steps(2);
     h.key_press_modifiers(egui::Modifiers::CTRL, egui::Key::Comma);
     h.run_steps(2);
@@ -70,12 +86,14 @@ fn settings_window_opens_with_ctrl_comma() {
 
 #[test]
 fn theme_swap_changes_pixels_and_state() {
-    let mut h = harness(false);
+    let mut h = harness_tall(false);
     h.run_steps(3);
     let light = h.render().expect("render light");
     h.get_by_label("Settings (Ctrl+,)").click();
     h.run_steps(2);
-    h.get_by_label("Dark").click();
+    // W11 added settings rows above Theme, pushing it below the scroll fold;
+    // click via AccessKit so the off-screen radio is still activated.
+    h.get_by_label("Dark").click_accesskit();
     h.run_steps(3);
 
     assert_eq!(h.state().settings.theme, Theme::Dark);
@@ -112,12 +130,14 @@ fn theme_swap_changes_pixels_and_state() {
 
 #[test]
 fn settings_change_marks_persistence_dirty() {
-    let mut h = harness(false);
+    let mut h = harness_tall(false);
     h.run_steps(2);
     assert!(!h.state_mut().take_settings_dirty(), "clean at startup");
     h.key_press_modifiers(egui::Modifiers::CTRL, egui::Key::Comma);
     h.run_steps(2);
-    h.get_by_label("Dark").click();
+    // W11 added settings rows above Theme, pushing it below the scroll fold;
+    // click via AccessKit so the off-screen radio is still activated.
+    h.get_by_label("Dark").click_accesskit();
     h.run_steps(2);
     assert!(
         h.state_mut().take_settings_dirty(),

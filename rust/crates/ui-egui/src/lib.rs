@@ -115,6 +115,29 @@ impl Theme {
     }
 }
 
+/// Interval-capture cadence choices (live `INTERVAL_CHOICES`, settings.ts:88).
+pub const INTERVAL_CHOICES: [u32; 5] = [5, 10, 30, 60, 300];
+
+/// `every 30 s` / `every 5 min` — the interval dropdown label.
+fn interval_label(secs: u32) -> String {
+    if secs >= 300 {
+        format!("every {} min", secs / 60)
+    } else {
+        format!("every {secs} s")
+    }
+}
+
+/// The fixed stamp the filename preview uses when the pattern field is not
+/// focused. A live clock would make every snapshot differ run to run; while the
+/// user types, the preview follows the real clock instead.
+fn preview_stamp() -> chrono::DateTime<chrono::Local> {
+    use chrono::TimeZone as _;
+    chrono::Local
+        .with_ymd_and_hms(2026, 11, 14, 19, 45, 12)
+        .single()
+        .unwrap_or_else(chrono::Local::now)
+}
+
 /// The settings the panel edits: a faithful view of `io::settings::Settings`
 /// (same field names/types) with the theme as [`Theme`]. Every change is
 /// written back through `settings.set`, so the engine stays the single owner.
@@ -142,6 +165,20 @@ pub struct SettingsView {
     pub upload_url: String,
     /// Tesseract language code for `ocr.run` (`eng`, `swe`, …). W7.
     pub ocr_lang: String,
+    /// Interval-capture cadence in seconds (1..=3600). W11.
+    pub interval_secs: u32,
+    /// Recording microphone source name (`None` = no microphone). W11.
+    pub mic_source: Option<String>,
+    /// Mix the desktop's own output into recordings. W11.
+    pub system_audio: bool,
+    /// Master switch for global-hotkey registration (off = PrintScreen only). W11.
+    pub hotkeys_enabled: bool,
+    /// `mp4` | `gif` — the Record button's container. W11.
+    pub recording_format: String,
+    /// Recordings get their own folder. W11.
+    pub split_folders: bool,
+    /// Recording folder override (`None` = follow `save_dir`). W11.
+    pub recording_dir: Option<String>,
 }
 
 impl Default for SettingsView {
@@ -164,6 +201,13 @@ impl Default for SettingsView {
             watermark_corner: "bottom-right".to_string(),
             upload_url: String::new(),
             ocr_lang: "eng".to_string(),
+            interval_secs: 30,
+            mic_source: None,
+            system_audio: false,
+            hotkeys_enabled: false,
+            recording_format: "mp4".to_string(),
+            split_folders: false,
+            recording_dir: None,
         }
     }
 }
@@ -226,6 +270,35 @@ impl SettingsView {
                 Some(lang) if snagcraft_io::settings::valid_ocr_lang(lang) => lang.to_string(),
                 _ => d.ocr_lang,
             },
+            interval_secs: v
+                .get("interval_secs")
+                .and_then(|x| x.as_u64())
+                .map_or(d.interval_secs, |x| x.clamp(1, 3_600) as u32),
+            // Blank/hostile device names fall back to `None` so the panel can
+            // never push an invalid value that `settings.set` rejects.
+            mic_source: v
+                .get("mic_source")
+                .and_then(|x| x.as_str())
+                .map(str::to_string)
+                .filter(|src| {
+                    !src.trim().is_empty()
+                        && src.len() <= snagcraft_io::settings::MAX_MIC_SOURCE_LEN
+                        && !src.chars().any(char::is_control)
+                }),
+            system_audio: b("system_audio", d.system_audio),
+            hotkeys_enabled: b("hotkeys_enabled", d.hotkeys_enabled),
+            recording_format: match v.get("recording_format").and_then(|x| x.as_str()) {
+                Some(f) if snagcraft_io::settings::is_supported_recording_format(f) => {
+                    f.to_string()
+                }
+                _ => d.recording_format,
+            },
+            split_folders: b("split_folders", d.split_folders),
+            recording_dir: v
+                .get("recording_dir")
+                .and_then(|x| x.as_str())
+                .map(str::to_string)
+                .filter(|dir| !dir.trim().is_empty()),
         }
     }
 
@@ -249,6 +322,13 @@ impl SettingsView {
             "watermark_corner": self.watermark_corner,
             "upload_url": self.upload_url,
             "ocr_lang": self.ocr_lang,
+            "interval_secs": self.interval_secs,
+            "mic_source": self.mic_source,
+            "system_audio": self.system_audio,
+            "hotkeys_enabled": self.hotkeys_enabled,
+            "recording_format": self.recording_format,
+            "split_folders": self.split_folders,
+            "recording_dir": self.recording_dir,
         })
     }
 }
@@ -705,6 +785,12 @@ pub struct SnagCraftApp {
     pub selftest: Option<SelfTest>,
     /// Settings mirror (engine is the owner; this is the last applied copy).
     pub settings: SettingsView,
+    /// Kittest/headless seam: when false a capture request is recorded in
+    /// [`Self::last_capture`] instead of opening the portal picker, so a key
+    /// dispatch can be asserted without a screen grab.
+    pub capture_enabled: bool,
+    /// What the last capture request asked for (key handler, tray, toolbar).
+    pub last_capture: Option<CaptureKind>,
     /// Unsaved-annotation flag for the close guard (cleared by save/export/
     /// open/new/capture, set by any successful `edit.*`).
     pub doc_dirty: bool,
@@ -797,6 +883,8 @@ impl SnagCraftApp {
         };
         Self {
             session,
+            capture_enabled: true,
+            last_capture: None,
             tool: Tool::Arrow,
             color: Color32::from_rgb(0xff, 0x3b, 0x30),
             stroke_width: 3.0,
@@ -1000,7 +1088,7 @@ impl SnagCraftApp {
         }
         #[cfg(feature = "native")]
         {
-            if self.capture_rx.is_some() {
+            if self.capture_rx.is_some() || !self.capture_enabled {
                 return;
             }
             let (tx, rx) = mpsc::channel();
@@ -1028,11 +1116,13 @@ impl SnagCraftApp {
 
     /// Capture the whole screen (toolbar widget's Full button, tray, hotkey).
     pub fn capture_full(&mut self) {
+        self.last_capture = Some(CaptureKind::Full);
         self.start_capture();
     }
 
     /// Capture and switch straight into the crop tool (Region button/hotkey).
     pub fn capture_region(&mut self) {
+        self.last_capture = Some(CaptureKind::Region);
         self.select_tool(Tool::Crop);
         self.start_capture();
     }
@@ -1105,6 +1195,27 @@ impl SnagCraftApp {
             }
             Err(e) => self.status = format!("Copy failed: {e}"),
         }
+    }
+
+    /// Settings → Troubleshooting: copy the recording diagnostics to the
+    /// clipboard (`diagnostics.copy`).
+    #[cfg(feature = "native")]
+    pub fn copy_diagnostics(&mut self) {
+        match self.exec("diagnostics.copy", serde_json::json!({})) {
+            Ok(v) => {
+                let bytes = v["bytes"].as_u64().unwrap_or(0);
+                self.status =
+                    format!("Diagnostics copied ({bytes} bytes) — paste them into a bug report.");
+            }
+            Err(err) => self.status = format!("Diagnostics: {err}"),
+        }
+    }
+
+    /// Web fallback: diagnostics read host logs and put them on the system
+    /// clipboard, neither of which exists in a browser tab.
+    #[cfg(not(feature = "native"))]
+    pub fn copy_diagnostics(&mut self) {
+        self.status = "Recording diagnostics are desktop-only.".into();
     }
 
     /// Web fallback: `clipboard.copy` is a native command (arboard), and the
@@ -1675,18 +1786,30 @@ impl SnagCraftApp {
         if self.recording() {
             return;
         }
-        let dir = self.ensure_save_dir();
-        let ext = if self.rec.format == "gif" {
-            "gif"
-        } else {
-            "mp4"
+        // W11: the separate recording folder and the persisted container are
+        // what the Record button uses; `rec.format`/`rec.audio` stay the
+        // in-session overrides when a picker set them.
+        let dir = match (&self.settings.recording_dir, self.settings.split_folders) {
+            (Some(dir), true) if !dir.trim().is_empty() => std::path::PathBuf::from(dir),
+            _ => self.ensure_save_dir(),
         };
+        let format = if self.rec.format.is_empty() {
+            self.settings.recording_format.clone()
+        } else {
+            self.rec.format.clone()
+        };
+        let ext = if format == "gif" { "gif" } else { "mp4" };
         let path = dir.join(format!("snagcraft-rec-{}.{ext}", epoch_secs()));
         let mut params = serde_json::json!({
             "format": ext,
             "output": path.to_string_lossy(),
         });
-        if let Some(source) = self.rec.audio.clone() {
+        if let Some(source) = self
+            .rec
+            .audio
+            .clone()
+            .or_else(|| self.settings.mic_source.clone())
+        {
             params["audio_source"] = serde_json::json!(source);
         }
         if let Some(rect) = region {
@@ -2795,6 +2918,13 @@ pub fn widget_viewport_id() -> ViewportId {
     ViewportId::from_hash_of("snagcraft-widget")
 }
 
+/// What a capture request asked for (W11 PrintScreen fallback assertions).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CaptureKind {
+    Full,
+    Region,
+}
+
 /// What the settings panel asks for beyond "the value changed".
 #[derive(Default)]
 struct SettingsActions {
@@ -2802,6 +2932,12 @@ struct SettingsActions {
     pick_dir: bool,
     /// Put the save folder back to the OS default (`None`).
     reset_dir: bool,
+    /// Pick the separate recording folder (W11).
+    pick_rec_dir: bool,
+    /// Recordings follow the screenshot folder again (W11).
+    reset_rec_dir: bool,
+    /// Settings → Troubleshooting: copy diagnostics to the clipboard (W11).
+    copy_diagnostics: bool,
     rebind: bool,
     open_upload: bool,
 }
@@ -2870,6 +3006,15 @@ impl SnagCraftApp {
     /// allows one `BindShortcuts` per session, so the old handle is dropped.
     #[cfg(feature = "native")]
     pub fn rebind_hotkeys(&mut self) {
+        // W11: the "Enable global hotkeys" switch owns registration. Off drops
+        // the portal session; PrintScreen keeps working in-app.
+        if !self.settings.hotkeys_enabled {
+            self.platform.hotkeys = None;
+            self.status =
+                "Global hotkeys are off — PrintScreen still captures in-app. Turn them on to register."
+                    .into();
+            return;
+        }
         let Some(tx) = self.platform.hotkey_tx.clone() else {
             self.status = "No hotkey portal — bindings unchanged.".into();
             return;
@@ -3206,11 +3351,20 @@ impl SnagCraftApp {
         let mut open = true;
         let mut next = self.settings.clone();
         let mut acts = SettingsActions::default();
+        let was_hotkeys = self.settings.hotkeys_enabled;
+        // The mic dropdown reads the (once-per-session) `audio.sources` list.
+        let sources = self.rec.sources.clone();
+        let status = self.status.clone();
         egui::Window::new("Settings")
             .open(&mut open)
             .resizable(false)
+            // The panel outgrew a short screen in W11: the window caps itself to
+            // the viewport and scrolls instead of running off the bottom.
+            .vscroll(true)
             .default_width(380.0)
-            .show(ctx, |ui| settings_ui(ui, &mut next, &mut acts));
+            .show(ctx, |ui| {
+                settings_ui(ui, &mut next, &mut acts, &sources, &status);
+            });
         if !open {
             self.settings_open = false;
         }
@@ -3236,6 +3390,27 @@ impl SnagCraftApp {
             next.save_dir = None;
             acts.changed = true;
         }
+        if acts.pick_rec_dir {
+            #[cfg(feature = "native")]
+            {
+                let mut dialog = rfd::FileDialog::new();
+                if let Some(current) = &next.recording_dir {
+                    dialog = dialog.set_directory(current);
+                }
+                if let Some(dir) = dialog.pick_folder() {
+                    next.recording_dir = Some(dir.to_string_lossy().to_string());
+                    acts.changed = true;
+                }
+            }
+            #[cfg(not(feature = "native"))]
+            {
+                self.status = "Folder pickers are desktop-only — the web build downloads.".into();
+            }
+        }
+        if acts.reset_rec_dir {
+            next.recording_dir = None;
+            acts.changed = true;
+        }
         if acts.changed {
             // Login autostart is a real desktop entry, not just a flag: apply
             // it first and roll the checkbox back if the write failed.
@@ -3258,6 +3433,12 @@ impl SnagCraftApp {
                 }
             }
             self.push_settings(next);
+            // W11: flipping "Enable global hotkeys" registers (or drops) the
+            // portal bindings straight away.
+            if self.settings.hotkeys_enabled != was_hotkeys {
+                #[cfg(feature = "native")]
+                self.rebind_hotkeys();
+            }
         }
         if acts.rebind {
             #[cfg(feature = "native")]
@@ -3268,6 +3449,9 @@ impl SnagCraftApp {
             {
                 self.status = "Global hotkeys are desktop-only.".into();
             }
+        }
+        if acts.copy_diagnostics {
+            self.copy_diagnostics();
         }
         if acts.open_upload {
             #[cfg(feature = "native")]
@@ -3386,7 +3570,13 @@ fn ocr_language_label(code: &str) -> String {
 }
 
 /// The settings body. Pure UI: it mutates `next` and reports what happened.
-fn settings_ui(ui: &mut egui::Ui, next: &mut SettingsView, acts: &mut SettingsActions) {
+fn settings_ui(
+    ui: &mut egui::Ui,
+    next: &mut SettingsView,
+    acts: &mut SettingsActions,
+    sources: &[(String, String)],
+    status: &str,
+) {
     section(ui, "General");
     // Tray / autostart / floating widget are desktop services; the web build
     // keeps the same settings file shape but has nothing to apply them to.
@@ -3433,6 +3623,65 @@ fn settings_ui(ui: &mut egui::Ui, next: &mut SettingsView, acts: &mut SettingsAc
             .changed();
     });
 
+    ui.horizontal(|ui| {
+        ui.label("Interval capture");
+        egui::ComboBox::from_id_salt("settings-interval")
+            .width(110.0)
+            .selected_text(interval_label(next.interval_secs))
+            .show_ui(ui, |ui| {
+                for secs in INTERVAL_CHOICES {
+                    acts.changed |= ui
+                        .selectable_value(&mut next.interval_secs, secs, interval_label(secs))
+                        .changed();
+                }
+            });
+    });
+    ui.label(
+        egui::RichText::new("Interval capture shoots this often; Stop ends the loop.")
+            .weak()
+            .size(11.0),
+    );
+
+    ui.separator();
+    section(ui, "Recording audio");
+    ui.horizontal(|ui| {
+        ui.label("Microphone");
+        let mic = next
+            .mic_source
+            .as_ref()
+            .and_then(|id| {
+                sources
+                    .iter()
+                    .find(|(sid, _)| sid == id)
+                    .map(|(_, name)| name.clone())
+            })
+            .unwrap_or_else(|| "None".to_string());
+        egui::ComboBox::from_id_salt("settings-mic")
+            .width(190.0)
+            .selected_text(mic)
+            .show_ui(ui, |ui| {
+                acts.changed |= ui
+                    .selectable_value(&mut next.mic_source, None, "None")
+                    .changed();
+                for (id, name) in sources {
+                    acts.changed |= ui
+                        .selectable_value(&mut next.mic_source, Some(id.clone()), name)
+                        .changed();
+                }
+            });
+    });
+    if sources.is_empty() {
+        ui.label(
+            egui::RichText::new("No microphone sources yet — they appear after a take.")
+                .weak()
+                .size(10.5),
+        );
+    }
+    acts.changed |= ui
+        .checkbox(&mut next.system_audio, "System audio (desktop output)")
+        .on_hover_text("Mix the desktop's own sound into the take")
+        .changed();
+
     ui.separator();
     section(ui, "Export");
     ui.horizontal(|ui| {
@@ -3459,6 +3708,24 @@ fn settings_ui(ui: &mut egui::Ui, next: &mut SettingsView, acts: &mut SettingsAc
             .on_hover_text("JPEG/WebP only — PNG is lossless")
             .changed();
     });
+    ui.horizontal(|ui| {
+        ui.label("Recording format");
+        egui::ComboBox::from_id_salt("settings-rec-format")
+            .width(96.0)
+            .selected_text(next.recording_format.clone())
+            .show_ui(ui, |ui| {
+                for format in snagcraft_io::settings::RECORDING_FORMATS {
+                    acts.changed |= ui
+                        .selectable_value(&mut next.recording_format, format.to_string(), format)
+                        .changed();
+                }
+            });
+    });
+    ui.label(
+        egui::RichText::new("Used by the Record button in the top bar.")
+            .weak()
+            .size(10.5),
+    );
     section(ui, "Watermark");
     ui.horizontal(|ui| {
         ui.label("Text");
@@ -3567,20 +3834,75 @@ fn settings_ui(ui: &mut egui::Ui, next: &mut SettingsView, acts: &mut SettingsAc
         .weak()
         .size(10.5),
     );
-    ui.horizontal(|ui| {
-        ui.label("File name");
-        acts.changed |= ui
-            .add(
+    let pattern_resp = ui
+        .horizontal(|ui| {
+            ui.label("File name");
+            ui.add(
                 egui::TextEdit::singleline(&mut next.filename_pattern)
                     .desired_width(220.0)
                     .hint_text("SnagCraft-{date}-{time}"),
             )
             .on_hover_text("{date} and {time} expand at save time")
-            .changed();
+        })
+        .inner;
+    acts.changed |= pattern_resp.changed();
+    ui.label(
+        egui::RichText::new("{date} 2026-11-14 · {time} 19-45-12 · {datetime} both")
+            .weak()
+            .size(10.5),
+    );
+    // Live preview through the real filename builder (W9). While the field is
+    // focused it follows the clock; otherwise it shows a fixed example stamp so
+    // the panel (and its snapshot) stays stable between runs.
+    let stamp = if pattern_resp.has_focus() {
+        chrono::Local::now()
+    } else {
+        preview_stamp()
+    };
+    let preview = snagcraft_io::files::build_filename(
+        &next.filename_pattern,
+        snagcraft_io::ImageFormat::Png,
+        stamp,
+    );
+    ui.label(
+        egui::RichText::new(format!("Preview: {preview}"))
+            .weak()
+            .size(10.5)
+            .monospace(),
+    );
+    ui.add_space(4.0);
+    acts.changed |= ui
+        .checkbox(&mut next.split_folders, "Separate recording folder")
+        .on_hover_text("Off: recordings land with the screenshots")
+        .changed();
+    ui.horizontal(|ui| {
+        let shown = match (&next.recording_dir, next.split_folders) {
+            (Some(dir), true) => dir.clone(),
+            _ => "Same as the save folder".to_string(),
+        };
+        ui.add(
+            egui::Label::new(egui::RichText::new(shown).size(11.0).monospace())
+                .truncate()
+                .sense(Sense::hover()),
+        );
+        #[cfg(feature = "native")]
+        if ui
+            .add_enabled(next.split_folders, egui::Button::new("Change…"))
+            .clicked()
+        {
+            acts.pick_rec_dir = true;
+        }
+        if next.recording_dir.is_some() && ui.button("Use the save folder").clicked() {
+            acts.reset_rec_dir = true;
+        }
     });
 
     ui.separator();
     section(ui, "Global hotkeys");
+    acts.changed |= ui
+        .checkbox(&mut next.hotkeys_enabled, "Enable global hotkeys")
+        .on_hover_text("Capture while another app has focus (Wayland GlobalShortcuts portal)")
+        .changed();
     ui.horizontal(|ui| {
         ui.label("Capture full screen");
         acts.changed |= ui
@@ -3603,7 +3925,7 @@ fn settings_ui(ui: &mut egui::Ui, next: &mut SettingsView, acts: &mut SettingsAc
     });
     ui.horizontal(|ui| {
         if ui
-            .button("Rebind")
+            .add_enabled(next.hotkeys_enabled, egui::Button::new("Register hotkeys"))
             .on_hover_text("Ask the compositor to bind these two shortcuts")
             .clicked()
         {
@@ -3615,6 +3937,34 @@ fn settings_ui(ui: &mut egui::Ui, next: &mut SettingsView, acts: &mut SettingsAc
                 .size(11.0),
         );
     });
+    if !next.hotkeys_enabled {
+        ui.label(
+            egui::RichText::new(
+                "Off: PrintScreen and Shift+PrintScreen still capture inside SnagCraft.",
+            )
+            .weak()
+            .size(10.5),
+        );
+    }
+
+    ui.separator();
+    section(ui, "Troubleshooting");
+    ui.label(
+        egui::RichText::new("Recording not starting? Copy the logs into a bug report.")
+            .weak()
+            .size(10.5),
+    );
+    ui.horizontal(|ui| {
+        if ui.button("Copy diagnostics").clicked() {
+            acts.copy_diagnostics = true;
+        }
+    });
+    if !status.is_empty() {
+        // Bounded so a long status can never widen the panel (and push the
+        // Theme row off-screen).
+        let short: String = status.chars().take(120).collect();
+        ui.label(egui::RichText::new(short).weak().size(10.5));
+    }
 
     ui.separator();
     section(ui, "Theme");
@@ -4611,6 +4961,14 @@ fn handle_keys(ctx: &egui::Context, app: &mut SnagCraftApp) {
     }
 
     ctx.input_mut(|i| {
+        // W11: PrintScreen is the in-app fallback while global hotkeys are off
+        // (or the portal refused them) — live app.ts:5128-5132.
+        if i.consume_key(Modifiers::SHIFT, Key::PrintScreen) {
+            app.capture_region();
+        }
+        if i.consume_key(Modifiers::NONE, Key::PrintScreen) {
+            app.capture_full();
+        }
         // Ctrl+Alt+V: start/stop a recording. Bare V stays the Select tool
         // (the 13-tool map owns every unmodified letter).
         if i.consume_key(Modifiers::CTRL | Modifiers::ALT, Key::V) {

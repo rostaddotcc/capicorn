@@ -148,8 +148,8 @@ fn commands_list_exposes_the_whole_registry() {
     let commands = res["result"].as_array().expect("array of commands");
     assert_eq!(
         commands.len(),
-        45,
-        "W10 engine registry has 45 commands (44 + doc.resize)"
+        46,
+        "W11 engine registry has 46 commands (45 + diagnostics.copy)"
     );
     assert_eq!(commands.len(), snagcraft_engine::registry().len());
     for entry in commands {

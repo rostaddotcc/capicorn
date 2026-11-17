@@ -778,7 +778,13 @@ fn cmd_record_start(s: &mut Session, p: Value) -> Result<Value, CommandError> {
             "recording already running".into(),
         ));
     }
-    let format = match p.get("format").and_then(Value::as_str).unwrap_or("mp4") {
+    // W11: an omitted format follows the persisted recording-format setting.
+    let setting_format = s.settings().recording_format.clone();
+    let requested = p
+        .get("format")
+        .and_then(Value::as_str)
+        .unwrap_or(setting_format.as_str());
+    let format = match requested {
         "mp4" => snagcraft_recording::RecordingFormat::Mp4,
         "gif" => snagcraft_recording::RecordingFormat::Gif,
         other => {
@@ -1094,6 +1100,114 @@ fn cmd_edit_bucket(s: &mut Session, p: Value) -> Result<Value, CommandError> {
     Ok(json!({"filled": true}))
 }
 
+/// Hostile-input caps for the diagnostics report: logs larger than this are
+/// skipped with a note rather than read into memory.
+#[cfg(feature = "native")]
+const MAX_DIAG_LOG_BYTES: u64 = 1024 * 1024;
+
+/// Longest log tail the report keeps per file.
+#[cfg(feature = "native")]
+const DIAG_TAIL_LINES: usize = 200;
+
+/// Last `max` lines of `text` (bounded, never panics on hostile UTF-8).
+#[cfg(feature = "native")]
+fn tail_lines(text: &str, max: usize) -> String {
+    let all: Vec<&str> = text.lines().collect();
+    let start = all.len().saturating_sub(max);
+    all[start..].join("\n")
+}
+
+/// Read a log tail, refusing oversized files. The error string is user-facing:
+/// it lands in the pasted report exactly like the live command's.
+#[cfg(feature = "native")]
+fn log_tail(path: &std::path::Path) -> String {
+    match std::fs::metadata(path) {
+        Ok(meta) if meta.len() > MAX_DIAG_LOG_BYTES => {
+            format!("(skipped: {} bytes, over the 1 MiB cap)", meta.len())
+        }
+        Ok(_) => match std::fs::read_to_string(path) {
+            Ok(text) => tail_lines(text.trim_end(), DIAG_TAIL_LINES),
+            Err(e) => format!("(could not read: {e})"),
+        },
+        Err(e) => format!("(could not read: {e})"),
+    }
+}
+
+/// Newest `*.rec.log` in `dir` (per-take recording log written by the encoder).
+#[cfg(feature = "native")]
+fn latest_rec_log(dir: &std::path::Path) -> Option<std::path::PathBuf> {
+    let entries = std::fs::read_dir(dir).ok()?;
+    entries
+        .filter_map(Result::ok)
+        .filter(|e| e.file_name().to_string_lossy().ends_with(".rec.log"))
+        .filter_map(|e| {
+            let modified = e.metadata().ok()?.modified().ok()?;
+            Some((modified, e.path()))
+        })
+        .max_by_key(|(modified, _)| *modified)
+        .map(|(_, path)| path)
+}
+
+/// The full diagnostics text (pure: no clipboard, no globals) — the live
+/// `recording_diagnostics` content in `src-tauri/src/commands.rs:457-501`.
+#[cfg(feature = "native")]
+fn diagnostics_report(
+    home: Option<&std::path::Path>,
+    save_dir: &std::path::Path,
+    version: &str,
+    os: &str,
+) -> String {
+    let mut out = String::from("=== SnagCraft recording diagnostics ===\n");
+    out.push_str(&format!("\nversion: {version}\nos: {os}\n"));
+    let portal = home
+        .map(|h| h.join(".cache").join("snagcraft-portal.log"))
+        .unwrap_or_else(|| std::path::PathBuf::from("~/.cache/snagcraft-portal.log"));
+    out.push_str(&format!("\n--- portal log ({}) ---\n", portal.display()));
+    out.push_str(&log_tail(&portal));
+    out.push('\n');
+    match latest_rec_log(save_dir) {
+        Some(path) => {
+            out.push_str(&format!("\n--- latest take log ({}) ---\n", path.display()));
+            out.push_str(&log_tail(&path));
+        }
+        None => out.push_str("\n(no per-take .rec.log found yet)"),
+    }
+    out
+}
+
+/// `PRETTY_NAME` from `/etc/os-release`, else the constant OS/ARCH pair.
+#[cfg(feature = "native")]
+fn os_description() -> String {
+    let base = format!("{} {}", std::env::consts::OS, std::env::consts::ARCH);
+    let Ok(text) = std::fs::read_to_string("/etc/os-release") else {
+        return base;
+    };
+    text.lines()
+        .find_map(|line| line.strip_prefix("PRETTY_NAME="))
+        .map(|name| format!("{name} — {base}").replace('"', ""))
+        .unwrap_or(base)
+}
+
+#[cfg(feature = "native")]
+fn cmd_diagnostics_copy(s: &mut Session, _p: Value) -> Result<Value, CommandError> {
+    let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+    let save_dir = s
+        .settings()
+        .save_dir
+        .clone()
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(snagcraft_io::files::default_save_dir);
+    let text = diagnostics_report(
+        home.as_deref(),
+        &save_dir,
+        env!("CARGO_PKG_VERSION"),
+        &os_description(),
+    );
+    snagcraft_io::clipboard::copy_text(&text)
+        .map_err(|e| CommandError::Io(format!("diagnostics: {e}")))?;
+    Ok(json!({"copied": true, "bytes": text.len()}))
+}
+
 #[cfg(feature = "native")]
 fn cmd_clipboard_copy(s: &mut Session, _p: Value) -> Result<Value, CommandError> {
     let img = s.render()?;
@@ -1343,6 +1457,13 @@ pub fn registry() -> Vec<CommandSpec> {
         },
         #[cfg(feature = "native")]
         CommandSpec {
+            id: "diagnostics.copy",
+            label: "Copy recording diagnostics to the clipboard",
+            params_doc: "{} — portal log tail + latest take log tail + version/OS",
+            run: cmd_diagnostics_copy,
+        },
+        #[cfg(feature = "native")]
+        CommandSpec {
             id: "clipboard.paste",
             label: "Paste image from clipboard",
             params_doc: "{}",
@@ -1427,7 +1548,7 @@ pub fn registry() -> Vec<CommandSpec> {
         CommandSpec {
             id: "record.start",
             label: "Start screen recording",
-            params_doc: "{format: mp4|gif, region?, audio_source?, fps?, output}",
+            params_doc: "{format?: mp4|gif (default from settings), region?, audio_source?, fps?, output}",
             run: cmd_record_start,
         },
         #[cfg(feature = "native")]
@@ -2281,11 +2402,11 @@ mod tests {
     }
 
     #[test]
-    fn native_registry_keeps_all_45_commands() {
+    fn native_registry_keeps_all_46_commands() {
         // Desktop contract: every command the UI, CLI and MCP know is present.
         // Bump deliberately when a wave adds a command.
         let ids: Vec<&str> = registry().iter().map(|c| c.id).collect();
-        assert_eq!(ids.len(), 45, "native registry drifted: {ids:?}");
+        assert_eq!(ids.len(), 46, "native registry drifted: {ids:?}");
         for native_only in [
             "capture.full",
             "record.start",
@@ -2474,5 +2595,107 @@ mod w10_canvas_tests {
             .unwrap();
         assert_eq!(out["resized"], false, "same size is a no-op");
         assert_eq!(same.doc().unwrap().size.w, 400);
+    }
+
+    #[cfg(feature = "native")]
+    #[test]
+    fn diagnostics_report_tails_portal_and_newest_take_log() {
+        let root = std::env::temp_dir().join(format!("snagcraft-diag-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let shots = root.join("shots");
+        std::fs::create_dir_all(shots.join(".cache")).unwrap();
+        std::fs::create_dir_all(root.join(".cache")).unwrap();
+        let portal = root.join(".cache").join("snagcraft-portal.log");
+
+        // Missing logs are reported, not fatal.
+        let empty = diagnostics_report(Some(&root), &shots, "9.9.9", "linux test");
+        assert!(empty.contains("=== SnagCraft recording diagnostics ==="));
+        assert!(empty.contains("version: 9.9.9"));
+        assert!(empty.contains("os: linux test"));
+        assert!(empty.contains("could not read"));
+        assert!(empty.contains("(no per-take .rec.log found yet)"));
+
+        // 300 lines in, only the last 200 come out.
+        let body: String = (0..300).map(|i| format!("line-{i}\n")).collect();
+        std::fs::write(&portal, &body).unwrap();
+        let full = diagnostics_report(Some(&root), &shots, "9.9.9", "linux test");
+        assert!(full.contains("line-299"), "newest line kept");
+        assert!(
+            !full.contains("line-99\n"),
+            "line 99 falls outside the tail"
+        );
+        assert!(full.contains("line-100"), "tail starts at line 100");
+
+        // The newest .rec.log wins.
+        let older = shots.join("take-1.rec.log");
+        let newer = shots.join("take-2.rec.log");
+        std::fs::write(&older, "older take\n").unwrap();
+        std::fs::write(&newer, "newer take\n").unwrap();
+        let epoch = std::time::SystemTime::UNIX_EPOCH;
+        std::fs::File::options()
+            .write(true)
+            .open(&older)
+            .unwrap()
+            .set_modified(epoch + std::time::Duration::from_secs(1_000))
+            .unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&newer)
+            .unwrap()
+            .set_modified(epoch + std::time::Duration::from_secs(2_000))
+            .unwrap();
+        let picked = diagnostics_report(Some(&root), &shots, "9.9.9", "linux test");
+        assert!(picked.contains("take-2.rec.log"), "newest take log picked");
+        assert!(picked.contains("newer take"));
+        assert!(!picked.contains("older take"));
+
+        // An oversized portal log is skipped instead of read into memory.
+        std::fs::write(&portal, vec![b'x'; MAX_DIAG_LOG_BYTES as usize + 1]).unwrap();
+        let capped = diagnostics_report(Some(&root), &shots, "9.9.9", "linux test");
+        assert!(capped.contains("over the 1 MiB cap"));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn w11_settings_cluster_round_trips_through_the_engine() {
+        let mut s = Session::new();
+        let got = s
+            .dispatch(
+                "settings.set",
+                json!({"settings": {
+                    "interval_secs": 300, "mic_source": "alsa_input.test",
+                    "system_audio": true, "hotkeys_enabled": true,
+                    "recording_format": "gif", "split_folders": true,
+                    "recording_dir": "/tmp/rec"}}),
+            )
+            .unwrap();
+        assert_eq!(got["interval_secs"], 300);
+        assert_eq!(got["mic_source"], "alsa_input.test");
+        assert_eq!(got["system_audio"], true);
+        assert_eq!(got["hotkeys_enabled"], true);
+        assert_eq!(got["recording_format"], "gif");
+        assert_eq!(got["split_folders"], true);
+        assert_eq!(got["recording_dir"], "/tmp/rec");
+        // A fresh read returns the same cluster.
+        let again = s.dispatch("settings.get", json!({})).unwrap();
+        assert_eq!(again["recording_format"], "gif");
+
+        // Invalid values are rejected and leave the session untouched.
+        assert!(
+            s.dispatch(
+                "settings.set",
+                json!({"settings": {"recording_format": "mkv"}})
+            )
+            .is_err()
+        );
+        assert!(
+            s.dispatch("settings.set", json!({"settings": {"interval_secs": 0}}))
+                .is_err()
+        );
+        assert_eq!(
+            s.dispatch("settings.get", json!({})).unwrap()["recording_format"],
+            "gif"
+        );
     }
 }

@@ -25,6 +25,7 @@ egui.workspace = true
 eframe.workspace = true
 ab_glyph.workspace = true
 rfd = { workspace = true, optional = true }
+chrono.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
 image.workspace = true

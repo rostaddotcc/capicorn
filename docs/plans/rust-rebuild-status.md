@@ -18,7 +18,7 @@ Baseline: Tauri v1.5.2 (commit d25adb1). Rebuild workspace: `rust/` (not yet cre
 | W8 | parity backlog (gaps B4#4–9) | complete — upload POST flow + Ctrl+. (timelapse) + countdown HUD; all 9 B4 rows closed |
 | W9 | parity long-tail (save & recent UX) | complete — filename tokens + Save As + default dir + Recent strip (451 tests) |
 | W10 | parity long-tail (canvas presets + Resize) | complete — New-canvas presets + Resize dialog (459 tests, kittest tolerance) |
-| W11 | parity long-tail (settings + diagnostics + PrintScreen) | in progress — settings cluster + diagnostics.copy + PrintScreen fallback (75-call budget) |
+| W11 | parity long-tail (settings + diagnostics + PrintScreen) | complete — settings cluster + diagnostics.copy + PrintScreen fallback (468 tests) |
 
 ## Parity checklist
 
@@ -590,6 +590,27 @@ Baseline: Tauri v1.5.2 (commit d25adb1). Rebuild workspace: `rust/` (not yet cre
   system audio, recording format, filename live-preview), separate recording
   folder, copy diagnostics, PrintScreen fallback, text-caption settle,
   dirty-state, editor decorations + rostad gates.
+
+### 2026-11-17 — wake #97: W11 COMPLETE (settings + diagnostics + PrintScreen)
+- W11 done: settings cluster (interval period, mic source dropdown from
+  audio.sources, system audio toggle, enable-global-hotkeys + Register button,
+  recording format MP4/GIF, separate recording folder + Change/Reset, filename
+  live-preview via build_filename); engine diagnostics.copy (portal log +
+  .rec.log tail + version/OS → clipboard) + Troubleshooting button;
+  PrintScreen/Shift+PrintScreen in-app fallback. Settings window vscroll=true
+  (panel outgrew short screens). Registry 45→46.
+- Child over-ran budget (83 calls) stuck on a kittest settings test → PARENT
+  STOPPED + integrated. Root cause: W11's new rows pushed the Theme radio below
+  the scroll fold; coordinate .click() missed it. FIX: click_accesskit() (clicks
+  off-screen widgets) in theme_swap + settings_change tests; re-blessed
+  w3_shell_dark (stale 760→1400 size). scroll_to_me alone didn't work.
+- Parent bumped automation 45→46; cargo fmt --all (child left unformatted).
+- Parent-verified: workspace 468 passed / 0 failed / 5 ignored, clippy/fmt/
+  layers/wasm clean. Settings snapshot reviewed: General/Recording audio/Export
+  clean; lower sections below scroll fold (reachable, tests confirm).
+- Parity 14 rows W11; README 46; gaps W11 note. Remaining pending ~14 rows:
+  editor residuals (text-caption settle, dirty-state, crop decorations) +
+  recording thumbnails (real video) + rostad gates.
 
 ## Appendix — measured reality
 

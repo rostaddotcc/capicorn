@@ -87,7 +87,7 @@ Effects are applied to the **image layer at export resolution** (scene px × exp
 | **Export formats** PNG / JPEG / WebP, with quality 1–100 (JPEG/WebP only) | `settings.ts:10` (`ExportFormat`), picker `settings.ts:939-944`, default quality 90 `settings.ts:63`, encode `export.rs:85-166`, format enum `export.rs:28-83` | W0 spike (PNG) |
 | **Filename pattern** — `{date}`, `{time}`, `{datetime}`; default `SnagCraft-{date}-{time}` | `settings.ts:65` (`DEFAULT_PATTERN`), tokens hint `settings.ts:966-969`, `buildFilename` | W9 |
 | **Default save dir** — OS Pictures/SnagCraft; Change… / Reset to default | `commands.rs:230-269` (`default_save_dir`, `pick_save_dir`), `ensureSaveDir` `app.ts:1717-1731`, change/reset `:1733-1762` | W9 |
-| **Separate recording folder** (`splitFolders`, default off) | `settings.ts:141`, `settings.ts:919-932`, `getRecDir` `app.ts:4439` | pending |
+| **Separate recording folder** (`splitFolders`, default off) | `settings.ts:141`, `settings.ts:919-932`, `getRecDir` `app.ts:4439` | W11 |
 | **Copy to clipboard as PNG** (`Ctrl+C`) | `app.ts:4422-4432`, `copy_png` `commands.rs:299-303`, `clipboard.rs:6` | W2 |
 | **Paste** an image from the clipboard into the editor (`Ctrl+V`, `paste` event, first `image/*` item) | `app.ts:5081-5094` | W2 |
 | **Watermark on export** — text, opacity 2–100 (default 45 %), corner bottom-right/bottom-left/top-right/top-left | `watermark.ts:13-49` (`DEFAULT_WATERMARK` :28-33 = opacity 0.45, bottom-right), draw :62-90 (Inter 600), UI `settings.ts:972-984` | W4 |
@@ -130,7 +130,7 @@ Effects are applied to the **image layer at export resolution** (scene px × exp
 | **File associations** — open images with SnagCraft from the file manager | `tauri.conf.json:47` (`fileAssociations`), `cli.rs:45-57` (path in argv → `file`) | W3 |
 | **CLI** `snagcraft --capture` / `--capture-full` / `--region` / `--capture-region`, `--help` early exit, image path as arg | `cli.rs:45-60` (`parse_args`), `early_exit` :82-95, `dispatch` :62-75, `launch_request` :77-80 | W3 |
 | Frontend glue: `tray-capture`, `cli-capture`, `cli-open`, first-launch `launch_request` poll, `hotkey-activated` | `app.ts:5222-5269` | W3 |
-| PrintScreen = full, Shift+PrintScreen = region (in-app fallback) | `app.ts:5128-5132` | pending |
+| PrintScreen = full, Shift+PrintScreen = region (in-app fallback) | `app.ts:5128-5132` | W11 |
 
 ---
 
@@ -152,7 +152,7 @@ Effects are applied to the **image layer at export resolution** (scene px × exp
 | `recording-state {recording, path}` events so a window that missed the invoke result resyncs | `recording.rs:46-47`; widget mirrors it `widget-main.ts:412-416` | W4 |
 | Elapsed timer pill, repainted every 500 ms while a take runs | `app.ts:2326-2340` | W4 |
 | Recording thumbnails for the Recent rail | `commands.rs:533-545` (`recording_thumb`) | W9 (film-icon placeholder) |
-| Copy diagnostics (portal + per-take `.rec.log`) to clipboard | `commands.rs:457-501`, `settings.ts` troubleshooting button `:996-1004` | pending |
+| Copy diagnostics (portal + per-take `.rec.log`) to clipboard | `commands.rs:457-501`, `settings.ts` troubleshooting button `:996-1004` | W11 |
 | **Trim** a finished take | *not implemented in v1.5.3* — no trim command or UI (grep `trim` in `recording.rs`/`app.ts` is string-truncation only) | pending |
 | ffmpeg is a hard runtime dependency; absence is reported as an actionable message | `timelapse.rs:17-18` (same convention for recording), README:128 | pending |
 
@@ -222,24 +222,24 @@ Sections rendered: General, Capture, Recording audio, Global hotkeys, Save locat
 | Show floating widget | — | `settings.ts:813-816` | W3 |
 | Auto-save captures | **on** | `settings.ts:820-823`, `AUTOSAVE_KEY` `:50`, default `:237` | W3 setting / W4 behavior |
 | Capture delay (seconds pills) | 0 | `settings.ts:830-836`, `:64` | W3 |
-| Interval capture period | 30 s | `settings.ts:837-842`, `:69` | pending |
-| Microphone source | None | `settings.ts:855-863` | pending |
-| System audio (output monitor) | off | `settings.ts:866-870` | pending |
-| Enable global hotkeys | off | `settings.ts:877-880`, `HOTKEYS_ENABLED_KEY` `:45` | pending |
+| Interval capture period | 30 s | `settings.ts:837-842`, `:69` | W11 |
+| Microphone source | None | `settings.ts:855-863` | W11 |
+| System audio (output monitor) | off | `settings.ts:866-870` | W11 |
+| Enable global hotkeys | off | `settings.ts:877-880`, `HOTKEYS_ENABLED_KEY` `:45` | W11 |
 | Capture full screen trigger | `Print` | `settings.ts:883-888`, `:66` | W3 |
 | Capture region trigger | `SHIFT+Print` | `settings.ts:890-895`, `:67` | W3 |
-| "Register hotkeys" button + status line | — | `settings.ts:899-902`, `:903` | pending |
+| "Register hotkeys" button + status line | — | `settings.ts:899-902`, `:903` | W11 |
 | Save folder: path, Change…, Reset to default | OS Pictures/SnagCraft | `settings.ts:910-918` | W3 (folder + Choose…; no Reset) |
-| Separate recording folder + its own Change/Reset | off | `settings.ts:919-932`, `:141` | pending |
+| Separate recording folder + its own Change/Reset | off | `settings.ts:919-932`, `:141` | W11 |
 | Export format (PNG / JPEG / WebP) | **PNG** | `settings.ts:939-944`, `DEFAULT_FORMAT` `:61` | W3 |
-| Recording format (MP4 / GIF) | MP4 | `settings.ts:951-955` | pending |
+| Recording format (MP4 / GIF) | MP4 | `settings.ts:951-955` | W11 |
 | Export quality slider 1–100 (hidden for PNG) | 90 | `settings.ts:961-963`, `:63` | W3 |
-| Filename pattern + token hint + live preview | `SnagCraft-{date}-{time}` | `settings.ts:966-969`, `:65` | pending |
+| Filename pattern + token hint + live preview | `SnagCraft-{date}-{time}` | `settings.ts:966-969`, `:65` | W11 |
 | Watermark text (empty = none) | "" | `settings.ts:972-974` | W4 |
 | Watermark opacity | 45 | `settings.ts:977-978`, `watermark.ts:30` | W4 |
 | Watermark corner (BR/BL/TR/TL) | bottom-right | `settings.ts:980-984`, `watermark.ts:32` | W4 |
 | Upload endpoint | "" | Export section `settings.ts:935-995`; consumed `app.ts:4504` | W4 (field + open page; no POST) |
-| Troubleshooting: copy diagnostics | — | `settings.ts:996-1004` | pending |
+| Troubleshooting: copy diagnostics | — | `settings.ts:996-1004` | W11 |
 | Theme picker + version footer | light | `settings.ts:1005-1010`, `:339` | W3 (picker; no version footer) |
 
 ---
@@ -259,8 +259,8 @@ Sections rendered: General, Capture, Recording audio, Global hotkeys, Save locat
 
 | Key | Action | Evidence | rust |
 |---|---|---|---|
-| `PrintScreen` | Capture full screen | `app.ts:1200`, handler `:5128-5132` | pending |
-| `Shift+PrintScreen` | Capture a region | `app.ts:1201`, handler `:5130` | pending |
+| `PrintScreen` | Capture full screen | `app.ts:1200`, handler `:5128-5132` | W11 |
+| `Shift+PrintScreen` | Capture a region | `app.ts:1201`, handler `:5130` | W11 |
 | `Ctrl+Z` | Undo | `app.ts:1202`, `:5194-5198` | W0 spike |
 | `Ctrl+Shift+Z` · `Ctrl+Y` | Redo | `app.ts:1203`, `:5196-5202` | W0 spike |
 | `Ctrl+C` | Copy to clipboard | `app.ts:1204`, `:5203-5205` | W2 |

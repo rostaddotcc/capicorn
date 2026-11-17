@@ -99,6 +99,15 @@ verified, WASM web app browser-verified (status log, W5 wake #50).
   copyable blob; the live Tauri app has such a button, the rebuild does not.
 - **Where logged:** status wake #32.
 
+### W11 settings cluster + diagnostics + PrintScreen (2026-11-17) — CLOSED
+
+Interval period, mic source (audio.sources dropdown), system audio toggle,
+enable-global-hotkeys + Register button, recording format MP4/GIF, separate
+recording folder + Change/Reset, filename pattern live-preview (build_filename),
+engine diagnostics.copy + Troubleshooting button, PrintScreen/Shift+PrintScreen
+in-app fallback. Settings window now vscroll (panel outgrew short screens);
+lower rows reached via scroll, kittest uses click_accesskit for off-screen radios.
+
 ### W10 canvas presets + Resize (2026-11-17) — CLOSED
 
 New-canvas dialog (Ctrl+N + File→New, 8 size presets Default 1280×800 …

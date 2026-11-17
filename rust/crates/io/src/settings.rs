@@ -22,6 +22,15 @@ pub const MAX_SETTINGS_BYTES: u64 = 1024 * 1024;
 /// Container formats the export path understands (`png`, `jpeg`, `webp`).
 pub const EXPORT_FORMATS: [&str; 3] = ["png", "jpeg", "webp"];
 
+/// Recording container formats `record.start` understands (`mp4`, `gif`).
+pub const RECORDING_FORMATS: [&str; 2] = ["mp4", "gif"];
+
+/// Default timelapse/interval cadence in seconds (`INTERVAL_CHOICES` = 5/10/30/60/300).
+pub const DEFAULT_INTERVAL_SECS: u32 = 30;
+
+/// Longest accepted recording device name (PipeWire node descriptions are short).
+pub const MAX_MIC_SOURCE_LEN: usize = 256;
+
 /// Longest accepted OCR language code (tesseract codes are short: `eng`, `swe`).
 pub const MAX_OCR_LANG_LEN: usize = 32;
 
@@ -62,6 +71,22 @@ pub struct Settings {
     pub upload_url: String,
     /// Tesseract language code for `ocr.run` (`eng`, `swe`, …). W7.
     pub ocr_lang: String,
+    /// Interval-capture cadence in seconds (1..=3600, live default 30). W11.
+    pub interval_secs: u32,
+    /// PipeWire/PulseAudio source name for a take's microphone track
+    /// (`None` = no microphone). W11.
+    pub mic_source: Option<String>,
+    /// Mix the desktop output (monitor source) into recordings. W11.
+    pub system_audio: bool,
+    /// Master switch for `org.freedesktop.portal.GlobalShortcuts` registration
+    /// (off = the in-app PrintScreen fallback is the only trigger). W11.
+    pub hotkeys_enabled: bool,
+    /// `mp4` | `gif` — the Record button's container. W11.
+    pub recording_format: String,
+    /// Write recordings to [`Settings::recording_dir`] instead of the save dir. W11.
+    pub split_folders: bool,
+    /// Recording folder override (`None` = follow [`Settings::save_dir`]). W11.
+    pub recording_dir: Option<String>,
 }
 
 impl Default for Settings {
@@ -84,6 +109,13 @@ impl Default for Settings {
             watermark_corner: "bottom-right".to_string(),
             upload_url: String::new(),
             ocr_lang: "eng".to_string(),
+            interval_secs: DEFAULT_INTERVAL_SECS,
+            mic_source: None,
+            system_audio: false,
+            hotkeys_enabled: false,
+            recording_format: "mp4".to_string(),
+            split_folders: false,
+            recording_dir: None,
         }
     }
 }
@@ -115,6 +147,24 @@ impl Settings {
         if !valid_ocr_lang(&self.ocr_lang) {
             return Err(IoError::Unsupported);
         }
+        if !(1..=3_600).contains(&self.interval_secs) {
+            return Err(IoError::Unsupported);
+        }
+        if !is_supported_recording_format(&self.recording_format) {
+            return Err(IoError::Unsupported);
+        }
+        if let Some(src) = &self.mic_source
+            && (src.trim().is_empty()
+                || src.len() > MAX_MIC_SOURCE_LEN
+                || src.chars().any(|c| c.is_control()))
+        {
+            return Err(IoError::Unsupported);
+        }
+        if let Some(dir) = &self.recording_dir
+            && dir.trim().is_empty()
+        {
+            return Err(IoError::Unsupported);
+        }
         Ok(())
     }
 }
@@ -122,6 +172,11 @@ impl Settings {
 /// True for the format names [`Settings::default_format`] accepts.
 pub fn is_supported_format(format: &str) -> bool {
     EXPORT_FORMATS.contains(&format)
+}
+
+/// True for the container names [`Settings::recording_format`] accepts.
+pub fn is_supported_recording_format(format: &str) -> bool {
+    RECORDING_FORMATS.contains(&format)
 }
 
 /// True for a tesseract language code that is safe to hand to `ocr.run`:
@@ -261,6 +316,13 @@ mod tests {
             watermark_corner: "top-left".to_string(),
             upload_url: "https://example.com/upload".to_string(),
             ocr_lang: "swe".to_string(),
+            interval_secs: 300,
+            mic_source: Some("alsa_input.pci-0000_00_1f.3.analog-stereo".to_string()),
+            system_audio: true,
+            hotkeys_enabled: true,
+            recording_format: "gif".to_string(),
+            split_folders: true,
+            recording_dir: Some("/tmp/rec".to_string()),
         }
     }
 
@@ -492,5 +554,76 @@ mod tests {
             assert_eq!(load_from(&file), s);
         }
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn w11_settings_cluster_defaults_validation_and_round_trip() {
+        let d = Settings::default();
+        assert_eq!(d.interval_secs, 30);
+        assert_eq!(d.mic_source, None);
+        assert!(!d.system_audio);
+        assert!(!d.hotkeys_enabled);
+        assert_eq!(d.recording_format, "mp4");
+        assert!(!d.split_folders);
+        assert_eq!(d.recording_dir, None);
+        d.validate().unwrap();
+
+        // Round trip carries every new field.
+        let c = custom();
+        let json = serde_json::to_string(&c).unwrap();
+        let back: Settings = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, c);
+
+        // Pre-W11 files (no new keys) keep working with the defaults.
+        let old: Settings = serde_json::from_str(r#"{"default_quality":90}"#).unwrap();
+        assert_eq!(old.interval_secs, 30);
+        assert_eq!(old.recording_format, "mp4");
+        assert!(!old.hotkeys_enabled);
+
+        // Hostile values are refused before they reach ffmpeg or the portal.
+        for bad in [0u32, 3_601, 99_999] {
+            let s = Settings {
+                interval_secs: bad,
+                ..Settings::default()
+            };
+            assert!(s.validate().is_err(), "interval {bad}");
+        }
+        let s = Settings {
+            recording_format: "mkv".to_string(),
+            ..Settings::default()
+        };
+        assert!(s.validate().is_err());
+        assert!(is_supported_recording_format("mp4"));
+        assert!(is_supported_recording_format("gif"));
+        assert!(!is_supported_recording_format(""));
+        for bad in ["", "   ", "a\nb"] {
+            let s = Settings {
+                mic_source: Some(bad.to_string()),
+                ..Settings::default()
+            };
+            assert!(s.validate().is_err(), "{bad:?}");
+        }
+        let s = Settings {
+            mic_source: Some("x".repeat(MAX_MIC_SOURCE_LEN + 1)),
+            ..Settings::default()
+        };
+        assert!(s.validate().is_err());
+        let s = Settings {
+            recording_dir: Some("  ".to_string()),
+            ..Settings::default()
+        };
+        assert!(s.validate().is_err());
+        // Boundaries pass.
+        let s = Settings {
+            interval_secs: 1,
+            ..Settings::default()
+        };
+        s.validate().unwrap();
+        let s = Settings {
+            interval_secs: 3_600,
+            recording_format: "gif".to_string(),
+            ..Settings::default()
+        };
+        s.validate().unwrap();
     }
 }

@@ -12,7 +12,7 @@ Baseline: Tauri v1.5.2 (commit d25adb1). Rebuild workspace: `rust/` (not yet cre
 | W2 | editor tool parity | KDE-approved by rostad 2026-11-16; UI polish pass landed (sliders) |
 | W3 | shell parity (tray/hotkeys/widget/settings) | complete on pn53 (216 tests); KDE live pass pending rostad |
 | W4 | recording, scrolling, OCR, timelapse | complete on pn53 (363 tests); KDE live pass pending; gaps logged below |
-| W5 | CLI/JSON/MCP automation + WASM web | W5a done (4fc29a6); W5b (app/CLI wiring) + W5c-engine (wasm split) in flight; W5d web app follows |
+| W5 | CLI/JSON/MCP automation + WASM web | W5a/b/c done (7472f54, 392 tests, live control verified); W5d (web app) in flight |
 | W6 | packaging, docs, suite dossier | pending |
 
 ## Parity checklist
@@ -422,6 +422,20 @@ Baseline: Tauri v1.5.2 (commit d25adb1). Rebuild workspace: `rust/` (not yet cre
   io/engine native/web feature split (native default byte-identical, web core
   compiles), xtask wasm gate. W5d (ui-egui web cfg + apps/snagcraft-web trunk)
   follows after W5b lands.
+
+### 2026-11-17 — wake #39: W5b + W5c committed; W5d (web app) dispatched
+- W5c-engine committed (32f90b9): native/web split, 21/41 commands in wasm
+  rlib, xtask wasm gate (10 web crates), 68 tests, native byte-identical.
+- W5b committed (7472f54): ui-egui Arc<Mutex> + sess(), app --control flags,
+  CLI mcp/control. Parent LIVE round-trip verified: app --control 59990 ↔
+  CLI → commands.list=41, doc.new=64x48, ui.screenshot=valid PNG, wrong
+  token rejected, token 0600. Workspace 392 tests / 0 failed.
+  (Gotcha: first smoke used STALE release binaries — the build had been in
+  a rejected '& command'; rebuilt before the real round-trip.)
+- W5d dispatched (deleg_d34add8c): ui-egui native/web feature split (platform/
+  rfd/widget/clipboard cfg-gated, web PNG export-download via web-sys) +
+  apps/snagcraft-web eframe WebRunner trunk app. trunk + wasm-bindgen-cli
+  installing in background (proc_cd81b2c95668). Web app scaffold pre-wired.
 
 ## Appendix — measured reality
 

@@ -7,7 +7,20 @@ license.workspace = true
 repository.workspace = true
 publish = false
 
+[lib]
+crate-type = ["cdylib", "rlib"]
+
 [dependencies]
+snagcraft-engine = { path = "../../crates/engine", default-features = false }
+snagcraft-ui-egui = { path = "../../crates/ui-egui", default-features = false }
+eframe.workspace = true
+egui.workspace = true
+wasm-bindgen.workspace = true
+wasm-bindgen-futures.workspace = true
+web-sys.workspace = true
+js-sys.workspace = true
+console_error_panic_hook.workspace = true
+tracing.workspace = true
 
 [lints]
 workspace = true

@@ -18,6 +18,7 @@ Baseline: Tauri v1.5.2 (commit d25adb1). Rebuild workspace: `rust/` (not yet cre
 | W8 | parity backlog (gaps B4#4–9) | complete — upload POST flow + Ctrl+. (timelapse) + countdown HUD; all 9 B4 rows closed |
 | W9 | parity long-tail (save & recent UX) | complete — filename tokens + Save As + default dir + Recent strip (451 tests) |
 | W10 | parity long-tail (canvas presets + Resize) | complete — New-canvas presets + Resize dialog (459 tests, kittest tolerance) |
+| W11 | parity long-tail (settings + diagnostics + PrintScreen) | in progress — settings cluster + diagnostics.copy + PrintScreen fallback (75-call budget) |
 
 ## Parity checklist
 

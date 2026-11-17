@@ -14,6 +14,7 @@ Baseline: Tauri v1.5.2 (commit d25adb1). Rebuild workspace: `rust/` (not yet cre
 | W4 | recording, scrolling, OCR, timelapse | complete on pn53 (363 tests); KDE live pass pending; gaps logged below |
 | W5 | CLI/JSON/MCP automation + WASM web | complete (3273af1 + watermark fix); web app browser-verified; W6 next |
 | W6 | packaging, docs, suite dossier | complete (bbd2683 + docs); all waves W0–W6 BUILT |
+| W7 | parity backlog (gaps B4#1–3) | in progress — timelapse.assemble + OCR lang picker + busy modal dispatched |
 
 ## Parity checklist
 
@@ -493,6 +494,17 @@ Baseline: Tauri v1.5.2 (commit d25adb1). Rebuild workspace: `rust/` (not yet cre
 - REMAINING (all rostad-gated, not autonomous): W3/W4 KDE Plasma Wayland
   live pass; trim decision; relicense (GPL→MIT/Apache, also suite blocker);
   cutover; any external post / suite submission. NO releases published.
+
+### 2026-11-17 — wake #57: loop re-fired after LOOP_COMPLETE → W7 parity backlog
+- Loop woke again after wake #56's LOOP_COMPLETE. Re-checked fresh: W0–W6
+  built (5474025), 392 tests. Full parity not yet met (45 pending rows);
+  implementable offline backlog exists → continue toward parity (spec goal).
+- W7 plan: docs/plans/2026-11-17-w7-parity-backlog.md. Target gaps B4#1–3
+  (offline-verifiable, no rostad gate): timelapse.assemble (ffmpeg glob →
+  h264 mp4), OCR language picker (io ocr_lang + ComboBox), OCR busy modal.
+  Rows 4–9 (Ctrl+., countdown HUD, upload POST) deferred (live/network scope).
+- Dispatched W7 (deleg_b4966464, one track, 3 features). ffmpeg 8.0.1 +
+  tesseract confirmed present. Parent commits + ticks parity/gaps after.
 
 ## Appendix — measured reality
 

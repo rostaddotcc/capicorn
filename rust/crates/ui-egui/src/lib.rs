@@ -1854,6 +1854,8 @@ impl SnagCraftApp {
         {
             params["audio_source"] = serde_json::json!(source);
         }
+        // W13: the settings toggle joins the mic in one mixed AAC track.
+        params["system_audio"] = serde_json::json!(self.settings.system_audio);
         if let Some(rect) = region {
             params["region"] = rect_json(rect);
         }

@@ -132,22 +132,32 @@ pub struct AudioSource {
     pub kind: String,
 }
 
-/// Which audio to capture alongside the screen. `None` records a silent take.
+/// Which audio to capture alongside the screen. The default records a silent
+/// take.
 ///
-/// A monitor source listed by [`list_audio_sources`] records system audio, so
-/// one field covers both the microphone and "what the speakers play".
+/// `source` names the microphone (a [`list_audio_sources`] id); `system_audio`
+/// records what the machine plays via the default output's monitor. Both may be
+/// on at once and are mixed into a single AAC track (live parity, W13). GIF
+/// takes never carry audio.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct AudioConfig {
     pub source: Option<String>,
+    pub system_audio: bool,
 }
 
 impl AudioConfig {
-    /// The configured source, ignoring the blank ids a settings dropdown emits.
+    /// The configured microphone, ignoring the blank ids a settings dropdown
+    /// emits.
     pub fn source_id(&self) -> Option<&str> {
         self.source
             .as_deref()
             .map(str::trim)
             .filter(|id| !id.is_empty())
+    }
+
+    /// How many audio inputs this config opens (0, 1 or 2).
+    pub fn input_count(&self) -> usize {
+        usize::from(self.source_id().is_some()) + usize::from(self.system_audio)
     }
 }
 
@@ -540,6 +550,7 @@ mod tests {
     fn a_blank_audio_id_is_no_source() {
         let mut audio = AudioConfig {
             source: Some("   ".to_string()),
+            system_audio: false,
         };
         assert_eq!(audio.source_id(), None);
         audio.source = Some(" alsa_input.pci-0000_00_1f.3.analog-stereo ".to_string());
@@ -547,6 +558,37 @@ mod tests {
             audio.source_id(),
             Some("alsa_input.pci-0000_00_1f.3.analog-stereo")
         );
+    }
+
+    #[test]
+    fn input_count_covers_zero_one_and_two_sources() {
+        let silent = AudioConfig::default();
+        assert_eq!(silent.input_count(), 0);
+
+        let mic_only = AudioConfig {
+            source: Some("alsa_input.usb-mic".to_string()),
+            system_audio: false,
+        };
+        assert_eq!(mic_only.input_count(), 1);
+
+        let system_only = AudioConfig {
+            source: None,
+            system_audio: true,
+        };
+        assert_eq!(system_only.input_count(), 1);
+
+        let both = AudioConfig {
+            source: Some("alsa_input.usb-mic".to_string()),
+            system_audio: true,
+        };
+        assert_eq!(both.input_count(), 2);
+
+        // A blank mic id never counts as a source, even with system audio on.
+        let blank_mic = AudioConfig {
+            source: Some("  ".to_string()),
+            system_audio: true,
+        };
+        assert_eq!(blank_mic.input_count(), 1);
     }
 
     #[test]

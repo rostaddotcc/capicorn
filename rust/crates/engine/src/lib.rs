@@ -796,6 +796,25 @@ fn cmd_timelapse_assemble(_s: &mut Session, p: Value) -> Result<Value, CommandEr
     }))
 }
 
+/// W13: resolve a take's audio from explicit params, falling back to the
+/// persisted settings (the W11 format precedent). `audio_source` names the
+/// microphone; `system_audio` adds the default output's monitor. Both on means
+/// one mixed AAC track; neither means a silent take.
+#[cfg(feature = "native")]
+fn record_audio_config(p: &Value, settings: &Settings) -> snagcraft_recording::AudioConfig {
+    snagcraft_recording::AudioConfig {
+        source: p
+            .get("audio_source")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .or_else(|| settings.mic_source.clone()),
+        system_audio: p
+            .get("system_audio")
+            .and_then(Value::as_bool)
+            .unwrap_or(settings.system_audio),
+    }
+}
+
 #[cfg(feature = "native")]
 fn cmd_record_start(s: &mut Session, p: Value) -> Result<Value, CommandError> {
     if s.record.is_some() || s.record_start_rx.is_some() {
@@ -827,12 +846,7 @@ fn cmd_record_start(s: &mut Session, p: Value) -> Result<Value, CommandError> {
         }),
         None => None,
     };
-    let audio = snagcraft_recording::AudioConfig {
-        source: p
-            .get("audio_source")
-            .and_then(Value::as_str)
-            .map(str::to_string),
-    };
+    let audio = record_audio_config(&p, s.settings());
     let fps = p.get("fps").and_then(Value::as_u64).unwrap_or(30) as u32;
     let output = p_str(&p, "output")?;
     let config = snagcraft_recording::RecordingConfig {
@@ -1573,7 +1587,7 @@ pub fn registry() -> Vec<CommandSpec> {
         CommandSpec {
             id: "record.start",
             label: "Start screen recording",
-            params_doc: "{format?: mp4|gif (default from settings), region?, audio_source?, fps?, output}",
+            params_doc: "{format?: mp4|gif (default from settings), region?, audio_source? (default: settings mic), system_audio? (default: settings), fps?, output}",
             run: cmd_record_start,
         },
         #[cfg(feature = "native")]
@@ -1661,6 +1675,41 @@ pub fn registry() -> Vec<CommandSpec> {
 #[cfg(all(test, feature = "native"))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn record_audio_defaults_follow_the_persisted_settings() {
+        let settings = Settings {
+            mic_source: Some("alsa_input.usb-mic".to_string()),
+            system_audio: true,
+            ..Settings::default()
+        };
+
+        // Omitted params inherit both settings (W11 format precedent).
+        let audio = record_audio_config(&json!({}), &settings);
+        assert_eq!(audio.source_id(), Some("alsa_input.usb-mic"));
+        assert!(audio.system_audio);
+        assert_eq!(audio.input_count(), 2);
+
+        // Explicit params win over the settings, including turning things off.
+        let audio = record_audio_config(
+            &json!({"audio_source": "alsa_input.other", "system_audio": false}),
+            &settings,
+        );
+        assert_eq!(audio.source_id(), Some("alsa_input.other"));
+        assert!(!audio.system_audio);
+        assert_eq!(audio.input_count(), 1);
+
+        // A blank mic id is no microphone, but system audio still records.
+        let audio = record_audio_config(&json!({"audio_source": "  "}), &settings);
+        assert_eq!(audio.source_id(), None);
+        assert!(audio.system_audio);
+        assert_eq!(audio.input_count(), 1);
+
+        // Silent settings + silent params = a silent take, never an error.
+        let quiet = Settings::default();
+        let audio = record_audio_config(&json!({}), &quiet);
+        assert_eq!(audio.input_count(), 0);
+    }
 
     #[test]
     fn new_add_undo_redo_inspect() {

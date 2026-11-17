@@ -54,8 +54,8 @@ pub(crate) struct CaptureParams {
     pub format: RecordingFormat,
     pub region: Option<Region>,
     pub fps: u32,
-    /// A `pactl` source id; `None` records a silent take.
-    pub audio: Option<String>,
+    /// Microphone and/or system-audio monitor; the default records a silent take.
+    pub audio: crate::AudioConfig,
     pub out: PathBuf,
     pub events: mpsc::Sender<RecordingEvent>,
     pub stop: Arc<AtomicBool>,
@@ -74,7 +74,7 @@ impl CaptureParams {
             format: config.format,
             region: config.region,
             fps: config.effective_fps(),
-            audio: config.audio.source_id().map(str::to_string),
+            audio: config.audio.clone(),
             out: config.output.clone(),
             events,
             stop,
@@ -249,7 +249,7 @@ struct Ud {
     log: PathBuf,
     format: RecordingFormat,
     fps: u32,
-    audio: Option<String>,
+    audio: crate::AudioConfig,
     region: Option<Region>,
     /// Size ffmpeg was told via `-s` (already even-padded for a region).
     out_size: (u32, u32),
@@ -322,7 +322,7 @@ fn ensure_encoder(ud: &mut Ud) -> bool {
         width: out_w,
         height: out_h,
         fps: ud.fps,
-        audio: ud.audio.as_deref(),
+        audio: &ud.audio,
     }) {
         Ok(encoder) => {
             *ud.encoder.borrow_mut() = Some(encoder);
@@ -388,15 +388,15 @@ pub(crate) fn run(
         path.push(".rec.log");
         PathBuf::from(path)
     };
+    let audio_desc = match (params.audio.source_id(), params.audio.system_audio) {
+        (None, false) => "none".to_string(),
+        (mic, system) => format!("mic={} system={system}", mic.unwrap_or("none")),
+    };
     rec_log(
         &log_path,
         &format!(
-            "capture start: node={node} hint={}x{} region={:?} fps={} audio={}",
-            hint.0,
-            hint.1,
-            params.region,
-            params.fps,
-            params.audio.as_deref().unwrap_or("none")
+            "capture start: node={node} hint={}x{} region={:?} fps={} audio={audio_desc}",
+            hint.0, hint.1, params.region, params.fps,
         ),
     );
 

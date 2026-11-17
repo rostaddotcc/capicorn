@@ -651,6 +651,33 @@ live pass + gates (trim/relicense/cutover/external post). NO releases published.
 - Still gated: cutover (promote Rust to stable / retire Tauri), relicense,
   trim, KDE live pass. This is a pre-release for testing, not a cutover.
 
+### 2026-11-17 — wake #102: W13 audio mixing (B1 closed) — last functional gap
+- Fresh re-check first: tree clean, no TODO/FIXME in app code, rust-v0.1.0
+  pre-release still live (both assets, v1.5.3 still "Latest"), workspace
+  474/0/5 + clippy/fmt clean. Parity pending = 1 (Trim, rostad-gated). The one
+  remaining NON-gated functional gap was gaps.md **B1** (mic + system-audio
+  mixing) — the W11 settings toggle existed but only one source ever recorded.
+- W13 (parent-built, small): `AudioConfig` gains `system_audio` + `input_count()`;
+  encoder opens one `-f pulse` input per source (mic first, then
+  `@DEFAULT_MONITOR@`), two inputs mixed via `amix=inputs=2:duration=longest`
+  into ONE aac track — the live `audio_output_args` recipe ported verbatim
+  (aac 160k, `-shortest`). GIF stays silent; 0 sources = `-an`, never an error.
+- `record.start` accepts `system_audio`; both audio params fall back to the
+  persisted settings (W11 format precedent) via a pure `record_audio_config`
+  helper. UI now passes the settings toggle. Capture thread carries the full
+  `AudioConfig`; `.rec.log` line reports mic/system.
+- Registry UNCHANGED (46) → no automation bump. 7 new tests (input_count, 4
+  arg-shape, settings-fallback, + a LIVE end-to-end mix).
+- **Live-verified on pn53 (pipewire-pulse present):** the encoder child mixed
+  two real pulse sources into exactly ONE ffprobe-confirmed aac stream beside
+  h264 (`the_encoder_mixes_two_pulse_sources_into_one_aac_track ... ok`). The
+  probe self-skips on headless CI (no pulse socket), so it stays green there.
+- Parent-verified: workspace **481 passed / 0 failed / 5 ignored**, clippy 0,
+  fmt clean, layers legal (23 crates), wasm all 10 web crates compile.
+- gaps.md B1 → CLOSED; parity audio row → W4 + W13. Remaining pending = 1
+  (Trim, rostad-gated). No release re-publish (pre-release assets are W12-era;
+  a refresh is rostad's call). Awaiting KDE live pass + gates.
+
 ## Appendix — measured reality
 
 | Claim | Measured | What changed |

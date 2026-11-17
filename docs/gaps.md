@@ -70,6 +70,18 @@ verified, WASM web app browser-verified (status log, W5 wake #50).
 
 ### B1 — Audio: microphone + monitor mixing
 
+> **W13 update (2026-11-17): CLOSED.** `AudioConfig` now carries `source` (mic)
+> plus `system_audio`; the encoder opens one `-f pulse` input per source
+> (`@DEFAULT_MONITOR@` for system audio, so an output switch mid-take keeps
+> working) and mixes two inputs with `amix=inputs=2:duration=longest` into a
+> single AAC track — the live `audio_output_args` recipe ported verbatim
+> (aac 160k, `-shortest`, mic input before monitor). `record.start` accepts
+> `system_audio`, and both audio params fall back to the persisted settings
+> (W11 format precedent), so the W11 mic dropdown + system-audio toggle are
+> fully wired. Verified live on pn53 (pipewire-pulse): the encoder child mixed
+> two pulse sources into exactly one ffprobe-confirmed aac stream beside h264.
+> GIF stays silent by construction; zero sources = `-an`, never an error.
+
 - **What:** recording captures **one** audio source at a time (microphone *or*
   system monitor), not a mix of both. `audio.sources` enumerates what is
   available; there is no mixing stage.

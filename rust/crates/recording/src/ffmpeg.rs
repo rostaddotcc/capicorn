@@ -39,30 +39,76 @@ pub(crate) fn available() -> bool {
         .unwrap_or(false)
 }
 
-/// Audio input args for one optional source: `-f pulse -i <id>`.
-fn audio_input(source: Option<&str>) -> Vec<String> {
-    match source {
-        Some(id) => ["-f", "pulse", "-i", id].map(String::from).to_vec(),
-        None => Vec::new(),
+/// Audio input args: the chosen microphone and/or the default sink's monitor,
+/// one `-f pulse -i <source>` pair each (mic first, monitor second).
+///
+/// `@DEFAULT_MONITOR@` is PulseAudio's pseudo-source for "the monitor of the
+/// current default sink", so switching output mid-take keeps working — a pinned
+/// `<sink>.monitor` name would go silent after the switch (live parity).
+fn audio_inputs(audio: &crate::AudioConfig) -> Vec<String> {
+    let mut args = Vec::new();
+    if let Some(mic) = audio.source_id() {
+        args.extend(["-f", "pulse", "-i", mic].map(String::from));
     }
+    if audio.system_audio {
+        args.extend(["-f", "pulse", "-i", "@DEFAULT_MONITOR@"].map(String::from));
+    }
+    args
+}
+
+/// Output-side audio args, in the place where `-an` sits for a silent take.
+///
+/// One live source needs no filter and is mapped through; two (microphone +
+/// system) are mixed with `amix` so the container gets a single AAC stream
+/// (live parity, W13). Input 0 is always the rawvideo stdin stream.
+fn audio_output_args(inputs: usize) -> Vec<String> {
+    if inputs == 0 {
+        return vec!["-an".to_string()];
+    }
+    let mut args: Vec<String> = Vec::new();
+    if inputs > 1 {
+        let labels: String = (1..=inputs).map(|i| format!("[{i}:a]")).collect();
+        args.extend([
+            "-filter_complex".to_string(),
+            format!("{labels}amix=inputs={inputs}:duration=longest[aout]"),
+            "-map".to_string(),
+            "0:v".to_string(),
+            "-map".to_string(),
+            "[aout]".to_string(),
+        ]);
+    } else {
+        args.extend([
+            "-map".to_string(),
+            "0:v".to_string(),
+            "-map".to_string(),
+            "1:a".to_string(),
+        ]);
+    }
+    args.extend(["-c:a", "aac", "-b:a", "160k", "-shortest"].map(String::from));
+    args
 }
 
 /// Complete argument list for the encoder child.
 ///
-/// Layout is always: the rawvideo stdin input, then the audio input (if any),
-/// then either `-an` or the map/codec tail, then the video codec args, then the
-/// output path. `fps` goes *before* `-i` because that is the input rate of a
-/// rawvideo stream.
+/// Layout is always: the rawvideo stdin input, then one input per audio source
+/// (if any), then either `-an` or the map/codec tail, then the video codec args,
+/// then the output path. `fps` goes *before* `-i` because that is the input rate
+/// of a rawvideo stream.
 pub(crate) fn args(
     out: &Path,
     format: RecordingFormat,
     width: u32,
     height: u32,
     fps: u32,
-    audio: Option<&str>,
+    audio: &crate::AudioConfig,
 ) -> Vec<String> {
-    // A GIF has no audio track: never open the input, even when asked.
-    let audio = audio.filter(|_| format != RecordingFormat::Gif);
+    // A GIF has no audio track: never open the inputs, even when asked.
+    let silent = crate::AudioConfig::default();
+    let audio = if format == RecordingFormat::Gif {
+        &silent
+    } else {
+        audio
+    };
 
     let mut args: Vec<String> = [
         "-y",
@@ -83,25 +129,8 @@ pub(crate) fn args(
     args.push(fps.to_string());
     args.extend(["-i", "-"].map(String::from));
 
-    if let Some(id) = audio {
-        args.extend(audio_input(Some(id)));
-        args.extend(
-            [
-                "-map",
-                "0:v",
-                "-map",
-                "1:a",
-                "-c:a",
-                "aac",
-                "-b:a",
-                "160k",
-                "-shortest",
-            ]
-            .map(String::from),
-        );
-    } else {
-        args.push("-an".to_string());
-    }
+    args.extend(audio_inputs(audio));
+    args.extend(audio_output_args(audio.input_count()));
 
     match format {
         RecordingFormat::Mp4 => args.extend(
@@ -269,15 +298,23 @@ pub(crate) struct EncoderJob<'a> {
     pub width: u32,
     pub height: u32,
     pub fps: u32,
-    pub audio: Option<&'a str>,
+    pub audio: &'a crate::AudioConfig,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::AudioConfig;
 
-    fn arg_list(format: RecordingFormat, width: u32, fps: u32, audio: Option<&str>) -> Vec<String> {
+    fn arg_list(format: RecordingFormat, width: u32, fps: u32, audio: &AudioConfig) -> Vec<String> {
         args(Path::new("/tmp/take.mp4"), format, width, 480, fps, audio)
+    }
+
+    fn mic(id: &str) -> AudioConfig {
+        AudioConfig {
+            source: Some(id.to_string()),
+            system_audio: false,
+        }
     }
 
     fn has_pair(args: &[String], first: &str, second: &str) -> bool {
@@ -286,7 +323,7 @@ mod tests {
 
     #[test]
     fn mp4_args_encode_h264_at_the_negotiated_size() {
-        let args = arg_list(RecordingFormat::Mp4, 640, 30, None);
+        let args = arg_list(RecordingFormat::Mp4, 640, 30, &AudioConfig::default());
         assert!(has_pair(&args, "-f", "rawvideo"));
         assert!(has_pair(&args, "-pix_fmt", "rgb24"));
         assert!(has_pair(&args, "-s", "640x480"));
@@ -311,7 +348,7 @@ mod tests {
             1920,
             1080,
             30,
-            Some("alsa_input.foo"),
+            &mic("alsa_input.foo"),
         );
         let graph = args
             .iter()
@@ -331,20 +368,111 @@ mod tests {
 
     #[test]
     fn an_audio_source_is_mapped_and_encoded_as_aac() {
-        let args = arg_list(RecordingFormat::Mp4, 640, 30, Some("alsa_input.usb-mic"));
+        let args = arg_list(RecordingFormat::Mp4, 640, 30, &mic("alsa_input.usb-mic"));
         assert!(has_pair(&args, "-f", "pulse"));
-        let mic = args
+        let mic_pos = args
             .iter()
             .position(|a| a == "alsa_input.usb-mic")
             .expect("the source id is an input");
         let input = args.iter().position(|a| a == "-i").expect("-i present");
-        assert!(mic > input, "audio input comes after the video input");
+        assert!(mic_pos > input, "audio input comes after the video input");
         assert!(has_pair(&args, "-map", "0:v"));
         assert!(has_pair(&args, "-map", "1:a"));
         assert!(has_pair(&args, "-c:a", "aac"));
         assert!(has_pair(&args, "-b:a", "160k"));
         assert!(args.iter().any(|a| a == "-shortest"));
         assert!(!args.iter().any(|a| a == "-an"));
+        // A single source needs no filter graph.
+        assert!(!args.iter().any(|a| a == "-filter_complex"));
+    }
+
+    #[test]
+    fn system_audio_alone_opens_the_default_monitor() {
+        let audio = AudioConfig {
+            source: None,
+            system_audio: true,
+        };
+        let args = arg_list(RecordingFormat::Mp4, 640, 30, &audio);
+        assert!(has_pair(&args, "-f", "pulse"));
+        assert!(has_pair(&args, "-i", "@DEFAULT_MONITOR@"));
+        assert!(has_pair(&args, "-map", "1:a"));
+        assert!(!args.iter().any(|a| a == "-filter_complex"));
+        assert!(!args.iter().any(|a| a == "-an"));
+    }
+
+    #[test]
+    fn mic_plus_system_audio_are_mixed_into_one_aac_track() {
+        let audio = AudioConfig {
+            source: Some("alsa_input.usb-mic".to_string()),
+            system_audio: true,
+        };
+        let args = arg_list(RecordingFormat::Mp4, 640, 30, &audio);
+        // Two pulse inputs: the mic first, then the default monitor.
+        let mic_pos = args
+            .iter()
+            .position(|a| a == "alsa_input.usb-mic")
+            .expect("mic input");
+        let mon_pos = args
+            .iter()
+            .position(|a| a == "@DEFAULT_MONITOR@")
+            .expect("monitor input");
+        assert!(mic_pos < mon_pos, "mic is input 1, monitor input 2");
+        assert_eq!(
+            args.iter().filter(|a| a.as_str() == "pulse").count(),
+            2,
+            "exactly two pulse inputs"
+        );
+        // amix collapses both into a single labelled stream mapped to the output.
+        let graph = args
+            .iter()
+            .position(|a| a == "-filter_complex")
+            .map(|i| args[i + 1].clone())
+            .expect("filter_complex present");
+        assert_eq!(graph, "[1:a][2:a]amix=inputs=2:duration=longest[aout]");
+        assert!(has_pair(&args, "-map", "0:v"));
+        assert!(has_pair(&args, "-map", "[aout]"));
+        assert!(
+            !has_pair(&args, "-map", "1:a"),
+            "no direct single-stream map"
+        );
+        assert!(has_pair(&args, "-c:a", "aac"));
+        assert!(has_pair(&args, "-b:a", "160k"));
+        assert!(args.iter().any(|a| a == "-shortest"));
+        assert!(!args.iter().any(|a| a == "-an"));
+    }
+
+    #[test]
+    fn a_blank_mic_with_system_audio_is_monitor_only() {
+        let audio = AudioConfig {
+            source: Some("   ".to_string()),
+            system_audio: true,
+        };
+        let args = arg_list(RecordingFormat::Mp4, 640, 30, &audio);
+        assert_eq!(args.iter().filter(|a| a.as_str() == "pulse").count(), 1);
+        assert!(has_pair(&args, "-i", "@DEFAULT_MONITOR@"));
+        assert!(has_pair(&args, "-map", "1:a"));
+        assert!(!args.iter().any(|a| a == "-filter_complex"));
+    }
+
+    #[test]
+    fn a_gif_is_silent_even_with_both_audio_sources_on() {
+        let audio = AudioConfig {
+            source: Some("alsa_input.usb-mic".to_string()),
+            system_audio: true,
+        };
+        let args = args(
+            Path::new("/tmp/take.gif"),
+            RecordingFormat::Gif,
+            640,
+            480,
+            30,
+            &audio,
+        );
+        assert!(!args.iter().any(|a| a == "pulse"));
+        assert!(!args.iter().any(|a| a == "@DEFAULT_MONITOR@"));
+        assert!(args.iter().any(|a| a == "-an"));
+        assert!(!has_pair(&args, "-c:a", "aac"));
+        assert!(!args.iter().any(|a| a == "-filter_complex"));
     }
 
     #[test]
@@ -355,7 +483,7 @@ mod tests {
             1,
             1,
             30,
-            None,
+            &AudioConfig::default(),
         );
         let graph = args
             .iter()
@@ -372,7 +500,7 @@ mod tests {
             width: 0,
             height: 240,
             fps: 30,
-            audio: None,
+            audio: &AudioConfig::default(),
         })
         .expect_err("0 width");
         assert!(matches!(error, RecordingError::Ffmpeg(_)));
@@ -396,7 +524,7 @@ mod tests {
             width: 64,
             height: 48,
             fps: 15,
-            audio: None,
+            audio: &AudioConfig::default(),
         })
         .expect("spawn ffmpeg");
 
@@ -435,6 +563,83 @@ mod tests {
         let text = String::from_utf8_lossy(&probe.stdout);
         assert!(text.contains("codec_name=h264"), "ffprobe said: {text}");
         assert!(text.contains("width=64"), "ffprobe said: {text}");
+        let _ = std::fs::remove_file(&out);
+    }
+
+    /// Is a PulseAudio-compatible server reachable? pipewire-pulse counts.
+    /// Headless CI boxes have none, so the mixing probe below skips there.
+    fn pulse_server_present() -> bool {
+        if std::env::var_os("PULSE_SERVER").is_some() {
+            return true;
+        }
+        std::env::var_os("XDG_RUNTIME_DIR")
+            .map(|dir| Path::new(&dir).join("pulse/native").exists())
+            .unwrap_or(false)
+    }
+
+    /// End-to-end W13 gate: two live pulse inputs (mic slot + system monitor)
+    /// mixed through the real `amix` graph into ONE aac track beside the h264
+    /// video. On a box without a microphone both slots use the default monitor
+    /// — a valid pulse source either way, and the exact two-input code path.
+    #[test]
+    fn the_encoder_mixes_two_pulse_sources_into_one_aac_track() {
+        if !available() || !pulse_server_present() {
+            return;
+        }
+        let dir = std::env::temp_dir().join("snagcraft-recording-mix-test");
+        std::fs::create_dir_all(&dir).expect("scratch dir");
+        let out = dir.join("mixed.mp4");
+        let _ = std::fs::remove_file(&out);
+
+        let audio = AudioConfig {
+            source: Some("@DEFAULT_MONITOR@".to_string()),
+            system_audio: true,
+        };
+        let mut encoder = Encoder::spawn(EncoderJob {
+            out: &out,
+            format: RecordingFormat::Mp4,
+            width: 64,
+            height: 48,
+            fps: 15,
+            audio: &audio,
+        })
+        .expect("spawn ffmpeg with two pulse inputs");
+
+        // Two seconds of frames; -shortest finalises the take when stdin EOFs.
+        for frame_index in 0..30u8 {
+            let mut frame = vec![0u8; 64 * 48 * 3];
+            for pixel in frame.as_chunks_mut::<3>().0 {
+                pixel[0] = frame_index * 8;
+                pixel[1] = 128;
+                pixel[2] = 255 - frame_index * 8;
+            }
+            assert!(encoder.write_frame(&frame), "ffmpeg must accept the frame");
+            std::thread::sleep(Duration::from_millis(66));
+        }
+        encoder
+            .finish()
+            .expect("ffmpeg must finalise the mixed file");
+
+        let probe = Command::new("ffprobe")
+            .args([
+                "-v",
+                "error",
+                "-show_entries",
+                "stream=codec_type,codec_name",
+                "-of",
+                "default=nw=1",
+                &out.to_string_lossy(),
+            ])
+            .output()
+            .expect("ffprobe runs");
+        let text = String::from_utf8_lossy(&probe.stdout);
+        assert!(text.contains("codec_name=h264"), "ffprobe said: {text}");
+        assert_eq!(
+            text.matches("codec_type=audio").count(),
+            1,
+            "amix must yield exactly one audio stream, ffprobe said: {text}"
+        );
+        assert!(text.contains("codec_name=aac"), "ffprobe said: {text}");
         let _ = std::fs::remove_file(&out);
     }
 }

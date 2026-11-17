@@ -148,7 +148,7 @@ Effects are applied to the **image layer at export resolution** (scene px × exp
 | **Region recording** — `{left,top,width,height}` in stream px, every frame cropped, ffmpeg sized to even-padded region | `recording.rs:41-44` | W4 |
 | **Source** `monitor` (default) vs `window` — narrows what the portal picker offers | `recording.rs:34-35` | W4 |
 | **Pause/Resume** — frames dropped consumer-side, session + stream + ffmpeg survive, resume writes the same file; paused time leaves no frames | `recording.rs:37-39`; UI button `app.ts:819`, `recPauseBtn` `:1320`, paused-total bookkeeping `:1472` | W4 |
-| **Audio** — mic (`list_audio_sources` id) and/or default output **monitor**, mixed into one AAC track; never an error when empty | `recording.rs:30-32`; pretty-names `:147-200`; UI mic select `settings.ts:855-863`, system-audio switch `settings.ts:866-870`; `list_audio_sources` wiring `app.ts:4453-4461` | W4 single-source (mixing gap) |
+| **Audio** — mic (`list_audio_sources` id) and/or default output **monitor**, mixed into one AAC track; never an error when empty | `recording.rs:30-32`; pretty-names `:147-200`; UI mic select `settings.ts:855-863`, system-audio switch `settings.ts:866-870`; `list_audio_sources` wiring `app.ts:4453-4461` | W4 + W13 (single-source W4; mic+monitor `amix` mixing, `@DEFAULT_MONITOR@`, settings fallback W13 — live-verified on pipewire-pulse) |
 | `recording-state {recording, path}` events so a window that missed the invoke result resyncs | `recording.rs:46-47`; widget mirrors it `widget-main.ts:412-416` | W4 |
 | Elapsed timer pill, repainted every 500 ms while a take runs | `app.ts:2326-2340` | W4 |
 | Recording thumbnails for the Recent rail | `commands.rs:533-545` (`recording_thumb`) | W9 (film-icon placeholder) |

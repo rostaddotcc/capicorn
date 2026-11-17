@@ -16,6 +16,7 @@ Baseline: Tauri v1.5.2 (commit d25adb1). Rebuild workspace: `rust/` (not yet cre
 | W6 | packaging, docs, suite dossier | complete (bbd2683 + docs); all waves W0–W6 BUILT |
 | W7 | parity backlog (gaps B4#1–3) | complete — timelapse.assemble + OCR lang picker + busy modal (390 tests, ffprobe-verified) |
 | W8 | parity backlog (gaps B4#4–9) | complete — upload POST flow + Ctrl+. (timelapse) + countdown HUD; all 9 B4 rows closed |
+| W9 | parity long-tail (save & recent UX) | in progress — filename tokens + Save As + default dir + Recent strip dispatched |
 
 ## Parity checklist
 

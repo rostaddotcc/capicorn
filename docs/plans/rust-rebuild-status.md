@@ -361,6 +361,16 @@ Baseline: Tauri v1.5.2 (commit d25adb1). Rebuild workspace: `rust/` (not yet cre
   Trim deliberately OUT (live has none; spec lists it — ask rostad).
 - Next: W4d lands → verify → full gates → AppImage → W4 delivery + KDE pass
   (live recording/scrolling need rostad's unlocked session).
+- W4a/W4c batch reports reconciled (already committed b965a7f/9e7fbfe/f135c61).
+  New gold saved to skill: TWO real PipeWire deadlocks W4a found+fixed —
+  (1) dropping ContextRc/CoreRc joins module-rt thread stuck in rtkit D-Bus →
+  stop hangs; leak core+context+registry too, not just stream/listener/mainloop;
+  (2) `pw-cli info 0` enters its REPL even with stdin(null) — not a liveness
+  probe; use bounded producer startup. W4c extras: OCR test hand-drew a 5×7
+  block font (O needed full-width bars or tesseract reads U); upload reaps the
+  detached child on a helper thread (live blocked on .status()); timelapse
+  frames 5-digit padded so ffmpeg glob order = frame order. Unused raster dep
+  in recording manifest already dropped by parent.
 
 ## Appendix — measured reality
 

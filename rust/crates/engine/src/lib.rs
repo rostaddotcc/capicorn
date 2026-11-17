@@ -12,7 +12,7 @@
 //!
 //! # Feature split (`native` / web core)
 //!
-//! The default `native` feature is the desktop engine, unchanged: 42 commands,
+//! The default `native` feature is the desktop engine, unchanged: 43 commands,
 //! including capture, recording, scrolling capture, timelapse, OCR, upload and
 //! clipboard. `--no-default-features` builds the web core, which compiles for
 //! `wasm32-unknown-unknown`: `snagcraft-capture`, `snagcraft-recording` and
@@ -437,6 +437,50 @@ fn cmd_upload_open(_s: &mut Session, p: Value) -> Result<Value, CommandError> {
     let url = p_str(&p, "url")?;
     snagcraft_io::upload::open_url(url).map_err(|e| CommandError::Io(e.to_string()))?;
     Ok(json!({"opened": url}))
+}
+
+/// `upload.send {endpoint?}` — render the current document to PNG and POST it to
+/// the user's own endpoint, returning `{link}`.
+///
+/// `endpoint` defaults to the persisted `settings.upload_url`; no document or no
+/// endpoint is a caller mistake (`InvalidParams`), a hostile endpoint is too, and
+/// only the transport/HTTP failure is `Io`. Nothing here knows any provider: the
+/// user configures the URL, the app posts and hands back what came back.
+#[cfg(feature = "native")]
+fn cmd_upload_send(s: &mut Session, p: Value) -> Result<Value, CommandError> {
+    if s.doc.is_none() {
+        return Err(CommandError::InvalidParams(
+            "no image to upload; open or capture a document first".into(),
+        ));
+    }
+    let explicit = p
+        .get("endpoint")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|endpoint| !endpoint.is_empty());
+    let endpoint = match explicit {
+        Some(endpoint) => endpoint.to_string(),
+        None => s.settings.upload_url.trim().to_string(),
+    };
+    if endpoint.is_empty() {
+        return Err(CommandError::InvalidParams(
+            "no upload endpoint configured; set settings.upload_url".into(),
+        ));
+    }
+
+    let img = s.render_watermarked(None)?;
+    let png = snagcraft_io::encode(&img, snagcraft_io::ImageFormat::Png, 100)
+        .map_err(|e| CommandError::Io(e.to_string()))?;
+    let link = snagcraft_io::upload::upload_image(&endpoint, &png).map_err(|e| {
+        use snagcraft_io::upload::UploadError;
+        match e {
+            UploadError::Endpoint | UploadError::NoImage => {
+                CommandError::InvalidParams(e.to_string())
+            }
+            other => CommandError::Io(other.to_string()),
+        }
+    })?;
+    Ok(json!({ "link": link }))
 }
 
 #[cfg(feature = "native")]
@@ -1147,6 +1191,13 @@ pub fn registry() -> Vec<CommandSpec> {
         },
         #[cfg(feature = "native")]
         CommandSpec {
+            id: "upload.send",
+            label: "Upload the current image to the configured endpoint",
+            params_doc: "{endpoint?}",
+            run: cmd_upload_send,
+        },
+        #[cfg(feature = "native")]
+        CommandSpec {
             id: "timelapse.start",
             label: "Start interval capture",
             params_doc: "{period_secs, count?, dir}",
@@ -1372,6 +1423,9 @@ mod tests {
             if cmd.id == "capture.full" {
                 continue; // live portal — not testable on a locked build host
             }
+            if cmd.id == "upload.send" {
+                continue; // network: the user's configured endpoint, if any
+            }
             for g in &garbage {
                 let _ = s.dispatch(cmd.id, g.clone());
             }
@@ -1558,6 +1612,128 @@ mod tests {
                 .is_err()
         );
         assert!(s.dispatch("upload.open", json!({})).is_err());
+    }
+
+    fn have_curl() -> bool {
+        std::process::Command::new("curl")
+            .arg("--version")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false)
+    }
+
+    /// One-shot local upload endpoint: records the raw request, replies with
+    /// `response`. The body is read until idle because curl streams multipart
+    /// from stdin with chunked encoding.
+    #[allow(clippy::unwrap_used, clippy::expect_used)]
+    fn mock_upload_endpoint(response: &'static str) -> (String, std::thread::JoinHandle<Vec<u8>>) {
+        use std::io::{Read, Write as _};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(std::time::Duration::from_millis(1500)))
+                .unwrap();
+            let mut request = Vec::new();
+            let mut chunk = [0u8; 8192];
+            loop {
+                match stream.read(&mut chunk) {
+                    Ok(0) => break,
+                    Ok(n) => request.extend_from_slice(&chunk[..n]),
+                    Err(_) => break,
+                }
+            }
+            let reply = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                response.len(),
+                response
+            );
+            stream.write_all(reply.as_bytes()).unwrap();
+            let _ = stream.flush();
+            request
+        });
+        (format!("http://{addr}/upload"), handle)
+    }
+
+    #[test]
+    fn upload_send_posts_the_rendered_document_to_the_configured_endpoint() {
+        if !have_curl() {
+            eprintln!("skipping upload.send test: curl is not installed");
+            return;
+        }
+        let (endpoint, server) = mock_upload_endpoint(r#"{"url":"https://example.com/i/abc.png"}"#);
+        let mut s = Session::new();
+        s.dispatch("doc.new", json!({"w": 12, "h": 9})).unwrap();
+        s.settings_mut().upload_url = endpoint;
+
+        let out = s.dispatch("upload.send", json!({})).unwrap();
+        assert_eq!(out["link"], "https://example.com/i/abc.png");
+
+        let request = server.join().unwrap();
+        assert!(
+            request.starts_with(b"POST /upload HTTP/1.1"),
+            "not a multipart POST"
+        );
+        assert!(
+            request.windows(4).any(|w| w == b"\x89PNG"),
+            "the request body is not a PNG"
+        );
+    }
+
+    #[test]
+    fn upload_send_explicit_endpoint_overrides_settings() {
+        if !have_curl() {
+            eprintln!("skipping upload.send test: curl is not installed");
+            return;
+        }
+        let (endpoint, server) = mock_upload_endpoint("https://example.com/override.png");
+        let mut s = Session::new();
+        s.dispatch("doc.new", json!({"w": 8, "h": 8})).unwrap();
+        s.settings_mut().upload_url = "https://example.invalid/not-used".to_string();
+
+        let out = s
+            .dispatch("upload.send", json!({ "endpoint": endpoint }))
+            .unwrap();
+        assert_eq!(out["link"], "https://example.com/override.png");
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn upload_send_requires_a_document_and_a_safe_endpoint() {
+        let mut s = Session::new();
+        // no document yet
+        assert!(matches!(
+            s.dispatch("upload.send", json!({})),
+            Err(CommandError::InvalidParams(_))
+        ));
+
+        s.dispatch("doc.new", json!({"w": 8, "h": 8})).unwrap();
+        s.settings_mut().upload_url = String::new();
+        // nothing configured and no override
+        assert!(matches!(
+            s.dispatch("upload.send", json!({})),
+            Err(CommandError::InvalidParams(_))
+        ));
+        // an explicit blank override falls back to settings, still empty
+        assert!(matches!(
+            s.dispatch("upload.send", json!({"endpoint": "   "})),
+            Err(CommandError::InvalidParams(_))
+        ));
+        // hostile schemes never reach curl
+        for endpoint in ["file:///etc/passwd", "javascript:alert(1)", "ftp://e.com/u"] {
+            assert!(
+                matches!(
+                    s.dispatch("upload.send", json!({"endpoint": endpoint})),
+                    Err(CommandError::InvalidParams(_))
+                ),
+                "{endpoint} must be rejected"
+            );
+        }
     }
 
     #[test]
@@ -1817,11 +1993,11 @@ mod tests {
     }
 
     #[test]
-    fn native_registry_keeps_all_42_commands() {
+    fn native_registry_keeps_all_43_commands() {
         // Desktop contract: every command the UI, CLI and MCP know is present.
         // Bump deliberately when a wave adds a command.
         let ids: Vec<&str> = registry().iter().map(|c| c.id).collect();
-        assert_eq!(ids.len(), 42, "native registry drifted: {ids:?}");
+        assert_eq!(ids.len(), 43, "native registry drifted: {ids:?}");
         for native_only in [
             "capture.full",
             "record.start",
@@ -1830,6 +2006,7 @@ mod tests {
             "timelapse.assemble",
             "ocr.run",
             "upload.open",
+            "upload.send",
             "clipboard.copy",
             "audio.sources",
         ] {

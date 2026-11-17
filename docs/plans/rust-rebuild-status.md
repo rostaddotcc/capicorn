@@ -15,7 +15,7 @@ Baseline: Tauri v1.5.2 (commit d25adb1). Rebuild workspace: `rust/` (not yet cre
 | W5 | CLI/JSON/MCP automation + WASM web | complete (3273af1 + watermark fix); web app browser-verified; W6 next |
 | W6 | packaging, docs, suite dossier | complete (bbd2683 + docs); all waves W0–W6 BUILT |
 | W7 | parity backlog (gaps B4#1–3) | complete — timelapse.assemble + OCR lang picker + busy modal (390 tests, ffprobe-verified) |
-| W8 | parity backlog (gaps B4#4–9) | in progress — upload POST flow + Ctrl+. stop + countdown HUD dispatched |
+| W8 | parity backlog (gaps B4#4–9) | complete — upload POST flow + Ctrl+. (timelapse) + countdown HUD; all 9 B4 rows closed |
 
 ## Parity checklist
 
@@ -526,6 +526,26 @@ Baseline: Tauri v1.5.2 (commit d25adb1). Rebuild workspace: `rust/` (not yet cre
   upload POST — live/network scope).
 - Child over-reconned early (steered to write) + vision-looped late (steered
   to cargo gates) — both steers effective.
+
+### 2026-11-17 — wake #73: W8 COMPLETE — entire B4 backlog closed
+- W8 done (688s, 18 new tests): upload POST flow (io upload_image via curl
+  -F file=@-, http(s) guard before spawn, 30s bounded wait+kill, 1MiB cap,
+  threaded pipes no deadlock, link parse+revalidate; engine upload.send
+  native, registry 42→43; ui-egui File→Upload refuse-no-image/endpoint,
+  copy link+status), Ctrl+. stop, compact countdown HUD (CAPTURE IN + number,
+  capture_delay_secs driven). Real TcpListener mocks assert POST/multipart/
+  PNG magic/link round-trip; hostile file://javascript: rejected no-spawn.
+- PARENT parity fix: child wired Ctrl+.→record.stop, but live (app.ts:5181)
+  stops INTERVAL capture (timelapse). Corrected handler→app.timelapse.running
+  →stop_timelapse + rewrote the 2 kittest (7/7 green). Honest parity.
+- Parent bumped automation drift-guard 42→43 (parent-owned) + fmt.
+- Parent-verified: workspace 424 passed / 0 failed / 5 ignored, clippy/fmt/
+  layers/web clean. Snapshots reviewed (countdown HUD clean; File button
+  neatly inserted, no clipping; widget-in-harness popover = known artifact).
+- Parity B4#4–9 ticked W8 (7 rows); gaps.md ALL 9 B4 rows CLOSED; README 43.
+- B4 backlog fully closed. Remaining parity pending rows are other features
+  (recent rail, W2 residuals etc.) + rostad gates (KDE pass/trim/relicense/
+  cutover). NO releases published.
 
 ## Appendix — measured reality
 

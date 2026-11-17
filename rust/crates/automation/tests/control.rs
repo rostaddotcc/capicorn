@@ -148,8 +148,8 @@ fn commands_list_exposes_the_whole_registry() {
     let commands = res["result"].as_array().expect("array of commands");
     assert_eq!(
         commands.len(),
-        42,
-        "W7 engine registry has 42 commands (41 + timelapse.assemble)"
+        43,
+        "W8 engine registry has 43 commands (42 + upload.send)"
     );
     assert_eq!(commands.len(), snagcraft_engine::registry().len());
     for entry in commands {

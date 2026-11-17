@@ -63,7 +63,7 @@ in non-test code at the crate roots.
 platform-bound code (arboard clipboard, portal capture, tesseract, PipeWire) and
 keeps the document, compositor, tools and export. `cargo xtask wasm` compiles the
 web crate set for `wasm32-unknown-unknown` to prove the split still holds. Of the
-42 native commands, **21** are registered in the web build.
+43 native commands, **21** are registered in the web build.
 
 ---
 

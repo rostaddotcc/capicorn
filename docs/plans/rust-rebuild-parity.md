@@ -192,9 +192,9 @@ Effects are applied to the **image layer at export resolution** (scene px × exp
 | `make_timelapse(dir, pattern, fps, out)` — glob resolved inside `dir` (no separators), ffmpeg `-pattern_type glob`, zero-padded numbers give playback order | `timelapse.rs:8-18`, `:100` | W7 |
 | Interval period setting (default **30 s**), select "every N s / every 5 min" | `settings.ts:69` (`DEFAULT_INTERVAL`), select `settings.ts:837-842` | W4 |
 | Capture → Interval menu entry ("a screenshot every few seconds, then a timelapse") + per-mode banner copy | `app.ts:865-870`, `app.ts:2239-2243` | W4 |
-| **`Ctrl+.`** stops a running interval capture (same as Stop) | `app.ts:5181-5188` | pending |
+| **`Ctrl+.`** stops a running interval capture (same as Stop) | `app.ts:5181-5188` | W8 |
 | One live loop guarded by an `IntervalRun` record with a zero-padded `seq` counter | `app.ts:2820-2830` | W4 |
-| **Countdown HUD** — the shell shrinks the window to a 280×228 HUD and hides `#app` (`set_hud_mode`), timer parented to `<body>` so it stays visible; older backends fall back to a full-window overlay | `app.ts:1951-1984` (`set_hud_mode(true,280,228)` `:1983`) | pending |
+| **Countdown HUD** — the shell shrinks the window to a 280×228 HUD and hides `#app` (`set_hud_mode`), timer parented to `<body>` so it stays visible; older backends fall back to a full-window overlay | `app.ts:1951-1984` (`set_hud_mode(true,280,228)` `:1983`) | W8 |
 | Capture delay pills (0 s … 60 s, `DEFAULT_TIMER = 0`) | `settings.ts:64`, `settings.ts:830-836`, `settings.ts:219-227` | W4 |
 
 ---
@@ -203,10 +203,10 @@ Effects are applied to the **image layer at export resolution** (scene px × exp
 
 | Feature | Evidence | rust |
 |---|---|---|
-| Provider-agnostic: POST the flattened PNG to a user-configured endpoint, copy back whatever link the server returns; ships no credentials, no hardcoded service | `upload.rs:1-17` (`upload_image` `:17`) | pending |
-| Transport is `curl` (no bundled TLS stack) | `upload.rs:8-9` | pending |
-| File → **Upload…** menu item | `app.ts:797`, dispatch `:4572-4573` | pending |
-| Flow: refuse without an image, require an endpoint ("Set an upload endpoint in Settings → Export first"), "Uploading…", then copy the link and say so | `app.ts:4499-4523` (`:4501`, `:4504-4506`, `:4511`, `:4518-4520`) | pending |
+| Provider-agnostic: POST the flattened PNG to a user-configured endpoint, copy back whatever link the server returns; ships no credentials, no hardcoded service | `upload.rs:1-17` (`upload_image` `:17`) | W8 |
+| Transport is `curl` (no bundled TLS stack) | `upload.rs:8-9` | W8 |
+| File → **Upload…** menu item | `app.ts:797`, dispatch `:4572-4573` | W8 |
+| Flow: refuse without an image, require an endpoint ("Set an upload endpoint in Settings → Export first"), "Uploading…", then copy the link and say so | `app.ts:4499-4523` (`:4501`, `:4504-4506`, `:4511`, `:4518-4520`) | W8 |
 | `open_url` for the returned link | `upload.rs:89` | W4 |
 
 ---
@@ -275,7 +275,7 @@ Sections rendered: General, Capture, Recording audio, Global hotkeys, Save locat
 | `Delete` / `Backspace` | Delete selected annotation | `app.ts:1232` | pending |
 | `Esc` | Cancel / deselect / close (also closes About, New, Resize, Shortcuts) | `app.ts:1233`, `:5108-5127` | W2 |
 | `?` | Shortcuts help | `app.ts:1234`, `:5138-5146` | pending |
-| `Ctrl+.` | Stop interval capture (documented in code, not in the sheet) | `app.ts:5181-5188` | pending |
+| `Ctrl+.` | Stop interval capture (documented in code, not in the sheet) | `app.ts:5181-5188` | W8 |
 | `Enter` in crop | Commit the crop | `tools.ts` crop `1462-1557`, hint `app.ts:354` | W2 |
 | `Enter`/`NumpadEnter` in text | Commit the caption | `app.ts:2691` | W2 |
 | `Enter`/`Space` on the widget tab | Expand the pill | `widget-main.ts:336-339` | W3 |

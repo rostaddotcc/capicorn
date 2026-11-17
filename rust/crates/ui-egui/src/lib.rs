@@ -556,6 +556,36 @@ impl RegionPick {
     }
 }
 
+/// Compact 3-2-1 countdown shown before a delayed grab starts (B4#5).
+///
+/// Presentational only: the capture thread still sleeps `capture_delay_secs`,
+/// this just paints what is about to happen. `deadline` is `None` for tests and
+/// snapshots, which freezes the number so an image cannot tick mid-render.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Countdown {
+    /// Whole seconds still to show (3, 2, 1).
+    pub remaining: u32,
+    deadline: Option<Instant>,
+}
+
+impl Countdown {
+    /// Count down from `seconds` in real time.
+    pub fn running(seconds: u32) -> Self {
+        Self {
+            remaining: seconds.max(1),
+            deadline: Some(Instant::now() + Duration::from_secs(1)),
+        }
+    }
+
+    /// A frozen countdown (snapshot/test seam).
+    pub fn frozen(seconds: u32) -> Self {
+        Self {
+            remaining: seconds,
+            deadline: None,
+        }
+    }
+}
+
 /// Live recording (engine `record.*` mirror + the picker's options).
 #[derive(Debug)]
 pub struct RecordState {
@@ -707,6 +737,8 @@ pub struct SnagCraftApp {
     pub ocr: OcrState,
     /// `ocr.available` cached: it probes for the tesseract binary.
     pub ocr_available: Option<bool>,
+    /// Compact 3-2-1 countdown before a delayed capture starts (B4#5).
+    pub countdown: Option<Countdown>,
     /// Off-thread `ocr.run`: the worker sends the extracted text (or its error).
     ocr_rx: Option<mpsc::Receiver<Result<String, String>>>,
     pick: Option<RegionPick>,
@@ -793,6 +825,7 @@ impl SnagCraftApp {
             timelapse: TimelapseState::default(),
             ocr: OcrState::default(),
             ocr_available: None,
+            countdown: None,
             ocr_rx: None,
             pick: None,
             pick_rx: None,
@@ -938,6 +971,9 @@ impl SnagCraftApp {
             }
             let (tx, rx) = mpsc::channel();
             self.capture_rx = Some(rx);
+            // The compact HUD mirrors the thread's sleep; the thread stays the
+            // authority on when the grab really happens.
+            self.countdown = (delay_secs > 0).then(|| Countdown::running(delay_secs));
             self.status = if delay_secs > 0 {
                 format!("Capturing in {delay_secs}s… answer the OS picker if one appears.")
             } else {
@@ -973,6 +1009,7 @@ impl SnagCraftApp {
             Ok(Ok(surface)) => {
                 let (w, h) = (surface.width(), surface.height());
                 self.capture_rx = None;
+                self.countdown = None;
                 // Autosave a copy first: the document below is a separate
                 // in-memory surface, so this never touches the original file.
                 let autosaved = self.autosave_capture(&surface);
@@ -991,11 +1028,13 @@ impl SnagCraftApp {
             }
             Ok(Err(e)) => {
                 self.capture_rx = None;
+                self.countdown = None;
                 self.status = format!("Capture failed: {e}");
             }
             Err(mpsc::TryRecvError::Empty) => {}
             Err(mpsc::TryRecvError::Disconnected) => {
                 self.capture_rx = None;
+                self.countdown = None;
                 self.status = "Capture thread ended unexpectedly.".into();
             }
         }
@@ -1894,6 +1933,45 @@ impl SnagCraftApp {
             Ok(_) => self.status = format!("Opened {url}"),
             Err(err) => self.status = format!("Upload page: {err}"),
         }
+    }
+
+    /// `upload.send`: POST the current image to the configured endpoint and copy
+    /// the link it replies with (File → Upload…).
+    ///
+    /// The endpoint is the user's own `settings.upload_url`; nothing is posted
+    /// anywhere until they press the item. Native only: the web build has no
+    /// curl and no file system to stage from.
+    #[cfg(feature = "native")]
+    pub fn upload_image_now(&mut self) {
+        if self.sess().doc().is_none() {
+            self.status = "Nothing to upload — capture or open an image first.".into();
+            return;
+        }
+        let Some(endpoint) = self.upload_target() else {
+            self.status =
+                format!("Set an upload URL in Settings — Export (e.g. {UPLOAD_URL_DEFAULT}).");
+            return;
+        };
+        match self.exec("upload.send", serde_json::json!({ "endpoint": endpoint })) {
+            Ok(v) => {
+                let link = v["link"].as_str().unwrap_or_default().trim().to_string();
+                if link.is_empty() {
+                    self.status = "Upload failed: the endpoint returned no link.".into();
+                    return;
+                }
+                if let Some(ctx) = &self.main_ctx {
+                    ctx.copy_text(link.clone());
+                }
+                self.status = format!("Uploaded: {link}");
+            }
+            Err(err) => self.status = format!("Upload failed: {err}"),
+        }
+    }
+
+    /// Show the compact countdown at `seconds` without starting a grab
+    /// (snapshot/test seam; the real path runs through `capture_delay_secs`).
+    pub fn show_countdown(&mut self, seconds: u32) {
+        self.countdown = Some(Countdown::frozen(seconds));
     }
 
     // ---- autosave -----------------------------------------------------------
@@ -4115,6 +4193,12 @@ fn handle_keys(ctx: &egui::Context, app: &mut SnagCraftApp) {
         if i.consume_key(Modifiers::CTRL, Key::Comma) {
             app.settings_open = true;
         }
+        // Ctrl+. ends a running interval capture (timelapse) — the keyboard
+        // twin of the Stop button, matching the live app (app.ts:5181-5188).
+        // Only while a timelapse is running, so the key stays free otherwise.
+        if app.timelapse.running && i.consume_key(Modifiers::CTRL, Key::Period) {
+            app.stop_timelapse();
+        }
         if i.consume_key(Modifiers::CTRL, Key::D)
             && let Some(id) = app.selected
         {
@@ -4166,6 +4250,58 @@ fn corner_label(corner: &str) -> &'static str {
 /// One-line HUD text: strong and a touch larger than the status bar.
 fn hud_text(text: impl Into<String>) -> egui::RichText {
     egui::RichText::new(text.into()).size(12.0).strong()
+}
+
+/// Compact centered countdown pill (B4#5): the shrunk variant of the live
+/// app's countdown — no scrim and no editor chrome, just the number, so the
+/// desktop stays usable while it counts.
+fn countdown_hud(ctx: &egui::Context, app: &mut SnagCraftApp) {
+    let Some(countdown) = app.countdown else {
+        return;
+    };
+    let mut countdown = countdown;
+    if let Some(deadline) = countdown.deadline {
+        if Instant::now() >= deadline {
+            if countdown.remaining <= 1 {
+                app.countdown = None;
+                return;
+            }
+            countdown.remaining -= 1;
+            countdown.deadline = Some(Instant::now() + Duration::from_secs(1));
+        }
+        // Keep the seconds ticking while nothing else repaints.
+        ctx.request_repaint_after(Duration::from_millis(50));
+    }
+    app.countdown = Some(countdown);
+    let remaining = countdown.remaining;
+
+    egui::Area::new(egui::Id::unique("countdown-hud"))
+        .order(egui::Order::Foreground)
+        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+        .interactable(false)
+        .show(ctx, |ui| {
+            egui::Frame::new()
+                .fill(pal_surface(ui))
+                .stroke(Stroke::new(1.0, pal_border(ui)))
+                .corner_radius(CornerRadius::same(8))
+                .inner_margin(egui::Margin::symmetric(20, 14))
+                .show(ui, |ui| {
+                    ui.vertical_centered(|ui| {
+                        ui.label(egui::RichText::new("CAPTURE IN").size(10.5).strong().weak());
+                        ui.label(
+                            egui::RichText::new(remaining.to_string())
+                                .size(52.0)
+                                .strong()
+                                .color(pal_accent(ui)),
+                        );
+                        ui.label(
+                            egui::RichText::new("Screen capture starts automatically")
+                                .size(11.0)
+                                .color(pal_fg(ui)),
+                        );
+                    });
+                });
+        });
 }
 
 /// The top banner: whatever live job is running speaks here (recording,
@@ -4263,6 +4399,26 @@ fn media_hud(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
                 }
             });
         });
+}
+
+/// File → Upload…: POST the current image to the user's own endpoint and copy
+/// the link it returns. Native only — the web build has no curl.
+///
+/// Always enabled: the click is what reports "nothing to upload" or "set an
+/// upload URL", which is more useful than a greyed-out item with no reason.
+#[cfg(feature = "native")]
+fn file_menu(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
+    ui.menu_button("File", |ui| {
+        ui.set_min_width(250.0);
+        if ui
+            .button("Upload…")
+            .on_hover_text("POST the image to your endpoint and copy the link")
+            .clicked()
+        {
+            app.upload_image_now();
+            ui.close();
+        }
+    });
 }
 
 /// The Capture dropdown: one place for every grab (screen, region, record,
@@ -4555,6 +4711,7 @@ pub fn app_ui(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
     app.handle_close_request(&ctx);
 
     media_hud(ui, app);
+    countdown_hud(&ctx, app);
 
     egui::Panel::top("toolbar")
         .frame(
@@ -4609,6 +4766,8 @@ pub fn app_ui(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
                     if ui.button("Open").on_hover_text("Open an image").clicked() {
                         app.open_dialog();
                     }
+                    #[cfg(feature = "native")]
+                    file_menu(ui, app);
                     #[cfg(feature = "native")]
                     capture_menu(ui, app);
                     #[cfg(feature = "native")]

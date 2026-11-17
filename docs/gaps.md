@@ -101,6 +101,11 @@ verified, WASM web app browser-verified (status log, W5 wake #50).
 
 ### B4 — The nine reverted parity rows
 
+> **W8 update (2026-11-17): rows 4–9 CLOSED** — Ctrl+. stops a running
+> timelapse (live parity, app.ts:5181), compact countdown HUD, and the upload
+> POST flow (io `upload_image` via curl + engine `upload.send` + File→Upload,
+> mock-server tested). **All nine B4 rows now closed.**
+>
 > **W7 update (2026-11-17): rows 1–3 CLOSED** — OCR language picker
 > (persisted `ocr_lang`), OCR busy modal (off-thread, cleared on result/error),
 > and `timelapse.assemble` (ffmpeg glob → h264 mp4, ffprobe-verified). Rows 4–9

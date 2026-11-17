@@ -12,7 +12,7 @@ Baseline: Tauri v1.5.2 (commit d25adb1). Rebuild workspace: `rust/` (not yet cre
 | W2 | editor tool parity | KDE-approved by rostad 2026-11-16; UI polish pass landed (sliders) |
 | W3 | shell parity (tray/hotkeys/widget/settings) | complete on pn53 (216 tests); KDE live pass pending rostad |
 | W4 | recording, scrolling, OCR, timelapse | complete on pn53 (363 tests); KDE live pass pending; gaps logged below |
-| W5 | CLI/JSON/MCP automation + WASM web | in progress — W5a (automation crate) dispatched; W5b wiring + W5c WASM follow |
+| W5 | CLI/JSON/MCP automation + WASM web | W5a done (4fc29a6); W5b (app/CLI wiring) + W5c-engine (wasm split) in flight; W5d web app follows |
 | W6 | packaging, docs, suite dossier | pending |
 
 ## Parity checklist
@@ -407,6 +407,21 @@ Baseline: Tauri v1.5.2 (commit d25adb1). Rebuild workspace: `rust/` (not yet cre
 - W5b (parent, after W5a): app --control/--control-token-file flags + CLI
   mcp/control subcommands. W5c (next wake): WASM web build + xtask wasm gate
   (L0–L5 wasm32 compile, engine native/web feature split, trunk app).
+
+### 2026-11-17 — wake #34: W5a committed; W5b + W5c-engine in flight
+- W5a complete + committed (4fc29a6): TCP control + MCP stdio, 18 tests,
+  rmcp Apache-2.0 (plan corrected). CI green after Node24 + snapshot-policy
+  + fmt + consistent-tree fixes (run 44040349228 success).
+- W5b dispatched (deleg_3927f082): ui-egui Session→Arc<Mutex> (sess() accessor,
+  behavior-identical), app --control/--control-token-file + shutdown, CLI
+  mcp/control subcommands (auth-first no-ack client).
+- W5c recon: wasm32 target installed; ALL 8 pure crates (L0–L5) already
+  compile wasm32 ✓. io/engine fail only on arboard (clipboard). capture/
+  recording/platform/automation native-only.
+- W5c-engine dispatched (deleg_ac3150ee, PARALLEL with W5b — disjoint crates):
+  io/engine native/web feature split (native default byte-identical, web core
+  compiles), xtask wasm gate. W5d (ui-egui web cfg + apps/snagcraft-web trunk)
+  follows after W5b lands.
 
 ## Appendix — measured reality
 

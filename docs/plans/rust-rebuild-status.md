@@ -640,6 +640,17 @@ live pass + gates (trim/relicense/cutover/external post). NO releases published.
 - MISSION: W0–W12 built, full parity except gated Trim. Awaiting rostad KDE
   live pass + gates (trim/relicense/cutover/external post). No releases.
 
+### 2026-11-17 — wake #101: published Rust-edition pre-release (rostad authorized)
+- rostad: "släng upp appen som en uppdatering i repot" → explicit publish OK.
+- Existing v0.1.0 tag was the OLD Capicorn first-alpha (2026-11-14) — left
+  untouched (no destructive overwrite). Used distinct tag **rust-v0.1.0**.
+- Created GitHub pre-release rust-v0.1.0 (--prerelease --latest=false): assets
+  SnagCraft-x86_64.AppImage (13.95MB) + snagcraft_0.1.0_amd64.deb (10.34MB),
+  both verified uploaded. v1.5.3 remains stable "Latest" (no cutover).
+- URL: https://github.com/rostaddotcc/snagcraft/releases/tag/rust-v0.1.0
+- Still gated: cutover (promote Rust to stable / retire Tauri), relicense,
+  trim, KDE live pass. This is a pre-release for testing, not a cutover.
+
 ## Appendix — measured reality
 
 | Claim | Measured | What changed |

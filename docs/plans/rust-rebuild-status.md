@@ -13,7 +13,7 @@ Baseline: Tauri v1.5.2 (commit d25adb1). Rebuild workspace: `rust/` (not yet cre
 | W3 | shell parity (tray/hotkeys/widget/settings) | complete on pn53 (216 tests); KDE live pass pending rostad |
 | W4 | recording, scrolling, OCR, timelapse | complete on pn53 (363 tests); KDE live pass pending; gaps logged below |
 | W5 | CLI/JSON/MCP automation + WASM web | complete (3273af1 + watermark fix); web app browser-verified; W6 next |
-| W6 | packaging, docs, suite dossier | in progress — W6a (deb/CI artifacts) + W6b (README/gaps/dossier) dispatched |
+| W6 | packaging, docs, suite dossier | complete (bbd2683 + docs); all waves W0–W6 BUILT |
 
 ## Parity checklist
 
@@ -469,6 +469,30 @@ Baseline: Tauri v1.5.2 (commit d25adb1). Rebuild workspace: `rust/` (not yet cre
   CI artifact workflow, NO publish) + W6b (sa-1, docs: README rewrite +
   gaps.md + suite-candidacy.md INTERNAL dossier + parity audit) — parallel,
   disjoint (packaging/.github vs docs/README).
+
+### 2026-11-17 — wake #56: W6 COMPLETE — all waves W0–W6 built
+- W6a committed (bbd2683): deb.sh (manual dpkg-deb, verified -I/-c, 10.2MB),
+  rust-release.yml (workflow_dispatch + tag v* → AppImage/.deb/web-dist →
+  upload-artifact ONLY, no release publish — gated), .desktop Categories
+  fix (Graphics; only, validates clean). AppImage alive, YAML valid.
+- W6b complete (docs verified grounded): rust/README.md (264 lines, L0–L7
+  architecture, 41/21 commands, CLI/control/MCP/web, licence/gates),
+  docs/gaps.md (14 entries A1–D2), docs/suite-candidacy.md (INTERNAL,
+  no external posting), parity audit (150 rows, pending 68→45, 23 new
+  code-verified ticks, 9 W4-reverted kept pending, stale W1 note replaced).
+- W6b honest findings: NO recent rail at all (grep recent=0, not just video
+  thumbs); capture.full has xcap macOS/Windows fallback (shell/recording
+  Linux-only, capture not); ScreenCraft #2148/#2337 spec-only (dossier marks
+  unverified); SUITE CANDIDACY BLOCKERS — GPL not on suite allowlist (core
+  rule 9 stop-and-ask = relicense gate A3), fonts must move to craft-fonts
+  (rust rule 3), CI must adopt craft-common-actions (core rule 11).
+- MISSION BUILT: W0 probe gate, W1 scaffold/engine/capture, W2 tool parity
+  (KDE-approved), W3 shell, W4 recording/scroll/OCR/timelapse, W5 automation
+  + WASM web, W6 packaging/docs/dossier. 392 tests / 0 failed. Native
+  AppImage + .deb + CLI + TCP/MCP control + browser web app, one Rust engine.
+- REMAINING (all rostad-gated, not autonomous): W3/W4 KDE Plasma Wayland
+  live pass; trim decision; relicense (GPL→MIT/Apache, also suite blocker);
+  cutover; any external post / suite submission. NO releases published.
 
 ## Appendix — measured reality
 

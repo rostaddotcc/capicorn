@@ -6,6 +6,20 @@
 
 Legend: the **rust** column is the checkbox — `pending` = not started, `W0 spike` = proven in the W0 probe gate, `n/a` = deliberately out of scope (don't rebuild). Tick a row by replacing the status with the wave that lands it (`W1`, `W2`, …).
 
+**W6b honesty audit (2026-11-17).** 150 rows. Every tick was re-read against either the
+wave delivery in `docs/plans/rust-rebuild-status.md` or the Rust source; rows the code
+does not back stay `pending`, and the nine rows reverted at the W4 audit (OCR
+language/busy UI, `make_timelapse` video assembly, `Ctrl+.`, shrunk countdown HUD,
+upload POST flow) are still `pending`. Ticks added or narrowed in this pass are
+code-verified at: `ui-egui/src/lib.rs` 4811/4826 (dashed effect preview), 3903/3906
+(`Ctrl+C`/`Ctrl+V`), 3909 (`Ctrl+,`), 3928/3935 (Esc, Delete/Backspace), 3866/3920/3063
+(Enter: crop, caption, widget), 960+1774 (autosave capture), 2317/4492 (drag-drop),
+2680–2901 (settings panel: format, quality, watermark, share URL, save folder file-name
+pattern, hotkey triggers, theme); engine crop-undo test (`crates/engine/src/lib.rs`);
+status wake #17 (file associations, `%F` + argv). Three rows are ticked with a
+parenthetical because only part of the live behaviour exists — read the cell, not just
+the wave letter.
+
 ---
 
 ## 1. Tools — the 13 classes as implemented (`src/editor/tools.ts`)
@@ -53,7 +67,7 @@ Effects are applied to the **image layer at export resolution** (scene px × exp
 | Blackout — solid ink `#111827`, no intensity slider | `blur.ts:32` (`BLACKOUT_INK`), `blackout` `:244`; UI `app.ts:3314` (`usesIntensity = blurMode !== "blackout"`), dimmed slider `app.ts:3480` | W2 |
 | Radius/block size 2–60 scene px, **default 12**, clamped | `blur.ts:20-22`, `clampBlurRadius` `:49` | W2 |
 | **Redaction honesty:** any blur under `SECURE_BLUR_MIN = 10` is raised to 10 so soft settings cannot leave legible text | `blur.ts:24-25` | W2 |
-| Live dashed outline while dragging; effect baked in on commit through `applyBlurRegion` | `blur.ts:258`, `BlurRegion` `tools.ts:54-104` | pending |
+| Live dashed outline while dragging; effect baked in on commit through `applyBlurRegion` | `blur.ts:258`, `BlurRegion` `tools.ts:54-104` | W2 |
 | Spotlight dim colour `rgba(8, 12, 18, 0.68)` | `blur.ts:30`, `spotlight()` `:283` | W2 |
 | Highlighter tint alpha **0.36** | `blur.ts:28` (`HIGHLIGHTER_ALPHA`), `highlighter()` `:311` | W2 |
 | Region keeps mode + radius through undo/redo | `BlurRegion` opts `tools.ts:69`; preset round-trip `app.ts:742-743` | W2 |
@@ -65,11 +79,11 @@ Effects are applied to the **image layer at export resolution** (scene px × exp
 | Feature | Evidence | rust |
 |---|---|---|
 | **Open image** (`Ctrl+O`) — native picker, filters png/jpg/jpeg/webp/gif/bmp/avif/tif/tiff | `app.ts:4909-4931` (filters :4918), loader `read_image_file` `commands.rs:284-298` | W0 spike (PNG) |
-| **Open from file association / `cli-open` event / launch_request.file** | `app.ts:5238-5262`, backend `cli.rs:62-80` | pending |
-| **Drag & drop** an image onto the window (`dataTransfer.files[0]`, `image/*`) | `app.ts:5099-5105` | pending |
+| **Open from file association / `cli-open` event / launch_request.file** | `app.ts:5238-5262`, backend `cli.rs:62-80` | W3 |
+| **Drag & drop** an image onto the window (`dataTransfer.files[0]`, `image/*`) | `app.ts:5099-5105` | W1 |
 | **Save** (`Ctrl+S`) — writes a *new* copy with `-edited` suffix, never overwrites; status "Saved copy …" | `app.ts:1862-1885`, `writeImage` :1811-1831 | W0 spike (PNG out) |
 | **Save As…** (`Ctrl+Shift+S`) — native dialog, suggested `buildFilename(pattern, format)` | `app.ts:1891-1914`, `save_image_as` `commands.rs:187-228` | pending |
-| **Auto-save capture on arrival** (setting; off = keep in editor only) | `app.ts:1837-1855`, `AUTOSAVE_KEY` `settings.ts:50`, default on `settings.ts:237` | pending |
+| **Auto-save capture on arrival** (setting; off = keep in editor only) | `app.ts:1837-1855`, `AUTOSAVE_KEY` `settings.ts:50`, default on `settings.ts:237` | W4 |
 | **Export formats** PNG / JPEG / WebP, with quality 1–100 (JPEG/WebP only) | `settings.ts:10` (`ExportFormat`), picker `settings.ts:939-944`, default quality 90 `settings.ts:63`, encode `export.rs:85-166`, format enum `export.rs:28-83` | W0 spike (PNG) |
 | **Filename pattern** — `{date}`, `{time}`, `{datetime}`; default `SnagCraft-{date}-{time}` | `settings.ts:65` (`DEFAULT_PATTERN`), tokens hint `settings.ts:966-969`, `buildFilename` | pending |
 | **Default save dir** — OS Pictures/SnagCraft; Change… / Reset to default | `commands.rs:230-269` (`default_save_dir`, `pick_save_dir`), `ensureSaveDir` `app.ts:1717-1731`, change/reset `:1733-1762` | pending |
@@ -91,7 +105,7 @@ Effects are applied to the **image layer at export resolution** (scene px × exp
 | Undo/redo of flattened canvas states, cap **80** entries | `editor.ts:115` (`MAX_HISTORY = 80`), stack :315, cursor :547 | W2 |
 | `Ctrl+Z` undo · `Ctrl+Shift+Z` / `Ctrl+Y` redo | `app.ts:5194-5202`; in-canvas handler `editor.ts:1261-1276` | W0 spike |
 | History reset on new document | `editor.ts:404` | W1 |
-| Crop re-sizes history states so undo can restore any earlier canvas size | `editor.ts:254`, :997 | pending |
+| Crop re-sizes history states so undo can restore any earlier canvas size | `editor.ts:254`, :997 | W2 |
 | Text caption commit on settle (not per keystroke) | `editor.ts:1178-1179`, :435-436 | pending |
 | Editor-only decorations (crop shading) excluded from history/export | `editor.ts:245`, :1042 | pending |
 | Dirty-state derived from history depth → gates Save | `app.ts:1916-1917` (`isDirty`) | pending |
@@ -212,21 +226,21 @@ Sections rendered: General, Capture, Recording audio, Global hotkeys, Save locat
 | Microphone source | None | `settings.ts:855-863` | pending |
 | System audio (output monitor) | off | `settings.ts:866-870` | pending |
 | Enable global hotkeys | off | `settings.ts:877-880`, `HOTKEYS_ENABLED_KEY` `:45` | pending |
-| Capture full screen trigger | `Print` | `settings.ts:883-888`, `:66` | pending |
-| Capture region trigger | `SHIFT+Print` | `settings.ts:890-895`, `:67` | pending |
+| Capture full screen trigger | `Print` | `settings.ts:883-888`, `:66` | W3 |
+| Capture region trigger | `SHIFT+Print` | `settings.ts:890-895`, `:67` | W3 |
 | "Register hotkeys" button + status line | — | `settings.ts:899-902`, `:903` | pending |
-| Save folder: path, Change…, Reset to default | OS Pictures/SnagCraft | `settings.ts:910-918` | pending |
+| Save folder: path, Change…, Reset to default | OS Pictures/SnagCraft | `settings.ts:910-918` | W3 (folder + Choose…; no Reset) |
 | Separate recording folder + its own Change/Reset | off | `settings.ts:919-932`, `:141` | pending |
-| Export format (PNG / JPEG / WebP) | **PNG** | `settings.ts:939-944`, `DEFAULT_FORMAT` `:61` | pending |
+| Export format (PNG / JPEG / WebP) | **PNG** | `settings.ts:939-944`, `DEFAULT_FORMAT` `:61` | W3 |
 | Recording format (MP4 / GIF) | MP4 | `settings.ts:951-955` | pending |
-| Export quality slider 1–100 (hidden for PNG) | 90 | `settings.ts:961-963`, `:63` | pending |
+| Export quality slider 1–100 (hidden for PNG) | 90 | `settings.ts:961-963`, `:63` | W3 |
 | Filename pattern + token hint + live preview | `SnagCraft-{date}-{time}` | `settings.ts:966-969`, `:65` | pending |
-| Watermark text (empty = none) | "" | `settings.ts:972-974` | pending |
-| Watermark opacity | 45 | `settings.ts:977-978`, `watermark.ts:30` | pending |
-| Watermark corner (BR/BL/TR/TL) | bottom-right | `settings.ts:980-984`, `watermark.ts:32` | pending |
-| Upload endpoint | "" | Export section `settings.ts:935-995`; consumed `app.ts:4504` | pending |
+| Watermark text (empty = none) | "" | `settings.ts:972-974` | W4 |
+| Watermark opacity | 45 | `settings.ts:977-978`, `watermark.ts:30` | W4 |
+| Watermark corner (BR/BL/TR/TL) | bottom-right | `settings.ts:980-984`, `watermark.ts:32` | W4 |
+| Upload endpoint | "" | Export section `settings.ts:935-995`; consumed `app.ts:4504` | W4 (field + open page; no POST) |
 | Troubleshooting: copy diagnostics | — | `settings.ts:996-1004` | pending |
-| Theme picker + version footer | light | `settings.ts:1005-1010`, `:339` | pending |
+| Theme picker + version footer | light | `settings.ts:1005-1010`, `:339` | W3 (picker; no version footer) |
 
 ---
 
@@ -249,22 +263,22 @@ Sections rendered: General, Capture, Recording audio, Global hotkeys, Save locat
 | `Shift+PrintScreen` | Capture a region | `app.ts:1201`, handler `:5130` | pending |
 | `Ctrl+Z` | Undo | `app.ts:1202`, `:5194-5198` | W0 spike |
 | `Ctrl+Shift+Z` · `Ctrl+Y` | Redo | `app.ts:1203`, `:5196-5202` | W0 spike |
-| `Ctrl+C` | Copy to clipboard | `app.ts:1204`, `:5203-5205` | pending |
-| `Ctrl+V` | Paste an image to annotate | `app.ts:1205`, listener `:5081` | pending |
+| `Ctrl+C` | Copy to clipboard | `app.ts:1204`, `:5203-5205` | W2 |
+| `Ctrl+V` | Paste an image to annotate | `app.ts:1205`, listener `:5081` | W2 |
 | `Ctrl+scroll` | Zoom in / out | `app.ts:1206` | pending |
-| `V` `C` `A` `T` `R` `B` `E` `G` `L` `H` `K` `S` `M` | Select, Crop, Arrow, Text, Shapes, Blur, Brush, Fill, Spotlight, Highlighter, Callout, Step, Magnify | `app.ts:1207-1226`, map `:5156-5170` | pending |
+| `V` `C` `A` `T` `R` `B` `E` `G` `L` `H` `K` `S` `M` | Select, Crop, Arrow, Text, Shapes, Blur, Brush, Fill, Spotlight, Highlighter, Callout, Step, Magnify | `app.ts:1207-1226`, map `:5156-5170` | W2 |
 | `Ctrl+N` | New blank canvas | `app.ts:1227`, `:5213-5216` | pending |
 | `Ctrl+O` | Open an image | `app.ts:1228`, `:5210-5212` | pending |
 | `Ctrl+S` | Save | `app.ts:1229`, `:5206-5209` | pending |
 | `Ctrl+Shift+S` | Save As… | `app.ts:1230`, `:5208` | pending |
-| `Ctrl+,` | Settings | `app.ts:1231`, `:5189-5193` | pending |
+| `Ctrl+,` | Settings | `app.ts:1231`, `:5189-5193` | W3 |
 | `Delete` / `Backspace` | Delete selected annotation | `app.ts:1232` | pending |
-| `Esc` | Cancel / deselect / close (also closes About, New, Resize, Shortcuts) | `app.ts:1233`, `:5108-5127` | pending |
+| `Esc` | Cancel / deselect / close (also closes About, New, Resize, Shortcuts) | `app.ts:1233`, `:5108-5127` | W2 |
 | `?` | Shortcuts help | `app.ts:1234`, `:5138-5146` | pending |
 | `Ctrl+.` | Stop interval capture (documented in code, not in the sheet) | `app.ts:5181-5188` | pending |
-| `Enter` in crop | Commit the crop | `tools.ts` crop `1462-1557`, hint `app.ts:354` | pending |
-| `Enter`/`NumpadEnter` in text | Commit the caption | `app.ts:2691` | pending |
-| `Enter`/`Space` on the widget tab | Expand the pill | `widget-main.ts:336-339` | pending |
+| `Enter` in crop | Commit the crop | `tools.ts` crop `1462-1557`, hint `app.ts:354` | W2 |
+| `Enter`/`NumpadEnter` in text | Commit the caption | `app.ts:2691` | W2 |
+| `Enter`/`Space` on the widget tab | Expand the pill | `widget-main.ts:336-339` | W3 |
 
 ---
 
@@ -277,12 +291,39 @@ Sections rendered: General, Capture, Recording audio, Global hotkeys, Save locat
 
 ---
 
-## W1 scope note — what the Rust rebuild covers today
+## Wave coverage at W6b (2026-11-17)
 
-**In `rust/` right now**, per `rust/crates/doc/src/lib.rs:10` — *"W1 object set: Arrow, Shape, Text, Blur, Step, Highlighter, Spotlight, Callout"* (8 of the 13 tool ids), with the W0 spike proving capture → editor, PNG load/encode, arrow/text/rect, undo/redo, gaussian blur, classic toolbar and the transparent viewport (`docs/plans/2026-11-16-w0-probe-gate.md`).
+The W1-era scope note that used to sit here ("not started at all: shell, recording,
+scrolling, OCR, timelapse, upload, settings, themes, shortcuts, About") is obsolete —
+W2–W5 landed most of it. Current state of the checklist:
 
-**Still open on the tool axis:** Magnify, Crop, Bucket, Brush (4 of 13 ids) and the Select interaction; shape variants **triangle** and **star** (`doc` `ShapeKind` has only `Rect | Ellipse | Line`, `lib.rs:22-29` while TS has 5, `tools.ts:614`); blur modes Pixelate/Blackout exist as enum variants but not as rendering; spot-shadow/highlighter alpha and callout autosizing parity unverified.
+| Status | Rows |
+|--------|------|
+| `W4` | 33 |
+| `W2` | 33 |
+| `W3` | 30 |
+| `pending` | 45 |
+| `W0 spike` | 6 |
+| `W1` | 2 |
+| `n/a` | 1 |
+| **total** | **150** |
 
-**Not started at all:** the whole shell (§5), recording (§6), scrolling (§7), OCR (§8), timelapse + HUD (§9), upload (§10), settings (§11), themes (§12), shortcuts (§13), About (§14). Treat §3–§14 as the W2–W6 backlog.
+What the waves delivered, per `docs/plans/rust-rebuild-status.md`: 13-tool annotation
+parity with 10 object kinds and 5 shape variants (W2); tray, global hotkeys,
+autostart, single instance, floating widget, close guard, settings panel and themes
+(W3); recording (MP4/GIF, region, pause/resume, single audio source), scrolling
+stitch, OCR, interval/timelapse frames and watermark (W4); CLI, TCP control, MCP and
+the WASM web app (W5); AppImage + `.deb` + CI artifacts (W6a).
 
-**Coverage:** 149 rows across 14 sections — 12 marked `W0 spike`, 136 `pending`, 1 `n/a` (Pin, removed upstream). Every line number came from a grep/read against commit `3cec2ee` during this pass; the only exception is the two `CHANGELOG.md` citations, marked as such.
+The 45 `pending` rows are the honest backlog. They cluster in: OCR modal/language UI,
+timelapse video assembly, `Ctrl+.`, shrunk countdown HUD and upload POST (§6/§8/§9/§10);
+the recent-media rail, New-canvas presets, canvas resize and filename-pattern
+expansion (§3); per-source audio settings, interval/mic/system-audio settings,
+diagnostics copy and recording format (§11); PrintScreen + Ctrl+N/O/S key handling
+(§13); the About box (§14). The blockers and the reason for each are collected in
+`docs/gaps.md`.
+
+**Coverage:** 150 rows across 14 sections. Every TS line number came from a grep/read
+against commit `3cec2ee` (baseline v1.5.3) during W1; the only exceptions are the two
+`CHANGELOG.md` citations, marked as such. Rust statuses were re-audited at W6b as
+described at the top of this file.

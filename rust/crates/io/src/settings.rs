@@ -186,11 +186,14 @@ pub fn save_to(file: &Path, s: &Settings) -> Result<(), IoError> {
     let tmp = PathBuf::from(tmp_name);
     // Clear a stale temp file from an interrupted earlier write.
     let _ = std::fs::remove_file(&tmp);
-    let mut f = std::fs::File::create(&tmp).map_err(|e| io_err(&tmp, e))?;
-    use std::io::Write;
-    f.write_all(&bytes).map_err(|e| io_err(&tmp, e))?;
-    f.sync_all().map_err(|e| io_err(&tmp, e))?;
-    drop(f);
+    // Scoped so the handle is closed before the rename (a `drop(f)` here trips
+    // `clippy::drop_non_drop` on targets where `std::fs::File` has no Drop).
+    {
+        let mut f = std::fs::File::create(&tmp).map_err(|e| io_err(&tmp, e))?;
+        use std::io::Write;
+        f.write_all(&bytes).map_err(|e| io_err(&tmp, e))?;
+        f.sync_all().map_err(|e| io_err(&tmp, e))?;
+    }
     std::fs::rename(&tmp, file).map_err(|e| {
         let _ = std::fs::remove_file(&tmp);
         io_err(file, e)

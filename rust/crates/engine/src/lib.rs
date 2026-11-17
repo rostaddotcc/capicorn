@@ -9,6 +9,28 @@
 //! L5 engine: Session + command registry. Every user-visible action is a command
 //! with a stable id and JSON params — the UI, CLI, control channel and MCP all
 //! dispatch the same registry (PhotoCraft model).
+//!
+//! # Feature split (`native` / web core)
+//!
+//! The default `native` feature is the desktop engine, unchanged: 41 commands,
+//! including capture, recording, scrolling capture, timelapse, OCR, upload and
+//! clipboard. `--no-default-features` builds the web core, which compiles for
+//! `wasm32-unknown-unknown`: `snagcraft-capture`, `snagcraft-recording` and
+//! `snagcraft-io`'s arboard clipboard are dropped, their session state and
+//! handlers disappear with them, and the registry exposes only the 21
+//! doc/edit/settings commands.
+//!
+//! Native-only command ids are therefore **absent** from [`registry`] (and from
+//! `commands.list`) on web rather than stubbed: [`Session::dispatch`] answers
+//! `CommandError::UnknownCommand` for them. Core `doc.*` commands stay — they
+//! compile to wasm and simply fail at runtime where `std::fs` has no backing
+//! store; a web host talks to the doc/edit APIs directly.
+//!
+//! ## Web core commands
+//! `session.info`, `commands.list`, `settings.get`, `settings.set`, `doc.new`,
+//! `doc.open`, `doc.close`, `doc.inspect`, `doc.save`, `doc.load`, `doc.export`,
+//! `edit.add`, `edit.remove`, `edit.move`, `edit.blur`, `edit.crop`,
+//! `edit.bucket`, `edit.duplicate`, `edit.reorder`, `edit.undo`, `edit.redo`.
 
 use serde_json::{Value, json};
 use snagcraft_doc::{AnnotObject, BlurMode, Document};
@@ -49,13 +71,22 @@ pub struct Session {
     /// Persisted preferences, read once at startup. The engine never writes the
     /// file — persistence is the app's job after `settings.set` is dispatched.
     settings: Settings,
+    // Everything below is desktop state: portal capture, recording and the
+    // scrolling stitcher own OS handles, threads and event channels that have
+    // no wasm equivalent, so the whole block is `native`-only. A web session is
+    // just doc + history + settings.
     /// Running timelapse (W4c): handle + event channel, drained by timelapse.poll.
+    #[cfg(feature = "native")]
     timelapse: Option<snagcraft_capture::timelapse::TimelapseHandle>,
+    #[cfg(feature = "native")]
     timelapse_rx: Option<std::sync::mpsc::Receiver<snagcraft_capture::timelapse::TimelapseEvent>>,
     /// Running scrolling capture (W4b). spawn_scrolling blocks through the share
     /// dialog, so it runs on a thread; the handle arrives via scroll_start_rx.
+    #[cfg(feature = "native")]
     scroll: Option<snagcraft_capture::scrolling::ScrollHandle>,
+    #[cfg(feature = "native")]
     scroll_rx: Option<std::sync::mpsc::Receiver<snagcraft_capture::scrolling::ScrollEvent>>,
+    #[cfg(feature = "native")]
     scroll_start_rx: Option<
         std::sync::mpsc::Receiver<
             Result<snagcraft_capture::scrolling::ScrollHandle, snagcraft_capture::CaptureError>,
@@ -63,8 +94,11 @@ pub struct Session {
     >,
     /// Running recording (W4a). spawn_recording blocks through the share dialog,
     /// so it runs on a thread; the handle arrives via record_start_rx.
+    #[cfg(feature = "native")]
     record: Option<snagcraft_recording::RecordingHandle>,
+    #[cfg(feature = "native")]
     record_rx: Option<std::sync::mpsc::Receiver<snagcraft_recording::RecordingEvent>>,
+    #[cfg(feature = "native")]
     record_start_rx: Option<
         std::sync::mpsc::Receiver<
             Result<snagcraft_recording::RecordingHandle, snagcraft_recording::RecordingError>,
@@ -94,13 +128,21 @@ impl Session {
             history: History::default(),
             faces,
             settings: snagcraft_io::settings::load(),
+            #[cfg(feature = "native")]
             timelapse: None,
+            #[cfg(feature = "native")]
             timelapse_rx: None,
+            #[cfg(feature = "native")]
             scroll: None,
+            #[cfg(feature = "native")]
             scroll_rx: None,
+            #[cfg(feature = "native")]
             scroll_start_rx: None,
+            #[cfg(feature = "native")]
             record: None,
+            #[cfg(feature = "native")]
             record_rx: None,
+            #[cfg(feature = "native")]
             record_start_rx: None,
         }
     }
@@ -272,6 +314,7 @@ fn cmd_commands_list(_s: &mut Session, _p: Value) -> Result<Value, CommandError>
     ))
 }
 
+#[cfg(feature = "native")]
 fn cmd_capture_full(s: &mut Session, _p: Value) -> Result<Value, CommandError> {
     let surface = snagcraft_capture::capture_full_blocking()
         .map_err(|e| CommandError::Capture(e.to_string()))?;
@@ -360,14 +403,17 @@ fn cmd_doc_export(s: &mut Session, p: Value) -> Result<Value, CommandError> {
     Ok(json!({"exported": path}))
 }
 
+#[cfg(feature = "native")]
 fn cmd_ocr_available(_s: &mut Session, _p: Value) -> Result<Value, CommandError> {
     Ok(json!({"available": snagcraft_io::ocr::ocr_available()}))
 }
 
+#[cfg(feature = "native")]
 fn cmd_ocr_languages(_s: &mut Session, _p: Value) -> Result<Value, CommandError> {
     Ok(json!({"languages": snagcraft_io::ocr::ocr_languages()}))
 }
 
+#[cfg(feature = "native")]
 fn cmd_ocr_run(s: &mut Session, p: Value) -> Result<Value, CommandError> {
     let lang = p.get("lang").and_then(Value::as_str).unwrap_or("eng");
     let img = s.render()?;
@@ -376,12 +422,14 @@ fn cmd_ocr_run(s: &mut Session, p: Value) -> Result<Value, CommandError> {
     Ok(json!({"text": text}))
 }
 
+#[cfg(feature = "native")]
 fn cmd_upload_open(_s: &mut Session, p: Value) -> Result<Value, CommandError> {
     let url = p_str(&p, "url")?;
     snagcraft_io::upload::open_url(url).map_err(|e| CommandError::Io(e.to_string()))?;
     Ok(json!({"opened": url}))
 }
 
+#[cfg(feature = "native")]
 fn cmd_timelapse_start(s: &mut Session, p: Value) -> Result<Value, CommandError> {
     if s.timelapse.is_some() {
         return Err(CommandError::InvalidParams(
@@ -404,6 +452,7 @@ fn cmd_timelapse_start(s: &mut Session, p: Value) -> Result<Value, CommandError>
     Ok(json!({"started": true}))
 }
 
+#[cfg(feature = "native")]
 fn cmd_timelapse_stop(s: &mut Session, _p: Value) -> Result<Value, CommandError> {
     match &s.timelapse {
         Some(h) => {
@@ -414,6 +463,7 @@ fn cmd_timelapse_stop(s: &mut Session, _p: Value) -> Result<Value, CommandError>
     }
 }
 
+#[cfg(feature = "native")]
 fn cmd_timelapse_poll(s: &mut Session, _p: Value) -> Result<Value, CommandError> {
     let mut events = Vec::new();
     if let Some(rx) = &s.timelapse_rx {
@@ -437,6 +487,7 @@ fn cmd_timelapse_poll(s: &mut Session, _p: Value) -> Result<Value, CommandError>
     Ok(json!({"events": events, "running": s.timelapse.is_some()}))
 }
 
+#[cfg(feature = "native")]
 fn cmd_record_start(s: &mut Session, p: Value) -> Result<Value, CommandError> {
     if s.record.is_some() || s.record_start_rx.is_some() {
         return Err(CommandError::InvalidParams(
@@ -486,6 +537,7 @@ fn cmd_record_start(s: &mut Session, p: Value) -> Result<Value, CommandError> {
     Ok(json!({"starting": true}))
 }
 
+#[cfg(feature = "native")]
 fn cmd_record_stop(s: &mut Session, _p: Value) -> Result<Value, CommandError> {
     match &s.record {
         Some(h) => {
@@ -496,6 +548,7 @@ fn cmd_record_stop(s: &mut Session, _p: Value) -> Result<Value, CommandError> {
     }
 }
 
+#[cfg(feature = "native")]
 fn cmd_record_pause(s: &mut Session, _p: Value) -> Result<Value, CommandError> {
     match &s.record {
         Some(h) => {
@@ -506,6 +559,7 @@ fn cmd_record_pause(s: &mut Session, _p: Value) -> Result<Value, CommandError> {
     }
 }
 
+#[cfg(feature = "native")]
 fn cmd_record_resume(s: &mut Session, _p: Value) -> Result<Value, CommandError> {
     match &s.record {
         Some(h) => {
@@ -516,6 +570,7 @@ fn cmd_record_resume(s: &mut Session, _p: Value) -> Result<Value, CommandError> 
     }
 }
 
+#[cfg(feature = "native")]
 fn cmd_record_state(s: &mut Session, _p: Value) -> Result<Value, CommandError> {
     Ok(match &s.record {
         Some(h) => json!({"active": h.is_active(), "paused": h.is_paused()}),
@@ -523,6 +578,7 @@ fn cmd_record_state(s: &mut Session, _p: Value) -> Result<Value, CommandError> {
     })
 }
 
+#[cfg(feature = "native")]
 fn cmd_record_poll(s: &mut Session, _p: Value) -> Result<Value, CommandError> {
     let mut events = Vec::new();
     if let Some(hrx) = &s.record_start_rx {
@@ -566,6 +622,7 @@ fn cmd_record_poll(s: &mut Session, _p: Value) -> Result<Value, CommandError> {
     Ok(json!({"events": events, "running": s.record.is_some() || s.record_start_rx.is_some()}))
 }
 
+#[cfg(feature = "native")]
 fn cmd_audio_sources(_s: &mut Session, _p: Value) -> Result<Value, CommandError> {
     let sources = snagcraft_recording::list_audio_sources()
         .map_err(|e| CommandError::Capture(e.to_string()))?;
@@ -574,6 +631,7 @@ fn cmd_audio_sources(_s: &mut Session, _p: Value) -> Result<Value, CommandError>
     )
 }
 
+#[cfg(feature = "native")]
 fn cmd_scroll_start(s: &mut Session, p: Value) -> Result<Value, CommandError> {
     if s.scroll.is_some() || s.scroll_start_rx.is_some() {
         return Err(CommandError::InvalidParams(
@@ -599,6 +657,7 @@ fn cmd_scroll_start(s: &mut Session, p: Value) -> Result<Value, CommandError> {
     Ok(json!({"starting": true}))
 }
 
+#[cfg(feature = "native")]
 fn cmd_scroll_stop(s: &mut Session, _p: Value) -> Result<Value, CommandError> {
     match s.scroll.take() {
         Some(h) => {
@@ -609,6 +668,7 @@ fn cmd_scroll_stop(s: &mut Session, _p: Value) -> Result<Value, CommandError> {
     }
 }
 
+#[cfg(feature = "native")]
 fn cmd_scroll_poll(s: &mut Session, _p: Value) -> Result<Value, CommandError> {
     let mut events = Vec::new();
     if let Some(hrx) = &s.scroll_start_rx {
@@ -750,6 +810,7 @@ fn cmd_edit_bucket(s: &mut Session, p: Value) -> Result<Value, CommandError> {
     Ok(json!({"filled": true}))
 }
 
+#[cfg(feature = "native")]
 fn cmd_clipboard_copy(s: &mut Session, _p: Value) -> Result<Value, CommandError> {
     let img = s.render()?;
     let (w, h) = (img.width(), img.height());
@@ -757,6 +818,7 @@ fn cmd_clipboard_copy(s: &mut Session, _p: Value) -> Result<Value, CommandError>
     Ok(json!({"copied": true, "width": w, "height": h}))
 }
 
+#[cfg(feature = "native")]
 fn cmd_clipboard_paste(s: &mut Session, _p: Value) -> Result<Value, CommandError> {
     match snagcraft_io::clipboard::paste_image().map_err(|e| CommandError::Io(e.to_string()))? {
         Some(img) => {
@@ -891,6 +953,7 @@ pub fn registry() -> Vec<CommandSpec> {
             params_doc: "{settings: partial Settings JSON}",
             run: cmd_settings_set,
         },
+        #[cfg(feature = "native")]
         CommandSpec {
             id: "capture.full",
             label: "Capture full screen",
@@ -975,12 +1038,14 @@ pub fn registry() -> Vec<CommandSpec> {
             params_doc: "{seed:{x,y}, color:[r,g,b,a], tolerance}",
             run: cmd_edit_bucket,
         },
+        #[cfg(feature = "native")]
         CommandSpec {
             id: "clipboard.copy",
             label: "Copy image to clipboard",
             params_doc: "{}",
             run: cmd_clipboard_copy,
         },
+        #[cfg(feature = "native")]
         CommandSpec {
             id: "clipboard.paste",
             label: "Paste image from clipboard",
@@ -999,102 +1064,119 @@ pub fn registry() -> Vec<CommandSpec> {
             params_doc: "{id, to: front|back}",
             run: cmd_edit_reorder,
         },
+        #[cfg(feature = "native")]
         CommandSpec {
             id: "ocr.available",
             label: "OCR availability",
             params_doc: "{}",
             run: cmd_ocr_available,
         },
+        #[cfg(feature = "native")]
         CommandSpec {
             id: "ocr.languages",
             label: "OCR languages",
             params_doc: "{}",
             run: cmd_ocr_languages,
         },
+        #[cfg(feature = "native")]
         CommandSpec {
             id: "ocr.run",
             label: "Grab text from the current image",
             params_doc: "{lang?}",
             run: cmd_ocr_run,
         },
+        #[cfg(feature = "native")]
         CommandSpec {
             id: "upload.open",
             label: "Open an http(s) URL in the browser",
             params_doc: "{url}",
             run: cmd_upload_open,
         },
+        #[cfg(feature = "native")]
         CommandSpec {
             id: "timelapse.start",
             label: "Start interval capture",
             params_doc: "{period_secs, count?, dir}",
             run: cmd_timelapse_start,
         },
+        #[cfg(feature = "native")]
         CommandSpec {
             id: "timelapse.stop",
             label: "Stop interval capture",
             params_doc: "{}",
             run: cmd_timelapse_stop,
         },
+        #[cfg(feature = "native")]
         CommandSpec {
             id: "timelapse.poll",
             label: "Drain timelapse events",
             params_doc: "{}",
             run: cmd_timelapse_poll,
         },
+        #[cfg(feature = "native")]
         CommandSpec {
             id: "record.start",
             label: "Start screen recording",
             params_doc: "{format: mp4|gif, region?, audio_source?, fps?, output}",
             run: cmd_record_start,
         },
+        #[cfg(feature = "native")]
         CommandSpec {
             id: "record.stop",
             label: "Stop recording (finalize file)",
             params_doc: "{}",
             run: cmd_record_stop,
         },
+        #[cfg(feature = "native")]
         CommandSpec {
             id: "record.pause",
             label: "Pause recording",
             params_doc: "{}",
             run: cmd_record_pause,
         },
+        #[cfg(feature = "native")]
         CommandSpec {
             id: "record.resume",
             label: "Resume recording",
             params_doc: "{}",
             run: cmd_record_resume,
         },
+        #[cfg(feature = "native")]
         CommandSpec {
             id: "record.state",
             label: "Recording state",
             params_doc: "{}",
             run: cmd_record_state,
         },
+        #[cfg(feature = "native")]
         CommandSpec {
             id: "record.poll",
             label: "Drain recording events",
             params_doc: "{}",
             run: cmd_record_poll,
         },
+        #[cfg(feature = "native")]
         CommandSpec {
             id: "audio.sources",
             label: "List audio sources",
             params_doc: "{}",
             run: cmd_audio_sources,
         },
+        #[cfg(feature = "native")]
         CommandSpec {
             id: "scroll.start",
             label: "Start scrolling capture",
             params_doc: "{region:{x,y,w,h}, max_height?, output}",
             run: cmd_scroll_start,
         },
+        #[cfg(feature = "native")]
         CommandSpec {
             id: "scroll.stop",
             label: "Stop scrolling capture (stitch + save)",
             params_doc: "{}",
             run: cmd_scroll_stop,
         },
+        #[cfg(feature = "native")]
         CommandSpec {
             id: "scroll.poll",
             label: "Drain scrolling capture events",
@@ -1116,7 +1198,11 @@ pub fn registry() -> Vec<CommandSpec> {
     ]
 }
 
-#[cfg(test)]
+// Tests exercise the full desktop registry (capture/record/scroll/ocr/clipboard
+// are dispatched by id), so they are native-only. `--no-default-features` has no
+// test target that could run on wasm32; keeping the module gated lets the web
+// gate use `--all-targets`.
+#[cfg(all(test, feature = "native"))]
 mod tests {
     use super::*;
 
@@ -1552,6 +1638,26 @@ mod tests {
         let p = s.dispatch("record.poll", json!({})).unwrap();
         assert!(p["running"].as_bool().unwrap_or(false));
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn native_registry_keeps_all_41_commands() {
+        // Desktop contract: every command the UI, CLI and MCP know is present.
+        // Bump deliberately when a wave adds a command.
+        let ids: Vec<&str> = registry().iter().map(|c| c.id).collect();
+        assert_eq!(ids.len(), 41, "native registry drifted: {ids:?}");
+        for native_only in [
+            "capture.full",
+            "record.start",
+            "scroll.poll",
+            "timelapse.start",
+            "ocr.run",
+            "upload.open",
+            "clipboard.copy",
+            "audio.sources",
+        ] {
+            assert!(ids.contains(&native_only), "missing {native_only}");
+        }
     }
 
     #[test]

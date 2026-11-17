@@ -13,9 +13,9 @@ snagcraft-doc = { path = "../doc" }
 snagcraft-ops = { path = "../ops" }
 snagcraft-compose = { path = "../compose" }
 snagcraft-format = { path = "../format" }
-snagcraft-io = { path = "../io" }
-snagcraft-capture = { path = "../capture" }
-snagcraft-recording = { path = "../recording" }
+snagcraft-io = { path = "../io", default-features = false }
+snagcraft-capture = { path = "../capture", optional = true }
+snagcraft-recording = { path = "../recording", optional = true }
 snagcraft-geom = { path = "../geom" }
 snagcraft-raster = { path = "../raster" }
 snagcraft-color = { path = "../color" }
@@ -23,6 +23,15 @@ snagcraft-text = { path = "../text" }
 ab_glyph.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+
+[features]
+# `native` is the desktop default: portal capture, screen recording and the
+# system clipboard all need a real platform backend, so those crates and the
+# commands built on them only exist with this feature. `--no-default-features`
+# is the web core: it compiles to wasm32 and exposes the document/edit/settings
+# commands only.
+default = ["native"]
+native = ["snagcraft-capture", "snagcraft-recording", "snagcraft-io/native"]
 
 [lints]
 workspace = true

@@ -14,6 +14,9 @@
 //!   documented W2 gap. `quality` is ignored for PNG and WebP.
 //! * Input-derived dimensions are capped by [`snagcraft_raster::MAX_DIM`] (hostile input).
 
+/// System clipboard image I/O. Desktop-only: arboard has no wasm backend, so
+/// the module (and its `pub use`) only exists with the `native` feature.
+#[cfg(feature = "native")]
 pub mod clipboard;
 pub mod ocr;
 pub mod settings;

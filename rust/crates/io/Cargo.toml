@@ -12,9 +12,17 @@ snagcraft-raster = { path = "../raster" }
 snagcraft-geom = { path = "../geom" }
 image.workspace = true
 thiserror.workspace = true
-arboard.workspace = true
+arboard = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
+
+[features]
+# `native` is the desktop default: the system clipboard (arboard) is the only
+# platform-backed module here, so it is the only thing behind the gate. Codecs,
+# settings and OCR/upload shell-outs compile everywhere (they just fail at
+# runtime where the platform lacks the service).
+default = ["native"]
+native = ["dep:arboard"]
 
 [lints]
 workspace = true

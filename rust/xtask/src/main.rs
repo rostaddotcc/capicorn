@@ -1,7 +1,9 @@
 //! cargo xtask — build tasks for the SnagCraft Rust workspace.
-//! `layers` enforces the L0–L6 dependency rules; `ci` runs the full local gate.
+//! `layers` enforces the L0–L6 dependency rules; `wasm` checks the web core
+//! compiles for wasm32; `ci` runs the full local gate.
 
 mod layers;
+mod wasm;
 
 use std::process::Command;
 
@@ -9,9 +11,10 @@ fn main() {
     let task = std::env::args().nth(1).unwrap_or_else(|| "help".into());
     let result = match task.as_str() {
         "layers" => layers::check(),
+        "wasm" => wasm::check(),
         "ci" => ci(),
         _ => {
-            eprintln!("usage: cargo xtask <layers|ci>");
+            eprintln!("usage: cargo xtask <layers|wasm|ci>");
             std::process::exit(2);
         }
     };

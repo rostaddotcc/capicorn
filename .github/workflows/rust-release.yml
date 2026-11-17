@@ -1,0 +1,113 @@
+name: Rust release artifacts
+
+# SCOPE: build only. This workflow compiles the Linux release binaries and the
+# WASM web bundle and uploads them as WORKFLOW ARTIFACTS.
+#
+# GATED — do not extend without rostad's explicit decision:
+#   * NO release publishing here: no softprops/action-gh-release, no
+#     `gh release create`. Tag pushes (v*) build artifacts and stop there.
+#   * Publishing a GitHub release, relicensing (GPL-3.0-or-later -> MIT/Apache)
+#     and the suite cutover are rostad's calls, taken outside CI.
+#   * No external posting (issues/PRs/Discord) from this workflow.
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  linux-artifacts:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: System dependencies (PipeWire bindgen; libfuse2 for AppImage tooling)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libpipewire-0.3-dev libspa-0.2-dev clang libfuse2
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+
+      - name: Build release binaries
+        run: cargo build --release -p snagcraft -p snagcraft-cli
+
+      - name: Fetch linuxdeploy (and the appimage plugin its --output appimage needs)
+        run: |
+          curl -fsSL -o linuxdeploy \
+            https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          curl -fsSL -o linuxdeploy-plugin-appimage \
+            https://github.com/linuxdeploy/linuxdeploy-plugin-appimage/releases/download/continuous/linuxdeploy-plugin-appimage-x86_64.AppImage
+          chmod +x linuxdeploy linuxdeploy-plugin-appimage
+
+      - name: Package AppImage
+        run: |
+          mkdir -p dist
+          APPIMAGE_EXTRACT_AND_RUN=1 LINUXDEPLOY="$PWD/linuxdeploy" PATH="$PWD:$PATH" \
+            packaging/appimage.sh target/release/snagcraft dist
+
+      - name: Package .deb
+        run: packaging/deb.sh target/release/snagcraft dist
+
+      - name: Artifact summary
+        run: ls -lh dist
+
+      - name: Note tag vs package version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          VER="$(awk -F'"' '/^version = /{print $2; exit}' apps/snagcraft/Cargo.toml)"
+          echo "tag: $GITHUB_REF_NAME, package version: $VER"
+
+      - uses: actions/upload-artifact@v5
+        with:
+          name: snagcraft-linux
+          path: |
+            rust/dist/*.AppImage
+            rust/dist/*.deb
+          if-no-files-found: error
+          retention-days: 30
+
+  web-artifacts:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+
+      - name: Install trunk + wasm-bindgen-cli (pinned to Cargo.lock)
+        uses: taiki-e/install-action@v2
+        with:
+          # wasm-bindgen-cli must match the wasm-bindgen crate in Cargo.lock,
+          # otherwise trunk re-downloads its own copy mid-build.
+          tool: trunk,wasm-bindgen-cli@0.2.130
+
+      - name: trunk build --release
+        working-directory: rust/apps/snagcraft-web
+        run: trunk build --release
+
+      - uses: actions/upload-artifact@v5
+        with:
+          name: snagcraft-web
+          path: rust/apps/snagcraft-web/dist
+          if-no-files-found: error
+          retention-days: 30

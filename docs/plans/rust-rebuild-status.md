@@ -12,7 +12,7 @@ Baseline: Tauri v1.5.2 (commit d25adb1). Rebuild workspace: `rust/` (not yet cre
 | W2 | editor tool parity | KDE-approved by rostad 2026-11-16; UI polish pass landed (sliders) |
 | W3 | shell parity (tray/hotkeys/widget/settings) | complete on pn53 (216 tests); KDE live pass pending rostad |
 | W4 | recording, scrolling, OCR, timelapse | complete on pn53 (363 tests); KDE live pass pending; gaps logged below |
-| W5 | CLI/JSON/MCP automation + WASM web | W5a/b/c done (7472f54, 392 tests, live control verified); W5d (web app) in flight |
+| W5 | CLI/JSON/MCP automation + WASM web | complete (3273af1 + watermark fix); web app browser-verified; W6 next |
 | W6 | packaging, docs, suite dossier | pending |
 
 ## Parity checklist
@@ -436,6 +436,25 @@ Baseline: Tauri v1.5.2 (commit d25adb1). Rebuild workspace: `rust/` (not yet cre
   rfd/widget/clipboard cfg-gated, web PNG export-download via web-sys) +
   apps/snagcraft-web eframe WebRunner trunk app. trunk + wasm-bindgen-cli
   installing in background (proc_cd81b2c95668). Web app scaffold pre-wired.
+
+### 2026-11-17 — wake #50: W5 COMPLETE (web app + watermark gap closed)
+- W5d committed (3273af1): ui-egui 55 cfg gates (native byte-identical, 40
+  tests), web fallbacks (PNG export-download, drag-drop open, clipboard
+  status, Capture/OCR/widget/tray hidden on web); apps/snagcraft-web eframe
+  WebRunner (body cfg wasm32, empty native lib), trunk dist 11MB wasm.
+  Browser-verified: boot + full editor render + 14118-byte PNG export.
+  Parent-verified: native 40 + workspace clippy + web clippy + fmt, 392/0.
+  (Child over-verified with repeated browser screenshots — steered to wrap.)
+- Watermark-on-web gap CLOSED: added Session::render_watermarked (public,
+  same path as doc.export, refactored export to use it); web export_dialog
+  now applies settings watermark via render_watermarked. engine+ui-egui 65
+  tests green (export_watermark test preserved), web+native clippy clean,
+  trunk rebuilt (11MB wasm). Web export now identical to desktop.
+- W5 remaining MVP limits (documented, not gaps): web image copy/paste =
+  status only (no ClipboardItem write); drag-drop open code-complete but not
+  browser-exercised. recording crate has 9 pre-existing warnings on plain
+  wasm check (outside web graph; clippy clean).
+- W5 done: TCP control + MCP + CLI (live-verified) + WASM web app. Next W6.
 
 ## Appendix — measured reality
 

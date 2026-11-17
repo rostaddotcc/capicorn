@@ -219,6 +219,35 @@ impl Session {
             snagcraft_text::ITALIC_SHEAR,
         ))
     }
+
+    /// Render the document and apply an optional watermark — the exact path
+    /// `doc.export` uses, exposed so the web export (which encodes bytes in
+    /// the browser rather than writing a file) produces identical output.
+    /// `watermark` is the `{text, opacity, corner, size}` object; `None` or an
+    /// empty/blank text renders plain.
+    pub fn render_watermarked(&self, watermark: Option<&Value>) -> Result<Surface, CommandError> {
+        let mut img = self.render()?;
+        if let Some(w) = watermark.filter(|w| w.is_object()) {
+            let text = w.get("text").and_then(Value::as_str).unwrap_or("");
+            if !text.trim().is_empty() {
+                let opacity = w.get("opacity").and_then(Value::as_f64).unwrap_or(0.45) as f32;
+                let size = w.get("size").and_then(Value::as_f64).unwrap_or(24.0) as f32;
+                let corner = match w
+                    .get("corner")
+                    .and_then(Value::as_str)
+                    .unwrap_or("bottom-right")
+                {
+                    "bottom-left" => snagcraft_compose::Corner::BottomLeft,
+                    "top-right" => snagcraft_compose::Corner::TopRight,
+                    "top-left" => snagcraft_compose::Corner::TopLeft,
+                    _ => snagcraft_compose::Corner::BottomRight,
+                };
+                let font = self.faces.first().map(|(_, _, f)| f);
+                snagcraft_compose::apply_watermark(&mut img, text, opacity, corner, font, size);
+            }
+        }
+        Ok(img)
+    }
 }
 
 // ---- param helpers (hostile-input safe) ----
@@ -378,26 +407,7 @@ fn cmd_doc_export(s: &mut Session, p: Value) -> Result<Value, CommandError> {
     let path = p_str(&p, "path")?;
     let format = p_format(&p)?;
     let quality = p_quality(&p);
-    let mut img = s.render()?;
-    if let Some(w) = p.get("watermark").filter(|w| w.is_object()) {
-        let text = w.get("text").and_then(Value::as_str).unwrap_or("");
-        if !text.trim().is_empty() {
-            let opacity = w.get("opacity").and_then(Value::as_f64).unwrap_or(0.45) as f32;
-            let size = w.get("size").and_then(Value::as_f64).unwrap_or(24.0) as f32;
-            let corner = match w
-                .get("corner")
-                .and_then(Value::as_str)
-                .unwrap_or("bottom-right")
-            {
-                "bottom-left" => snagcraft_compose::Corner::BottomLeft,
-                "top-right" => snagcraft_compose::Corner::TopRight,
-                "top-left" => snagcraft_compose::Corner::TopLeft,
-                _ => snagcraft_compose::Corner::BottomRight,
-            };
-            let font = s.faces.first().map(|(_, _, f)| f);
-            snagcraft_compose::apply_watermark(&mut img, text, opacity, corner, font, size);
-        }
-    }
+    let img = s.render_watermarked(p.get("watermark"))?;
     snagcraft_io::save(&img, std::path::Path::new(path), format, quality)
         .map_err(|e| CommandError::Io(e.to_string()))?;
     Ok(json!({"exported": path}))

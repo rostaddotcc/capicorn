@@ -1302,10 +1302,8 @@ impl SnagCraftApp {
     /// Web export: `doc.export` writes through `std::fs`, so the browser path
     /// renders the composite in memory, encodes it with `snagcraft-io` (the
     /// codecs are platform-free) and hands the bytes to the browser as a
-    /// download via a Blob object URL.
-    ///
-    /// Known gap: the export watermark is skipped — `doc.export` applies it
-    /// with the session's bundled faces, which are private to the engine.
+    /// download via a Blob object URL. The watermark is applied through the
+    /// engine's `render_watermarked` — identical to the desktop `doc.export`.
     #[cfg(not(feature = "native"))]
     pub fn export_dialog(&mut self) -> bool {
         let (format, ext, mime) = match self.settings.default_format.as_str() {
@@ -1314,13 +1312,16 @@ impl SnagCraftApp {
             _ => (snagcraft_io::ImageFormat::Png, "png", "image/png"),
         };
         let quality = self.settings.default_quality;
-        let watermarked = self.watermark_value().is_some();
+        let watermark = self.watermark_value();
+        let watermarked = watermark.is_some();
         let rendered = {
             let guard = self
                 .session
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
-            guard.render().map_err(|e| e.to_string())
+            guard
+                .render_watermarked(watermark.as_ref())
+                .map_err(|e| e.to_string())
         };
         let bytes = rendered
             .and_then(|img| snagcraft_io::encode(&img, format, quality).map_err(|e| e.to_string()));
@@ -1330,10 +1331,7 @@ impl SnagCraftApp {
                 match web::download(&name, mime, &bytes) {
                     Ok(()) => {
                         self.status = if watermarked {
-                            format!(
-                                "Exported {name} ({} bytes) — watermark is desktop-only.",
-                                bytes.len()
-                            )
+                            format!("Exported {name} ({} bytes, watermarked).", bytes.len())
                         } else {
                             format!("Exported {name} ({} bytes).", bytes.len())
                         };

@@ -200,9 +200,11 @@ pub(crate) fn dispatch(
     id: &str,
     params: serde_json::Value,
 ) -> Result<serde_json::Value, String> {
-    let mut guard = session
-        .lock()
-        .map_err(|_| "session lock poisoned".to_string())?;
+    // Recover a poisoned lock exactly like the UI's `sess()` accessor: a prior
+    // command that panicked mid-dispatch must not brick the control/MCP doors
+    // until restart. The session data is whatever the panic left; subsequent
+    // commands proceed (same semantics as the desktop shell).
+    let mut guard = session.lock().unwrap_or_else(|e| e.into_inner());
     guard.dispatch(id, params).map_err(|e| e.to_string())
 }
 

@@ -11,7 +11,7 @@ Baseline: Tauri v1.5.2 (commit d25adb1). Rebuild workspace: `rust/` (not yet cre
 | W1 | workspace scaffold, doc model, engine, capture port | KDE-approved by rostad 2026-11-16 |
 | W2 | editor tool parity | KDE-approved by rostad 2026-11-16; UI polish pass landed (sliders) |
 | W3 | shell parity (tray/hotkeys/widget/settings) | complete on pn53 (216 tests); KDE live pass pending rostad |
-| W4 | recording, scrolling, OCR, timelapse | in progress — W4a (recording) + W4c (OCR/timelapse/upload/watermark) dispatched |
+| W4 | recording, scrolling, OCR, timelapse | backends + engine landed (41 commands); W4d UI in flight; CI green |
 | W5 | CLI/JSON/MCP automation + WASM web | pending |
 | W6 | packaging, docs, suite dossier | pending |
 
@@ -339,6 +339,28 @@ Baseline: Tauri v1.5.2 (commit d25adb1). Rebuild workspace: `rust/` (not yet cre
 - W4a recording: 8 modules / 3084 lines written (capture.rs 802 PipeWire half,
   probe.rs 536 offline Video/Source probe, portal/session/audio/ffmpeg/crop) —
   still running. W4b scrolling: reading phase.
+
+### 2026-11-16 — wake #23+: CI fixed, W4 backends landed, W4d dispatched
+- rostad flagged GitHub CI notifiers: gates exit 101 + Node20/Ubuntu migration
+  notices. Root cause: runners lacked libpipewire-0.3/libspa-0.2 dev headers
+  (libspa-sys build panic). Fixed rust.yml: apt deps (pipewire dev, clang,
+  tesseract, ffmpeg) + lavapipe (mesa-vulkan-drivers) for kittest snapshots
+  (second failure: no wgpu adapter on bare runners), checkout/upload-artifact
+  v4→v5 (Node24), pinned ubuntu-24.04. **CI GREEN** (run 43970030413, gates +
+  appimage). Snapshots pass on lavapipe without tolerance changes.
+- W4b scrolling landed + verified (49 tests; byte-exact 9-frame synthetic
+  recovery, reverse scroll, guards) — committed 415c343; scroll engine
+  commands wired (threaded start) 43f174c.
+- W4a recording landed + verified (48 tests + offline probe ffprobe-proven:
+  h264 200×120 19f MP4 + GIF) — committed b965a7f; record engine commands
+  (start/stop/pause/resume/state/poll + audio.sources) wired f135c61.
+  41 commands total, 24 engine tests.
+- W4d UI dispatched (deleg_6fed6c7d): live Rec (V), recording HUD + region/
+  format/audio, scrolling overlay + open-in-editor, OCR window + copy-text,
+  timelapse dialog + HUD, watermark export settings, autosave-on-capture.
+  Trim deliberately OUT (live has none; spec lists it — ask rostad).
+- Next: W4d lands → verify → full gates → AppImage → W4 delivery + KDE pass
+  (live recording/scrolling need rostad's unlocked session).
 
 ## Appendix — measured reality
 

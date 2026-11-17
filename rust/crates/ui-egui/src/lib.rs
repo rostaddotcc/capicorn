@@ -560,6 +560,29 @@ pub fn callout_font_size(rect_w: f32, rail: f32) -> f32 {
     rail.min(by_width).max(CALLOUT_FONT_MIN)
 }
 
+/// W14: the rect of rect-based objects — these get select-mode resize handles.
+fn obj_rect(o: &AnnotObject) -> Option<GRect> {
+    match o {
+        AnnotObject::Shape { rect, .. }
+        | AnnotObject::Blur { rect, .. }
+        | AnnotObject::Highlighter { rect, .. }
+        | AnnotObject::Spotlight { rect, .. }
+        | AnnotObject::Callout { rect, .. }
+        | AnnotObject::Magnify { rect, .. } => Some(*rect),
+        _ => None,
+    }
+}
+
+/// W14: corners in tl, tr, bl, br order — corner `i` anchors at `3 - i`.
+fn rect_corners(r: GRect) -> [Point; 4] {
+    [
+        Point::new(r.x, r.y),
+        Point::new(r.x + r.w, r.y),
+        Point::new(r.x, r.y + r.h),
+        Point::new(r.x + r.w, r.y + r.h),
+    ]
+}
+
 /// Auto-numbering (`editor.ts:1464-1476`): highest existing step + 1.
 pub fn next_step_number(objects: &[AnnotObject]) -> u32 {
     objects
@@ -573,14 +596,28 @@ pub fn next_step_number(objects: &[AnnotObject]) -> u32 {
 }
 
 enum Drag {
-    Create { start: Point },
-    Move { id: u64, start: Point },
+    Create {
+        start: Point,
+    },
+    Move {
+        id: u64,
+        start: Point,
+    },
+    /// W14 select-mode resize: `anchor` is the corner opposite the dragged
+    /// handle; the live rect spans anchor → pointer.
+    Resize {
+        id: u64,
+        anchor: Point,
+    },
 }
 
 struct TextEdit {
     pos: Point,
     buf: String,
     focus_requested: bool,
+    /// W14: `Some(id)` re-edits an existing Text/Callout in place (set_text on
+    /// commit, remove when emptied); `None` places a new caption.
+    target: Option<u64>,
 }
 
 pub struct SelfTest {
@@ -1333,6 +1370,16 @@ impl SnagCraftApp {
             return;
         };
         let text = edit.buf.trim().to_string();
+        if let Some(id) = edit.target {
+            // W14 re-edit: emptying the box removes the object (live settle
+            // parity — an empty caption is not content).
+            if text.is_empty() {
+                self.dispatch("edit.remove", serde_json::json!({"id": id}));
+            } else {
+                self.dispatch("edit.set_text", serde_json::json!({"id": id, "text": text}));
+            }
+            return;
+        }
         if text.is_empty() {
             return;
         }
@@ -5012,6 +5059,29 @@ fn rail(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
                     BRUSH_MIN..=BRUSH_MAX,
                     "Nib width",
                 );
+                // W14 live parity (app.ts:433, :993-995, :3163): a 48px nib
+                // reference box — ink-coloured dot at the nib's 1:1 diameter,
+                // value label beside it. The rail range IS nib px (2..44), so
+                // the dot maps 1:1 into the box.
+                ui.horizontal(|ui| {
+                    let (resp, painter) =
+                        ui.allocate_painter(vec2(48.0, 48.0), egui::Sense::hover());
+                    let r = resp.rect;
+                    resp.on_hover_text(format!("Nib preview — {:.0} px at 1:1", app.brush_width));
+                    painter.rect_stroke(
+                        r,
+                        CornerRadius::same(6),
+                        Stroke::new(1.0, pal_border(ui)),
+                        StrokeKind::Inside,
+                    );
+                    let d = app.brush_width.clamp(BRUSH_MIN, BRUSH_MAX);
+                    painter.circle_filled(r.center(), d / 2.0, app.color);
+                    ui.label(
+                        egui::RichText::new(format!("{:.0} px", app.brush_width))
+                            .color(pal_muted(ui))
+                            .size(11.0),
+                    );
+                });
             }
             Tool::Spotlight => {
                 ui.label(egui::RichText::new("Dim").color(pal_muted(ui)).size(11.0));
@@ -5213,8 +5283,8 @@ fn handle_keys(ctx: &egui::Context, app: &mut SnagCraftApp) {
         if app.crop.is_some()
             && i.consume_key(Modifiers::NONE, Key::Enter)
             && let Some(frame) = app.crop.take()
-            && frame.w >= 2.0
-            && frame.h >= 2.0
+            && frame.w >= 8.0
+            && frame.h >= 8.0
         {
             app.selected = None;
             app.dispatch("edit.crop", serde_json::json!({"rect": rect_json(frame)}));
@@ -6128,7 +6198,29 @@ pub fn app_ui(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
             );
             if resp.hovered() && app.editing.is_none() {
                 ctx.set_cursor_icon(match app.tool {
-                    Tool::Select => egui::CursorIcon::Default,
+                    Tool::Select => {
+                        // W14: diagonal resize cursors over the corner handles.
+                        let mut icon = egui::CursorIcon::Default;
+                        if let Some(p) = resp.hover_pos().map(&to_image) {
+                            let sel = app.selected.and_then(|id| {
+                                app.sess().doc().and_then(|d| d.get(id)).and_then(obj_rect)
+                            });
+                            if let Some(r) = sel {
+                                let tol = 10.0 / scale;
+                                for (i, c) in rect_corners(r).iter().enumerate() {
+                                    if (p.x - c.x).abs() <= tol && (p.y - c.y).abs() <= tol {
+                                        icon = if i == 0 || i == 3 {
+                                            egui::CursorIcon::ResizeNwSe
+                                        } else {
+                                            egui::CursorIcon::ResizeNeSw
+                                        };
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        icon
+                    }
                     Tool::Text => egui::CursorIcon::Text,
                     Tool::Bucket => egui::CursorIcon::PointingHand,
                     _ => egui::CursorIcon::Crosshair,
@@ -6145,6 +6237,65 @@ pub fn app_ui(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
 
             match app.tool {
                 Tool::Select => {
+                    // W14: double-click a Text/Callout to re-edit it in place
+                    // (live fabric Textbox/IText behavior via applyInteractivity).
+                    if resp.double_clicked()
+                        && let Some(p) = hover_img
+                    {
+                        let hit = app.sess().doc().and_then(|d| d.hit_test(p));
+                        if let Some(id) = hit {
+                            let obj = app.sess().doc().and_then(|d| d.get(id)).cloned();
+                            match obj {
+                                Some(AnnotObject::Text {
+                                    pos,
+                                    text,
+                                    size,
+                                    bold,
+                                    italic,
+                                    family,
+                                    color,
+                                    ..
+                                }) => {
+                                    app.selected = Some(id);
+                                    app.font_size = size;
+                                    app.bold = bold;
+                                    app.italic = italic;
+                                    app.font_family = family;
+                                    app.color = Color32::from_rgba_unmultiplied(
+                                        color.r, color.g, color.b, color.a,
+                                    );
+                                    app.editing = Some(TextEdit {
+                                        pos,
+                                        buf: text,
+                                        focus_requested: false,
+                                        target: Some(id),
+                                    });
+                                }
+                                Some(AnnotObject::Callout {
+                                    rect,
+                                    text,
+                                    size,
+                                    family,
+                                    color,
+                                    ..
+                                }) => {
+                                    app.selected = Some(id);
+                                    app.font_size = size;
+                                    app.font_family = family;
+                                    app.color = Color32::from_rgba_unmultiplied(
+                                        color.r, color.g, color.b, color.a,
+                                    );
+                                    app.editing = Some(TextEdit {
+                                        pos: Point::new(rect.x + 8.0, rect.y + 8.0),
+                                        buf: text,
+                                        focus_requested: false,
+                                        target: Some(id),
+                                    });
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
                     if resp.clicked()
                         && let Some(p) = hover_img
                     {
@@ -6153,50 +6304,128 @@ pub fn app_ui(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
                             sess.doc().and_then(|d| d.hit_test(p))
                         };
                     }
+                    let sel_rect = app
+                        .selected
+                        .and_then(|id| app.sess().doc().and_then(|d| d.get(id)).and_then(obj_rect));
                     if resp.drag_started()
-                        && let (Some(p), Some(id)) = (press_img, app.selected)
+                        && let Some(p) = press_img
                     {
-                        let inside = app
-                            .sess()
-                            .doc()
-                            .and_then(|d| d.get(id))
-                            .is_some_and(|o| o.bounds().contains(p));
-                        if inside {
-                            app.drag = Some(Drag::Move { id, start: p });
-                            app.drag_cur = Some(p);
+                        // Corner handles win over the body move.
+                        let mut started = false;
+                        if let (Some(r), Some(id)) = (sel_rect, app.selected) {
+                            let tol = 10.0 / scale;
+                            let corners = rect_corners(r);
+                            for (i, c) in corners.iter().enumerate() {
+                                if (p.x - c.x).abs() <= tol && (p.y - c.y).abs() <= tol {
+                                    app.drag = Some(Drag::Resize {
+                                        id,
+                                        anchor: corners[3 - i],
+                                    });
+                                    app.drag_cur = Some(p);
+                                    started = true;
+                                    break;
+                                }
+                            }
+                        }
+                        if !started && let Some(id) = app.selected {
+                            let inside = app
+                                .sess()
+                                .doc()
+                                .and_then(|d| d.get(id))
+                                .is_some_and(|o| o.bounds().contains(p));
+                            if inside {
+                                app.drag = Some(Drag::Move { id, start: p });
+                                app.drag_cur = Some(p);
+                            }
                         }
                     }
-                    if let Some(Drag::Move { .. }) = app.drag
-                        && let Some(p) = pointer_img
+                    if matches!(
+                        app.drag,
+                        Some(Drag::Move { .. }) | Some(Drag::Resize { .. })
+                    ) && let Some(p) = pointer_img
                     {
                         app.drag_cur = Some(p);
                     }
-                    if resp.drag_stopped()
-                        && let (Some(Drag::Move { id, start }), Some(end)) =
-                            (app.drag.take(), app.drag_cur.take())
-                    {
-                        let (dx, dy) = (end.x - start.x, end.y - start.y);
-                        if dx.abs() > 0.5 || dy.abs() > 0.5 {
-                            app.dispatch(
-                                "edit.move",
-                                serde_json::json!({"id": id, "dx": dx, "dy": dy}),
-                            );
+                    if resp.drag_stopped() {
+                        match (app.drag.take(), app.drag_cur.take()) {
+                            (Some(Drag::Move { id, start }), Some(end)) => {
+                                let (dx, dy) = (end.x - start.x, end.y - start.y);
+                                if dx.abs() > 0.5 || dy.abs() > 0.5 {
+                                    app.dispatch(
+                                        "edit.move",
+                                        serde_json::json!({"id": id, "dx": dx, "dy": dy}),
+                                    );
+                                }
+                            }
+                            (Some(Drag::Resize { id, anchor }), Some(end)) => {
+                                let r = GRect::from_corners(anchor, end);
+                                if r.w >= 2.0 && r.h >= 2.0 {
+                                    app.dispatch(
+                                        "edit.resize",
+                                        serde_json::json!({"id": id, "rect": rect_json(r)}),
+                                    );
+                                }
+                            }
+                            _ => {}
                         }
                     }
-                    if let (Some(Drag::Move { id, start }), Some(cur)) = (&app.drag, app.drag_cur)
-                        && let Some(obj) = app.sess().doc().and_then(|d| d.get(*id))
-                    {
-                        let b = obj.bounds();
-                        let r = Rect::from_min_size(
-                            to_screen(Point::new(b.x + cur.x - start.x, b.y + cur.y - start.y)),
-                            vec2(b.w * scale, b.h * scale),
+                    // Live drag preview.
+                    match (&app.drag, app.drag_cur) {
+                        (Some(Drag::Move { id, start }), Some(cur)) => {
+                            if let Some(obj) = app.sess().doc().and_then(|d| d.get(*id)) {
+                                let b = obj.bounds();
+                                let r = Rect::from_min_size(
+                                    to_screen(Point::new(
+                                        b.x + cur.x - start.x,
+                                        b.y + cur.y - start.y,
+                                    )),
+                                    vec2(b.w * scale, b.h * scale),
+                                );
+                                ui.painter().rect_stroke(
+                                    r.expand(3.0),
+                                    CornerRadius::same(3),
+                                    Stroke::new(1.0, ACCENT.linear_multiply(0.6)),
+                                    StrokeKind::Outside,
+                                );
+                            }
+                        }
+                        (Some(Drag::Resize { anchor, .. }), Some(cur)) => {
+                            let r = GRect::from_corners(*anchor, cur);
+                            let sr = Rect::from_min_size(
+                                to_screen(Point::new(r.x, r.y)),
+                                vec2(r.w * scale, r.h * scale),
+                            );
+                            ui.painter().rect_stroke(
+                                sr,
+                                CornerRadius::same(3),
+                                Stroke::new(1.0, ACCENT),
+                                StrokeKind::Outside,
+                            );
+                        }
+                        _ => {}
+                    }
+                    // Selection outline + corner handles for rect objects.
+                    if let Some(r) = sel_rect {
+                        let sr = Rect::from_min_size(
+                            to_screen(Point::new(r.x, r.y)),
+                            vec2(r.w * scale, r.h * scale),
                         );
                         ui.painter().rect_stroke(
-                            r.expand(3.0),
+                            sr.expand(3.0),
                             CornerRadius::same(3),
                             Stroke::new(1.0, ACCENT.linear_multiply(0.6)),
                             StrokeKind::Outside,
                         );
+                        if !matches!(app.drag, Some(Drag::Resize { .. })) {
+                            for c in rect_corners(r) {
+                                let sc = to_screen(c);
+                                ui.painter().rect_filled(
+                                    Rect::from_center_size(sc, vec2(7.0, 7.0)),
+                                    CornerRadius::same(1),
+                                    ACCENT,
+                                );
+                            }
+                        }
                     }
                 }
                 Tool::Text => {
@@ -6209,6 +6438,7 @@ pub fn app_ui(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
                             pos: p,
                             buf: String::new(),
                             focus_requested: false,
+                            target: None,
                         });
                     }
                 }
@@ -6223,6 +6453,15 @@ pub fn app_ui(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
                             (pointer_img, app.crop.as_ref().map(|r| Point::new(r.x, r.y)))
                     {
                         app.crop = Some(GRect::from_corners(start, clamp_img(p)));
+                    }
+                    // W14 live parity (tools.ts:1504-1507, MIN_DRAG=8): a plain
+                    // click or tiny drag resets the crop instead of leaving a
+                    // degenerate frame behind.
+                    if resp.drag_stopped()
+                        && let Some(frame) = app.crop
+                        && (frame.w < 8.0 || frame.h < 8.0)
+                    {
+                        app.crop = None;
                     }
                 }
                 Tool::Brush => {
@@ -6510,7 +6749,8 @@ pub fn app_ui(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
             });
 
             // ---- inline text editing ---------------------------------------
-            if let Some(pos) = app.editing.as_ref().map(|e| e.pos) {
+            if let Some(edit) = app.editing.as_ref().filter(|e| e.target.is_none()) {
+                let pos = edit.pos;
                 let sp = to_screen(pos);
                 let bar_h = 30.0;
                 let bar_y = if sp.y - bar_h - 10.0 > ui.clip_rect().top() {

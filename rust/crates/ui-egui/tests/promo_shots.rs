@@ -1,4 +1,5 @@
 //! Promo shot renderer for the SnagCraft launch film (snagcraft-promo).
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 //!
 //! Renders REAL app UI states through the production egui shell — one PNG per
 //! story beat, plus the engine's own flat export for the payoff shot. Ignored

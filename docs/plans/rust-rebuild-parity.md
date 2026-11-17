@@ -37,7 +37,7 @@ Registry: `createTool()` switch `tools.ts:1917-1946`; `ToolId` narrowing at `too
 
 | # | Tool id | Shortcut | Behavior / options | Evidence | rust |
 |---|---------|----------|--------------------|----------|------|
-| 1 | `select` | `V` | Click-select, drag-move, Delete removes; discards active object on activate | `tools.ts:535-628` (`id` :536, activate :541-543); rail hint `app.ts:349-352` | W2 |
+| 1 | `select` | `V` | Click-select, drag-move, Delete removes; discards active object on activate | `tools.ts:535-628` (`id` :536, activate :541-543); rail hint `app.ts:349-352` | W2 + W14 (move W2; corner resize handles + double-click Text/Callout re-edit W14 — the live SelectTool is a thin shell over fabric `applyInteractivity`, which provides these) |
 | 2 | `shape` | `R` | Drag outline. 5 variants: **rect, ellipse, triangle, line, star** (`SHAPE_KINDS`) — star is a normalised 96×91 5-point path. Options: shape picker + color + stroke + shadow | `tools.ts:614-616`, star path :619, class :628-785, stroke from `host.color()`/`strokeWidth()` :639-640; picker buttons `app.ts:964-968`, rail `app.ts:361-364` | W2 |
 | 3 | `blur` | `B` | Drag a region; renders per current blur **mode** (gaussian/pixelate/blackout), dashed preview outline | `tools.ts:785-811`, mode read :789, `blurRegionPreview` :790; class `BlurRegion` :54-104 | W2 |
 | 4 | `spotlight` | `L` | Darkens everything except the dragged rect; outline thickness opt | `tools.ts:811-835`, thickness :815; `SpotlightRegion` :104-152 | W2 |
@@ -47,9 +47,9 @@ Registry: `createTool()` switch `tools.ts:1917-1946`; `ToolId` narrowing at `too
 | 8 | `text` | `T` | Click to place, type inline; options: 10 font families, size 8–200, **bold**, **italic**, color, shadow (no underline or alignment) | `tools.ts:1045-1232` (`TextStyle` :395-400); style applied :1101-1102, stroke/color :1190 | W2 |
 | 9 | `step` | `S` | Click to drop next number; numbers auto-ordered; ring width opt (rail label "Ring width") | `tools.ts:1232-1305`, click-default box :1221, radius/fill :1257; rail `app.ts:365-369` | W2 |
 | 10 | `callout` | `K` | Drag a speech-box; width drives font size; default 240×112, min width clamp | `tools.ts:1305-1462`, `CALLOUT_DEFAULT` :1296, size calc :1350, font :1390 | W2 |
-| 11 | `crop` | `C` | Drag handles to frame, **Enter** commits, Esc cancels | `tools.ts:1462-1557`; rail hint `app.ts:353-356` | W2 (W13 audit: "handles" is live hint prose — the live overlay is painter-only, every drag redraws; rebuild matches. Plain-click reset nuance → W14) |
+| 11 | `crop` | `C` | Drag handles to frame, **Enter** commits, Esc cancels | `tools.ts:1462-1557`; rail hint `app.ts:353-356` | W2 + W14 (W13 audit: "handles" is live hint prose — the live overlay is painter-only, every drag redraws; rebuild matches. W14: plain-click/tiny-drag <8px resets the crop, Enter needs ≥8px — MIN_DRAG/MIN_SIZE parity) |
 | 12 | `bucket` | `G` | Flood-fill region with current color (`context.fillStyle`), raster op on the canvas | `tools.ts:1557-1824`, fill :1776 | W2 |
-| 13 | `brush` | `E` | Freehand stroke, nib width **2–44 px** (`brushWidth()`, rail = "Brush size", nib preview circle), stroke replaced while redrawing | `tools.ts:1824-1916`, width :1902, commit :1912; nib range + preview `app.ts:433`, `:993-995`, label `:3385-3397` | W2 (nib preview circle pending W14 — W13 audit) |
+| 13 | `brush` | `E` | Freehand stroke, nib width **2–44 px** (`brushWidth()`, rail = "Brush size", nib preview circle), stroke replaced while redrawing | `tools.ts:1824-1916`, width :1902, commit :1912; nib range + preview `app.ts:433`, `:993-995`, label `:3385-3397` | W2 + W14 (nib preview circle W14: 48px box, ink-coloured dot at 1:1 diameter, value label) |
 
 **Shape variants detail** (`tools.ts:614-616`, UI `app.ts:964-968`): rect, ellipse, triangle, line, star. Line variant is the one drag-with-endpoints path (`tools.ts:632-720` common opts `left/top`).
 

@@ -690,6 +690,35 @@ live pass + gates (trim/relicense/cutover/external post). NO releases published.
   nib preview + double-click text edit (+resize) + crop click semantics.**
   The loop continues — editor interaction parity is the last open cluster.
 
+### 2026-11-17 — wake #103: W14 editor interaction parity — B5 ALL CLOSED
+- Fresh re-check: tree clean at 11a9b1e (W13 + promo renderer), suite green.
+  W14 = the B5 cluster from the W13 audit, built parent-direct.
+- **engine**: `edit.set_text {id,text}` + `edit.resize {id,rect}` (history-backed;
+  wrong kinds report false, degenerate rects rejected). doc gains set_text/
+  set_rect. Registry 46→48; automation guard + engine registry test bumped.
+- **ui**: Select mode gets corner resize handles (7px accent squares, diagonal
+  resize cursors, anchor-opposite-corner live preview) + double-click inline
+  re-edit of Text/Callout (loads the object's own style; commit → set_text;
+  emptying removes the object — live settle parity; quick-font bar hidden for
+  re-edits). Brush rail gets the live nib preview (48px box, ink dot at 1:1
+  diameter, value label — app.ts:433/993/3163). Crop: <8px drag/click resets
+  the pending frame, Enter needs ≥8px (MIN_DRAG/MIN_SIZE parity).
+- **Gates (kittest pointer paths, 60fps step_dt):** resize+undo, text
+  re-edit/append/empty-remove, callout re-edit, crop click reset, nib snapshot
+  (vision-verified). Two harness lessons: the properties rail height differs
+  per tool → calibrate the image→screen mapping UNDER the exercised tool (a
+  resize to a known screen point yields the absolute offset; a move only
+  yields scale); kittest's default 250ms step_dt puts consecutive clicks
+  outside egui's double-click window → with_step_dt(1/60), and three clicks
+  inside 300ms count as TRIPLE (pause between pairs).
+- Parent-verified: workspace **487 passed / 0 failed / 11 ignored**, no
+  snapshot drift. clippy/fmt/layers/wasm clean (below).
+- gaps.md B5 → ALL CLOSED; parity select/crop/brush rows → W2 + W14; README
+  48 commands. **Pending parity = 1 (Trim, rostad-gated). No non-gated
+  functional gaps remain.** Awaiting rostad: KDE live pass, trim decision,
+  relicense, cutover, release-asset refresh. Promo film storyboard still
+  awaiting his go (separate track).
+
 ## Appendix — measured reality
 
 | Claim | Measured | What changed |

@@ -417,6 +417,36 @@ impl Document {
         }
     }
 
+    /// Replace the text of a Text/Callout object (W14 inline re-edit).
+    /// `false` for other kinds or an unknown id.
+    pub fn set_text(&mut self, id: ObjId, text: String) -> bool {
+        match self.get_mut(id) {
+            Some(AnnotObject::Text { text: t, .. })
+            | Some(AnnotObject::Callout { text: t, .. }) => {
+                *t = text;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Replace the rect of a rect-based object (W14 select-mode resize).
+    /// `false` for point/path kinds or an unknown id.
+    pub fn set_rect(&mut self, id: ObjId, rect: Rect) -> bool {
+        match self.get_mut(id) {
+            Some(AnnotObject::Shape { rect: r, .. })
+            | Some(AnnotObject::Blur { rect: r, .. })
+            | Some(AnnotObject::Highlighter { rect: r, .. })
+            | Some(AnnotObject::Spotlight { rect: r, .. })
+            | Some(AnnotObject::Callout { rect: r, .. })
+            | Some(AnnotObject::Magnify { rect: r, .. }) => {
+                *r = rect;
+                true
+            }
+            _ => false,
+        }
+    }
+
     /// Topmost object whose bounds contain `p`.
     pub fn hit_test(&self, p: Point) -> Option<ObjId> {
         self.objects

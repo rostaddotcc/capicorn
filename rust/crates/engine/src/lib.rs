@@ -1078,6 +1078,34 @@ fn cmd_edit_move(s: &mut Session, p: Value) -> Result<Value, CommandError> {
     Ok(json!({"moved": d.shift(id, dx, dy)}))
 }
 
+/// W14: replace a Text/Callout object's text (inline re-edit in Select mode).
+fn cmd_edit_set_text(s: &mut Session, p: Value) -> Result<Value, CommandError> {
+    let id = p_u64(&p, "id")?;
+    let text = p
+        .get("text")
+        .and_then(Value::as_str)
+        .ok_or_else(|| CommandError::InvalidParams("text must be a string".into()))?
+        .to_string();
+    let d = s.doc.as_mut().ok_or(CommandError::NoDoc)?;
+    s.history.record(d);
+    Ok(json!({"updated": d.set_text(id, text)}))
+}
+
+/// W14: resize a rect-based object (select-mode corner handles). Point/path
+/// kinds report `resized: false` — they have no rect to set.
+fn cmd_edit_resize(s: &mut Session, p: Value) -> Result<Value, CommandError> {
+    let id = p_u64(&p, "id")?;
+    let rect = p_rect(&p, "rect")?;
+    if rect.w < 2.0 || rect.h < 2.0 {
+        return Err(CommandError::InvalidParams(
+            "the resized object needs at least 2x2 pixels".into(),
+        ));
+    }
+    let d = s.doc.as_mut().ok_or(CommandError::NoDoc)?;
+    s.history.record(d);
+    Ok(json!({"resized": d.set_rect(id, rect)}))
+}
+
 fn cmd_edit_blur(s: &mut Session, p: Value) -> Result<Value, CommandError> {
     let rect = p_rect(&p, "rect")?;
     let mode = match p.get("mode").and_then(Value::as_str).unwrap_or("gaussian") {
@@ -1470,6 +1498,18 @@ pub fn registry() -> Vec<CommandSpec> {
             run: cmd_edit_move,
         },
         CommandSpec {
+            id: "edit.set_text",
+            label: "Edit object text",
+            params_doc: "{id, text}",
+            run: cmd_edit_set_text,
+        },
+        CommandSpec {
+            id: "edit.resize",
+            label: "Resize object",
+            params_doc: "{id, rect:{x,y,w,h}}",
+            run: cmd_edit_resize,
+        },
+        CommandSpec {
             id: "edit.blur",
             label: "Add blur region",
             params_doc: "{rect:{x,y,w,h}, mode, radius}",
@@ -1709,6 +1749,80 @@ mod tests {
         let quiet = Settings::default();
         let audio = record_audio_config(&json!({}), &quiet);
         assert_eq!(audio.input_count(), 0);
+    }
+
+    #[test]
+    fn edit_set_text_and_resize_mutate_with_history() {
+        let mut s = Session::new();
+        s.dispatch("doc.new", json!({"w": 200, "h": 150})).unwrap();
+        s.dispatch(
+            "edit.add",
+            json!({"object": {"kind": "Text", "id": 0,
+                "pos": {"x": 10.0, "y": 10.0}, "text": "before",
+                "color": [0, 0, 0, 255], "size": 20.0,
+                "bold": false, "italic": false}}),
+        )
+        .unwrap();
+        s.dispatch(
+            "edit.add",
+            json!({"object": {"kind": "Shape", "id": 0, "shape": "Rect",
+                "rect": {"x": 20.0, "y": 20.0, "w": 50.0, "h": 40.0},
+                "color": [0, 0, 0, 255], "width": 2.0}}),
+        )
+        .unwrap();
+
+        // Wrong kinds report false without erroring.
+        let r = s
+            .dispatch(
+                "edit.resize",
+                json!({"id": 1, "rect": {"x": 0.0, "y": 0.0, "w": 30.0, "h": 30.0}}),
+            )
+            .unwrap();
+        assert_eq!(r["resized"], false);
+        let r = s
+            .dispatch("edit.set_text", json!({"id": 2, "text": "nope"}))
+            .unwrap();
+        assert_eq!(r["updated"], false);
+
+        // Text re-edit lands and undo restores the previous text.
+        let r = s
+            .dispatch("edit.set_text", json!({"id": 1, "text": "after"}))
+            .unwrap();
+        assert_eq!(r["updated"], true);
+        let d = s.doc.as_ref().unwrap();
+        assert!(matches!(d.get(1), Some(AnnotObject::Text { text, .. }) if text == "after"));
+        s.dispatch("edit.undo", json!({})).unwrap();
+        let d = s.doc.as_ref().unwrap();
+        assert!(matches!(d.get(1), Some(AnnotObject::Text { text, .. }) if text == "before"));
+
+        // Resize lands and undo restores the previous rect.
+        let r = s
+            .dispatch(
+                "edit.resize",
+                json!({"id": 2, "rect": {"x": 20.0, "y": 20.0, "w": 80.0, "h": 60.0}}),
+            )
+            .unwrap();
+        assert_eq!(r["resized"], true);
+        let d = s.doc.as_ref().unwrap();
+        assert!(matches!(d.get(2), Some(AnnotObject::Shape { rect, .. }) if rect.w == 80.0));
+        s.dispatch("edit.undo", json!({})).unwrap();
+        let d = s.doc.as_ref().unwrap();
+        assert!(matches!(d.get(2), Some(AnnotObject::Shape { rect, .. }) if rect.w == 50.0));
+
+        // Degenerate rects are rejected; a missing doc is an error.
+        assert!(
+            s.dispatch(
+                "edit.resize",
+                json!({"id": 2, "rect": {"x": 0.0, "y": 0.0, "w": 1.0, "h": 40.0}})
+            )
+            .is_err()
+        );
+        let mut empty = Session::new();
+        assert!(
+            empty
+                .dispatch("edit.set_text", json!({"id": 1, "text": "x"}))
+                .is_err()
+        );
     }
 
     #[test]
@@ -2542,11 +2656,11 @@ mod tests {
     }
 
     #[test]
-    fn native_registry_keeps_all_46_commands() {
+    fn native_registry_keeps_all_48_commands() {
         // Desktop contract: every command the UI, CLI and MCP know is present.
         // Bump deliberately when a wave adds a command.
         let ids: Vec<&str> = registry().iter().map(|c| c.id).collect();
-        assert_eq!(ids.len(), 46, "native registry drifted: {ids:?}");
+        assert_eq!(ids.len(), 48, "native registry drifted: {ids:?}");
         for native_only in [
             "capture.full",
             "record.start",

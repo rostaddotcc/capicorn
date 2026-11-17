@@ -82,18 +82,18 @@ Effects are applied to the **image layer at export resolution** (scene px × exp
 | **Open from file association / `cli-open` event / launch_request.file** | `app.ts:5238-5262`, backend `cli.rs:62-80` | W3 |
 | **Drag & drop** an image onto the window (`dataTransfer.files[0]`, `image/*`) | `app.ts:5099-5105` | W1 |
 | **Save** (`Ctrl+S`) — writes a *new* copy with `-edited` suffix, never overwrites; status "Saved copy …" | `app.ts:1862-1885`, `writeImage` :1811-1831 | W0 spike (PNG out) |
-| **Save As…** (`Ctrl+Shift+S`) — native dialog, suggested `buildFilename(pattern, format)` | `app.ts:1891-1914`, `save_image_as` `commands.rs:187-228` | pending |
+| **Save As…** (`Ctrl+Shift+S`) — native dialog, suggested `buildFilename(pattern, format)` | `app.ts:1891-1914`, `save_image_as` `commands.rs:187-228` | W9 |
 | **Auto-save capture on arrival** (setting; off = keep in editor only) | `app.ts:1837-1855`, `AUTOSAVE_KEY` `settings.ts:50`, default on `settings.ts:237` | W4 |
 | **Export formats** PNG / JPEG / WebP, with quality 1–100 (JPEG/WebP only) | `settings.ts:10` (`ExportFormat`), picker `settings.ts:939-944`, default quality 90 `settings.ts:63`, encode `export.rs:85-166`, format enum `export.rs:28-83` | W0 spike (PNG) |
-| **Filename pattern** — `{date}`, `{time}`, `{datetime}`; default `SnagCraft-{date}-{time}` | `settings.ts:65` (`DEFAULT_PATTERN`), tokens hint `settings.ts:966-969`, `buildFilename` | pending |
-| **Default save dir** — OS Pictures/SnagCraft; Change… / Reset to default | `commands.rs:230-269` (`default_save_dir`, `pick_save_dir`), `ensureSaveDir` `app.ts:1717-1731`, change/reset `:1733-1762` | pending |
+| **Filename pattern** — `{date}`, `{time}`, `{datetime}`; default `SnagCraft-{date}-{time}` | `settings.ts:65` (`DEFAULT_PATTERN`), tokens hint `settings.ts:966-969`, `buildFilename` | W9 |
+| **Default save dir** — OS Pictures/SnagCraft; Change… / Reset to default | `commands.rs:230-269` (`default_save_dir`, `pick_save_dir`), `ensureSaveDir` `app.ts:1717-1731`, change/reset `:1733-1762` | W9 |
 | **Separate recording folder** (`splitFolders`, default off) | `settings.ts:141`, `settings.ts:919-932`, `getRecDir` `app.ts:4439` | pending |
 | **Copy to clipboard as PNG** (`Ctrl+C`) | `app.ts:4422-4432`, `copy_png` `commands.rs:299-303`, `clipboard.rs:6` | W2 |
 | **Paste** an image from the clipboard into the editor (`Ctrl+V`, `paste` event, first `image/*` item) | `app.ts:5081-5094` | W2 |
 | **Watermark on export** — text, opacity 2–100 (default 45 %), corner bottom-right/bottom-left/top-right/top-left | `watermark.ts:13-49` (`DEFAULT_WATERMARK` :28-33 = opacity 0.45, bottom-right), draw :62-90 (Inter 600), UI `settings.ts:972-984` | W4 |
 | **New blank canvas** (`Ctrl+N`) — 8 presets (Default 1280×800, HD, Full HD, QHD, 4K UHD, Square 1080², Story 1080×1920, Small 800×600), white or transparent, dims clamped 16–8192 | `app.ts:4939-4975` (`NEW_PRESETS` :4941-4950, `clampDim` :4952, `blankCanvasDataUrl` :4956-4969, `newCanvas` :4962) | pending |
 | **Resize** the canvas (dialog opened from the toolbar, closes on Esc) | `openResize` `app.ts:3622`, popover `:5118-5121` | pending |
-| **Recent strip** — newest-first, in-session cap `RECENT_LIMIT = 12`, plus a folder scan of the save (and recording) folder with thumbnails; clicking reads from disk, recordings open in the OS player | `app.ts:672` (`RECENT_LIMIT`), `refreshRecentFromFolder` `:3946-3980`, `list_folder_media` `commands.rs:386-429`, `open_path` `commands.rs:503-532` | pending |
+| **Recent strip** — newest-first, in-session cap `RECENT_LIMIT = 12`, plus a folder scan of the save (and recording) folder with thumbnails; clicking reads from disk, recordings open in the OS player | `app.ts:672` (`RECENT_LIMIT`), `refreshRecentFromFolder` `:3946-3980`, `list_folder_media` `commands.rs:386-429`, `open_path` `commands.rs:503-532` | W9 |
 | **Pin** (pin-a-shot-to-screen) — *removed*, must NOT be rebuilt | `CHANGELOG.md:201` ("Removed Pin") | n/a |
 
 ---
@@ -151,7 +151,7 @@ Effects are applied to the **image layer at export resolution** (scene px × exp
 | **Audio** — mic (`list_audio_sources` id) and/or default output **monitor**, mixed into one AAC track; never an error when empty | `recording.rs:30-32`; pretty-names `:147-200`; UI mic select `settings.ts:855-863`, system-audio switch `settings.ts:866-870`; `list_audio_sources` wiring `app.ts:4453-4461` | W4 single-source (mixing gap) |
 | `recording-state {recording, path}` events so a window that missed the invoke result resyncs | `recording.rs:46-47`; widget mirrors it `widget-main.ts:412-416` | W4 |
 | Elapsed timer pill, repainted every 500 ms while a take runs | `app.ts:2326-2340` | W4 |
-| Recording thumbnails for the Recent rail | `commands.rs:533-545` (`recording_thumb`) | pending |
+| Recording thumbnails for the Recent rail | `commands.rs:533-545` (`recording_thumb`) | W9 (film-icon placeholder) |
 | Copy diagnostics (portal + per-take `.rec.log`) to clipboard | `commands.rs:457-501`, `settings.ts` troubleshooting button `:996-1004` | pending |
 | **Trim** a finished take | *not implemented in v1.5.3* — no trim command or UI (grep `trim` in `recording.rs`/`app.ts` is string-truncation only) | pending |
 | ffmpeg is a hard runtime dependency; absence is reported as an actionable message | `timelapse.rs:17-18` (same convention for recording), README:128 | pending |

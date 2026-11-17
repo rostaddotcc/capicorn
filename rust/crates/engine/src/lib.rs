@@ -12,12 +12,12 @@
 //!
 //! # Feature split (`native` / web core)
 //!
-//! The default `native` feature is the desktop engine, unchanged: 43 commands,
+//! The default `native` feature is the desktop engine, unchanged: 44 commands,
 //! including capture, recording, scrolling capture, timelapse, OCR, upload and
 //! clipboard. `--no-default-features` builds the web core, which compiles for
 //! `wasm32-unknown-unknown`: `snagcraft-capture`, `snagcraft-recording` and
 //! `snagcraft-io`'s arboard clipboard are dropped, their session state and
-//! handlers disappear with them, and the registry exposes only the 21
+//! handlers disappear with them, and the registry exposes only the 22
 //! doc/edit/settings commands.
 //!
 //! Native-only command ids are therefore **absent** from [`registry`] (and from
@@ -28,7 +28,8 @@
 //!
 //! ## Web core commands
 //! `session.info`, `commands.list`, `settings.get`, `settings.set`, `doc.new`,
-//! `doc.open`, `doc.close`, `doc.inspect`, `doc.save`, `doc.load`, `doc.export`,
+//! `doc.open`, `doc.close`, `doc.inspect`, `doc.save`, `doc.save_as`,
+//! `doc.load`, `doc.export`,
 //! `edit.add`, `edit.remove`, `edit.move`, `edit.blur`, `edit.crop`,
 //! `edit.bucket`, `edit.duplicate`, `edit.reorder`, `edit.undo`, `edit.redo`.
 
@@ -322,6 +323,52 @@ fn p_quality(v: &Value) -> u8 {
         .clamp(1, 100) as u8
 }
 
+/// `quality` when the caller sent one.
+fn param_quality(v: &Value) -> Option<u8> {
+    v.get("quality")
+        .and_then(Value::as_u64)
+        .map(|q| q.clamp(1, 100) as u8)
+}
+
+/// Format for a save: explicit `format` param, else the path's extension, else
+/// `settings.default_format`. Unknown values are refused (explicit param) or
+/// fall back to PNG (hostile settings file).
+fn image_format(
+    p: &Value,
+    path: Option<&str>,
+    settings: &Settings,
+) -> Result<snagcraft_io::ImageFormat, CommandError> {
+    use snagcraft_io::ImageFormat;
+    if let Some(explicit) = p.get("format") {
+        let name = explicit
+            .as_str()
+            .ok_or_else(|| CommandError::InvalidParams("format must be a string".into()))?;
+        return match name.to_ascii_lowercase().as_str() {
+            "png" => Ok(ImageFormat::Png),
+            "jpeg" | "jpg" => Ok(ImageFormat::Jpeg),
+            "webp" => Ok(ImageFormat::WebP),
+            other => Err(CommandError::InvalidParams(format!(
+                "unknown format '{other}'"
+            ))),
+        };
+    }
+    if let Some(ext) = path.and_then(|p| std::path::Path::new(p).extension())
+        && let Some(ext) = ext.to_str()
+    {
+        match ext.to_ascii_lowercase().as_str() {
+            "png" => return Ok(ImageFormat::Png),
+            "jpg" | "jpeg" => return Ok(ImageFormat::Jpeg),
+            "webp" => return Ok(ImageFormat::WebP),
+            _ => {}
+        }
+    }
+    Ok(match settings.default_format.as_str() {
+        "jpeg" | "jpg" => ImageFormat::Jpeg,
+        "webp" => ImageFormat::WebP,
+        _ => ImageFormat::Png,
+    })
+}
+
 // ---- commands ----
 
 fn cmd_session_info(s: &mut Session, _p: Value) -> Result<Value, CommandError> {
@@ -386,12 +433,59 @@ fn cmd_doc_inspect(s: &mut Session, _p: Value) -> Result<Value, CommandError> {
     Ok(json!({"size": {"w": d.size.w, "h": d.size.h}, "next_id": d.next_id, "objects": d.objects}))
 }
 
+/// `doc.save` — with an explicit `path` this writes the editable `.snagcraft`
+/// document (W1 behaviour, unchanged). Without one it is the desktop Save
+/// button: render the watermarked composite, drop it in the save folder (the
+/// `save_dir` setting, else `$HOME/Pictures/SnagCraft`) under the expanded
+/// `filename_pattern`, and report `{saved: <path>}`.
 fn cmd_doc_save(s: &mut Session, p: Value) -> Result<Value, CommandError> {
-    let d = s.require_doc()?;
-    let path = p_str(&p, "path")?;
-    let bytes = snagcraft_format::save(d).map_err(|e| CommandError::Format(e.to_string()))?;
-    std::fs::write(path, bytes).map_err(|e| CommandError::Io(e.to_string()))?;
-    Ok(json!({"saved": path}))
+    if s.doc().is_none() {
+        return Err(CommandError::NoDoc);
+    }
+    let explicit = p
+        .get("path")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|path| !path.is_empty());
+    if let Some(path) = explicit {
+        let d = s.require_doc()?;
+        let bytes = snagcraft_format::save(d).map_err(|e| CommandError::Format(e.to_string()))?;
+        std::fs::write(path, bytes).map_err(|e| CommandError::Io(e.to_string()))?;
+        return Ok(json!({"saved": path}));
+    }
+
+    let settings = s.settings().clone();
+    let format = image_format(&p, None, &settings)?;
+    let quality = param_quality(&p).unwrap_or(settings.default_quality.clamp(1, 100));
+    let dir = snagcraft_io::files::resolve_save_dir(settings.save_dir.as_deref());
+    let name = snagcraft_io::files::build_filename_now(&settings.filename_pattern, format);
+    let img = s.render_watermarked(p.get("watermark"))?;
+    let path = snagcraft_io::recent::save_in_dir(&img, &dir, &name, format, quality)
+        .map_err(|e| CommandError::Io(e.to_string()))?;
+    Ok(json!({"saved": path.to_string_lossy(), "dir": dir.to_string_lossy()}))
+}
+
+/// `doc.save_as {path, format?, quality?, watermark?}` — always writes a flat
+/// image to the exact path the user chose (the Save As dialog's target).
+///
+/// `format` defaults to the path's extension, then to `settings.default_format`;
+/// `quality` defaults to `settings.default_quality`. An empty path is refused
+/// rather than silently writing into the working directory.
+fn cmd_doc_save_as(s: &mut Session, p: Value) -> Result<Value, CommandError> {
+    if s.doc().is_none() {
+        return Err(CommandError::NoDoc);
+    }
+    let path = p_str(&p, "path")?.trim().to_string();
+    if path.is_empty() {
+        return Err(CommandError::InvalidParams("empty save path".into()));
+    }
+    let settings = s.settings().clone();
+    let format = image_format(&p, Some(&path), &settings)?;
+    let quality = param_quality(&p).unwrap_or(settings.default_quality.clamp(1, 100));
+    let img = s.render_watermarked(p.get("watermark"))?;
+    snagcraft_io::save(&img, std::path::Path::new(&path), format, quality)
+        .map_err(|e| CommandError::Io(e.to_string()))?;
+    Ok(json!({"saved": path, "format": format.extension()}))
 }
 
 fn cmd_doc_load(s: &mut Session, p: Value) -> Result<Value, CommandError> {
@@ -1084,8 +1178,14 @@ pub fn registry() -> Vec<CommandSpec> {
         CommandSpec {
             id: "doc.save",
             label: "Save native .snagcraft",
-            params_doc: "{path}",
+            params_doc: "{path?} — no path saves a flat image into the save folder",
             run: cmd_doc_save,
+        },
+        CommandSpec {
+            id: "doc.save_as",
+            label: "Save flattened image as",
+            params_doc: "{path, format: png|jpeg|webp, quality}",
+            run: cmd_doc_save_as,
         },
         CommandSpec {
             id: "doc.load",
@@ -1367,6 +1467,95 @@ mod tests {
             .unwrap();
         assert_eq!(s.doc().unwrap().objects.len(), 1);
         std::fs::remove_file(&path).ok();
+    }
+
+    /// W9: no explicit path → `save_dir` + expanded `filename_pattern`, and a
+    /// second save in the same second never overwrites the first.
+    #[test]
+    fn save_without_path_lands_in_save_dir_with_pattern() {
+        let dir = std::env::temp_dir().join(format!("snagcraft-w9-save-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut s = Session::new();
+        s.settings_mut().save_dir = Some(dir.to_string_lossy().to_string());
+        s.settings_mut().filename_pattern = "shot-{date}".to_string();
+        s.dispatch("doc.new", json!({"w": 12, "h": 9})).unwrap();
+
+        let out = s.dispatch("doc.save", json!({})).unwrap();
+        let saved = out["saved"].as_str().unwrap().to_string();
+        assert!(
+            saved.starts_with(&dir.to_string_lossy().to_string()),
+            "{saved}"
+        );
+        let name = std::path::Path::new(&saved)
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        assert!(name.starts_with("shot-"), "{name}");
+        assert!(name.ends_with(".png"), "{name}");
+        let img = snagcraft_io::open(std::path::Path::new(&saved)).unwrap();
+        assert_eq!(img.dimensions(), (12, 9));
+
+        let again = s.dispatch("doc.save", json!({})).unwrap();
+        let second = again["saved"].as_str().unwrap().to_string();
+        assert_ne!(second, saved, "same-second saves must not overwrite");
+        assert!(std::path::Path::new(&second).is_file());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// W9: `doc.save_as` writes a flat image to the exact path, infers the
+    /// format from the extension, and refuses an empty path.
+    #[test]
+    fn save_as_writes_flat_image_with_format_inference() {
+        let dir = std::env::temp_dir().join(format!("snagcraft-w9-saveas-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut s = Session::new();
+        s.dispatch("doc.new", json!({"w": 20, "h": 10})).unwrap();
+
+        let png = dir.join("chosen.png");
+        let out = s
+            .dispatch("doc.save_as", json!({"path": png.to_str().unwrap()}))
+            .unwrap();
+        assert_eq!(out["format"], "png");
+        assert_eq!(snagcraft_io::open(&png).unwrap().dimensions(), (20, 10));
+
+        // The extension picks JPEG; the explicit param overrides both.
+        let jpg = dir.join("chosen.jpg");
+        s.dispatch("doc.save_as", json!({"path": jpg.to_str().unwrap()}))
+            .unwrap();
+        assert!(std::fs::metadata(&jpg).unwrap().len() > 0);
+        let webp = dir.join("chosen-without-extension");
+        let out = s
+            .dispatch(
+                "doc.save_as",
+                json!({"path": webp.to_str().unwrap(), "format": "webp"}),
+            )
+            .unwrap();
+        assert_eq!(out["format"], "webp");
+        let bytes = std::fs::read(&webp).unwrap();
+        assert_eq!(&bytes[..4], b"RIFF");
+
+        assert!(s.dispatch("doc.save_as", json!({"path": "  "})).is_err());
+        assert!(
+            s.dispatch(
+                "doc.save_as",
+                json!({"path": png.to_str().unwrap(), "format": "tiff"})
+            )
+            .is_err()
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn save_as_without_doc_is_no_doc() {
+        let mut s = Session::new();
+        s.dispatch("doc.close", json!({})).unwrap();
+        assert!(matches!(
+            s.dispatch("doc.save_as", json!({"path": "/tmp/x.png"})),
+            Err(CommandError::NoDoc)
+        ));
     }
 
     #[test]
@@ -1993,11 +2182,11 @@ mod tests {
     }
 
     #[test]
-    fn native_registry_keeps_all_43_commands() {
+    fn native_registry_keeps_all_44_commands() {
         // Desktop contract: every command the UI, CLI and MCP know is present.
         // Bump deliberately when a wave adds a command.
         let ids: Vec<&str> = registry().iter().map(|c| c.id).collect();
-        assert_eq!(ids.len(), 43, "native registry drifted: {ids:?}");
+        assert_eq!(ids.len(), 44, "native registry drifted: {ids:?}");
         for native_only in [
             "capture.full",
             "record.start",

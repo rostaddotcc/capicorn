@@ -18,7 +18,9 @@
 /// the module (and its `pub use`) only exists with the `native` feature.
 #[cfg(feature = "native")]
 pub mod clipboard;
+pub mod files;
 pub mod ocr;
+pub mod recent;
 pub mod settings;
 pub mod upload;
 

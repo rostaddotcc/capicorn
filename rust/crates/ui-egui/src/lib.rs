@@ -668,6 +668,15 @@ pub struct OcrState {
     pub languages: Option<Vec<String>>,
 }
 
+/// One tile in the Recent strip (W9): the file plus its lazily decoded thumb.
+pub struct RecentItem {
+    pub path: PathBuf,
+    pub name: String,
+    /// Decoded on first paint; `None` = not tried yet or unreadable (the tile
+    /// falls back to the film placeholder).
+    pub thumb: Option<egui::TextureHandle>,
+}
+
 pub struct SnagCraftApp {
     /// Shared with the control server (W5a/W5b): one document, two doors.
     pub session: Arc<Mutex<Session>>,
@@ -737,6 +746,12 @@ pub struct SnagCraftApp {
     pub ocr: OcrState,
     /// `ocr.available` cached: it probes for the tesseract binary.
     pub ocr_available: Option<bool>,
+    /// Recent strip (W9): in-session captures/saves plus one folder scan.
+    pub recent: Vec<RecentItem>,
+    /// Strip visible — the toolbar chip (and the strip's Hide) toggle it.
+    pub film_open: bool,
+    /// The startup scan of the save folder has already run.
+    film_scanned: bool,
     /// Compact 3-2-1 countdown before a delayed capture starts (B4#5).
     pub countdown: Option<Countdown>,
     /// Off-thread `ocr.run`: the worker sends the extracted text (or its error).
@@ -825,6 +840,9 @@ impl SnagCraftApp {
             timelapse: TimelapseState::default(),
             ocr: OcrState::default(),
             ocr_available: None,
+            recent: Vec::new(),
+            film_open: false,
+            film_scanned: false,
             countdown: None,
             ocr_rx: None,
             pick: None,
@@ -1013,6 +1031,9 @@ impl SnagCraftApp {
                 // Autosave a copy first: the document below is a separate
                 // in-memory surface, so this never touches the original file.
                 let autosaved = self.autosave_capture(&surface);
+                if let Some(path) = &autosaved {
+                    self.push_recent(path.clone());
+                }
                 self.sess().load_surface(surface);
                 self.redraw = true;
                 // A fresh capture starts a clean document.
@@ -1351,6 +1372,7 @@ impl SnagCraftApp {
             }
             self.dispatch("doc.export", params);
             self.status = format!("Exported {}", path.display());
+            self.push_recent(path);
             return true;
         }
         false
@@ -1489,6 +1511,140 @@ impl SnagCraftApp {
             self.status = format!("Cannot create {}: {err}", dir.display());
         }
         dir
+    }
+
+    // ---- W9: recent strip ---------------------------------------------------
+
+    /// Record `path` as the newest recent capture. Deduped by path, capped at
+    /// [`snagcraft_io::recent::RECENT_LIMIT`], newest first (`app.ts:3907`).
+    pub fn push_recent(&mut self, path: PathBuf) {
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| path.display().to_string());
+        self.recent.retain(|item| item.path != path);
+        self.recent.insert(
+            0,
+            RecentItem {
+                path,
+                name,
+                thumb: None,
+            },
+        );
+        self.recent.truncate(snagcraft_io::recent::RECENT_LIMIT);
+    }
+
+    /// Number of recents the chip's count badge shows.
+    pub fn recent_count(&self) -> usize {
+        self.recent.len()
+    }
+
+    /// Merge the save folder's images into the strip, once per session. The
+    /// desktop scans `std::fs`; the web build has no folder to scan, so it only
+    /// ever shows this session's captures.
+    fn scan_recent_folder(&mut self) {
+        if self.film_scanned {
+            return;
+        }
+        self.film_scanned = true;
+        #[cfg(feature = "native")]
+        {
+            let dir = self.save_dir();
+            for entry in snagcraft_io::recent::scan_recent(&dir, snagcraft_io::recent::RECENT_LIMIT)
+            {
+                if self.recent.len() >= snagcraft_io::recent::RECENT_LIMIT {
+                    break;
+                }
+                if self.recent.iter().any(|item| item.path == entry.path) {
+                    continue;
+                }
+                self.recent.push(RecentItem {
+                    path: entry.path,
+                    name: entry.name,
+                    thumb: None,
+                });
+            }
+        }
+    }
+
+    /// Ctrl+S: flatten into the save folder under the filename pattern.
+    pub fn save_now(&mut self) {
+        let mut params = serde_json::json!({});
+        if let Some(watermark) = self.watermark_value() {
+            params["watermark"] = watermark;
+        }
+        match self.exec("doc.save", params) {
+            Ok(value) => {
+                let saved = value["saved"].as_str().unwrap_or_default().to_string();
+                self.status = format!("Saved {saved}");
+                self.doc_dirty = false;
+                self.redraw = true;
+                if !saved.is_empty() {
+                    self.push_recent(PathBuf::from(saved));
+                }
+            }
+            Err(err) => self.status = format!("Save failed: {err}"),
+        }
+    }
+
+    /// Save As… (Ctrl+Shift+S / File → Save As…): flatten to a chosen path.
+    #[cfg(feature = "native")]
+    pub fn save_as_dialog(&mut self) -> bool {
+        let format = self.settings.default_format.clone();
+        let (image_format, filter, exts): (snagcraft_io::ImageFormat, &str, Vec<&str>) =
+            match format.as_str() {
+                "jpeg" => (snagcraft_io::ImageFormat::Jpeg, "JPEG", vec!["jpeg", "jpg"]),
+                "webp" => (snagcraft_io::ImageFormat::WebP, "WebP", vec!["webp"]),
+                _ => (snagcraft_io::ImageFormat::Png, "PNG", vec!["png"]),
+            };
+        let suggested =
+            snagcraft_io::files::build_filename_now(&self.settings.filename_pattern, image_format);
+        let dir = self.ensure_save_dir();
+        let Some(path) = rfd::FileDialog::new()
+            .set_directory(&dir)
+            .set_file_name(&suggested)
+            .add_filter(filter, &exts)
+            .save_file()
+        else {
+            return false;
+        };
+        self.save_as_to(path)
+    }
+
+    /// Headless seam for Save As…: the dialog (or a test) hands over the path,
+    /// this runs `doc.save_as` and reports `Saved <path>`.
+    pub fn save_as_to(&mut self, path: PathBuf) -> bool {
+        let format = self.settings.default_format.clone();
+        let quality = self.settings.default_quality;
+        let mut params = serde_json::json!({
+            "path": path.to_string_lossy(),
+            "format": format,
+            "quality": quality,
+        });
+        if let Some(watermark) = self.watermark_value() {
+            params["watermark"] = watermark;
+        }
+        match self.exec("doc.save_as", params) {
+            Ok(_) => {
+                self.status = format!("Saved {}", path.display());
+                self.doc_dirty = false;
+                self.redraw = true;
+                self.push_recent(path);
+                true
+            }
+            Err(err) => {
+                self.status = format!("Save As failed: {err}");
+                false
+            }
+        }
+    }
+
+    /// Web fallback: the browser cannot pick a filesystem path — Export
+    /// downloads the same flattened image instead.
+    #[cfg(not(feature = "native"))]
+    pub fn save_as_dialog(&mut self) -> bool {
+        self.status = "Save As is desktop-only — use Export to download a PNG.".into();
+        false
     }
 
     // ---- recording ---------------------------------------------------------
@@ -1983,8 +2139,12 @@ impl SnagCraftApp {
             return None;
         }
         let dir = self.ensure_save_dir();
-        let stem = format!("snagcraft-{}", epoch_secs());
-        let path = dedup_path(&dir, &stem, "png");
+        let name = snagcraft_io::files::build_filename_now(
+            &self.settings.filename_pattern,
+            snagcraft_io::ImageFormat::Png,
+        );
+        let stem = name.strip_suffix(".png").unwrap_or(&name);
+        let path = dedup_path(&dir, stem, "png");
         match image::save_buffer(
             &path,
             surface.as_raw(),
@@ -2377,6 +2537,8 @@ pub fn widget_viewport_id() -> ViewportId {
 struct SettingsActions {
     changed: bool,
     pick_dir: bool,
+    /// Put the save folder back to the OS default (`None`).
+    reset_dir: bool,
     rebind: bool,
     open_upload: bool,
 }
@@ -2807,6 +2969,10 @@ impl SnagCraftApp {
                 acts.changed = false;
             }
         }
+        if acts.reset_dir {
+            next.save_dir = None;
+            acts.changed = true;
+        }
         if acts.changed {
             // Login autostart is a real desktop entry, not just a flag: apply
             // it first and roll the checkbox back if the write failed.
@@ -3112,10 +3278,11 @@ fn settings_ui(ui: &mut egui::Ui, next: &mut SettingsView, acts: &mut SettingsAc
     section(ui, "Save location");
     ui.horizontal(|ui| {
         ui.label("Folder");
-        let shown = next
-            .save_dir
-            .clone()
-            .unwrap_or_else(|| "Pictures/SnagCraft".into());
+        let shown = next.save_dir.clone().unwrap_or_else(|| {
+            snagcraft_io::files::default_save_dir()
+                .display()
+                .to_string()
+        });
         ui.add(
             egui::Label::new(egui::RichText::new(shown).size(11.5).monospace())
                 .truncate()
@@ -3125,7 +3292,18 @@ fn settings_ui(ui: &mut egui::Ui, next: &mut SettingsView, acts: &mut SettingsAc
         if ui.button("Choose…").clicked() {
             acts.pick_dir = true;
         }
+        if next.save_dir.is_some() && ui.button("Reset to default").clicked() {
+            acts.reset_dir = true;
+        }
     });
+    ui.label(
+        egui::RichText::new(format!(
+            "Default: {}",
+            snagcraft_io::files::default_save_dir().display()
+        ))
+        .weak()
+        .size(10.5),
+    );
     ui.horizontal(|ui| {
         ui.label("File name");
         acts.changed |= ui
@@ -4193,6 +4371,15 @@ fn handle_keys(ctx: &egui::Context, app: &mut SnagCraftApp) {
         if i.consume_key(Modifiers::CTRL, Key::Comma) {
             app.settings_open = true;
         }
+        // Ctrl+S saves a flattened capture into the save folder, Ctrl+Shift+S is
+        // Save As… — the live toolbar's two buttons on the keyboard.
+        if i.consume_key(Modifiers::CTRL, Key::S) {
+            if i.modifiers.shift {
+                app.save_as_dialog();
+            } else {
+                app.save_now();
+            }
+        }
         // Ctrl+. ends a running interval capture (timelapse) — the keyboard
         // twin of the Stop button, matching the live app (app.ts:5181-5188).
         // Only while a timelapse is running, so the key stays free otherwise.
@@ -4410,6 +4597,23 @@ fn media_hud(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
 fn file_menu(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
     ui.menu_button("File", |ui| {
         ui.set_min_width(250.0);
+        if ui
+            .button("Save")
+            .on_hover_text("Save a flattened copy into your save folder (Ctrl+S)")
+            .clicked()
+        {
+            app.save_now();
+            ui.close();
+        }
+        if ui
+            .button("Save As…")
+            .on_hover_text("Choose name and folder (Ctrl+Shift+S)")
+            .clicked()
+        {
+            app.save_as_dialog();
+            ui.close();
+        }
+        ui.separator();
         if ui
             .button("Upload…")
             .on_hover_text("POST the image to your endpoint and copy the link")
@@ -4689,6 +4893,125 @@ fn region_picker(ui: &mut egui::Ui, app: &mut SnagCraftApp) -> bool {
 
 // ------------------------------------------------------------------- the shell
 
+/// Filename shortened for a tile label.
+fn short_name(name: &str, max_chars: usize) -> String {
+    let chars: Vec<char> = name.chars().collect();
+    if chars.len() <= max_chars {
+        return name.to_string();
+    }
+    let kept: String = chars[..max_chars].iter().collect();
+    format!("{kept}…")
+}
+
+/// Decode `path` into a thumbnail texture (desktop). The web build has no file
+/// handle to re-read, so its tiles keep the placeholder glyph.
+fn load_thumb(
+    ctx: &egui::Context,
+    path: &std::path::Path,
+    name: &str,
+) -> Option<egui::TextureHandle> {
+    #[cfg(feature = "native")]
+    {
+        let img = snagcraft_io::recent::thumbnail(path, 64)?;
+        let color = egui::ColorImage::from_rgba_unmultiplied(
+            [img.width() as usize, img.height() as usize],
+            img.as_raw(),
+        );
+        Some(ctx.load_texture(
+            format!("recent-{name}"),
+            color,
+            egui::TextureOptions::LINEAR,
+        ))
+    }
+    #[cfg(not(feature = "native"))]
+    {
+        let _ = (ctx, path, name);
+        None
+    }
+}
+
+/// The Recents footer (`app.ts:924-933`): title + count, Hide, and a horizontal
+/// track of thumbnails. Clicking a tile loads it back through `doc.open`.
+fn filmstrip(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
+    if !app.film_open {
+        return;
+    }
+    let ctx = ui.ctx().clone();
+    egui::Panel::bottom("filmstrip")
+        .frame(
+            egui::Frame::new()
+                .fill(pal_surface(ui))
+                .inner_margin(egui::Margin::symmetric(8, 4))
+                .stroke(Stroke::new(1.0, pal_border(ui))),
+        )
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("Recent").strong().size(11.0));
+                ui.label(
+                    egui::RichText::new(app.recent.len().to_string())
+                        .color(pal_muted(ui))
+                        .size(11.0),
+                );
+                if ui
+                    .small_button("Hide")
+                    .on_hover_text("Hide recent captures")
+                    .clicked()
+                {
+                    app.film_open = false;
+                }
+            });
+            if app.recent.is_empty() {
+                ui.label(
+                    egui::RichText::new(
+                        "Captures from this session land here — click one to load it back.",
+                    )
+                    .weak()
+                    .size(10.5),
+                );
+                return;
+            }
+            let mut to_open: Option<PathBuf> = None;
+            egui::ScrollArea::horizontal()
+                .id_salt("film-track")
+                .max_height(72.0)
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        for index in 0..app.recent.len() {
+                            if app.recent[index].thumb.is_none() {
+                                let path = app.recent[index].path.clone();
+                                let name = app.recent[index].name.clone();
+                                app.recent[index].thumb = load_thumb(&ctx, &path, &name);
+                            }
+                            let label = short_name(&app.recent[index].name, 16);
+                            let tile = match &app.recent[index].thumb {
+                                Some(texture) => egui::Button::image_and_text(
+                                    egui::Image::from_texture((
+                                        texture.id(),
+                                        egui::vec2(64.0, 40.0),
+                                    )),
+                                    egui::RichText::new(label).size(9.0),
+                                ),
+                                None => egui::Button::new(
+                                    egui::RichText::new(format!("▶ {label}")).size(10.0),
+                                ),
+                            };
+                            let shown = app.recent[index].path.display().to_string();
+                            if ui.add(tile).on_hover_text(shown).clicked() {
+                                to_open = Some(app.recent[index].path.clone());
+                            }
+                        }
+                    });
+                });
+            if let Some(path) = to_open {
+                app.dispatch(
+                    "doc.open",
+                    serde_json::json!({"path": path.to_string_lossy()}),
+                );
+                app.status = format!("Opened {}", path.display());
+            }
+        });
+}
+
 /// The whole shell in one fn — shared by eframe and headless kittest.
 pub fn app_ui(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
     let ctx = ui.ctx().clone();
@@ -4699,6 +5022,7 @@ pub fn app_ui(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
     app.poll_dropped(&ctx);
     app.poll_capture();
     app.poll_media();
+    app.scan_recent_folder();
     if app.recording()
         || app.scroll.armed
         || app.scroll.active
@@ -4766,6 +5090,17 @@ pub fn app_ui(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
                     if ui.button("Open").on_hover_text("Open an image").clicked() {
                         app.open_dialog();
                     }
+                    let recent_chip = egui::Button::new(
+                        egui::RichText::new(format!("Recent ({})", app.recent_count())).size(11.0),
+                    )
+                    .selected(app.film_open);
+                    if ui
+                        .add(recent_chip)
+                        .on_hover_text("Show or hide recent captures")
+                        .clicked()
+                    {
+                        app.film_open = !app.film_open;
+                    }
                     #[cfg(feature = "native")]
                     file_menu(ui, app);
                     #[cfg(feature = "native")]
@@ -4819,6 +5154,8 @@ pub fn app_ui(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
                 .id_salt("props-scroll")
                 .show(ui, |ui| rail(ui, app));
         });
+
+    filmstrip(ui, app);
 
     egui::Panel::bottom("status")
         .frame(

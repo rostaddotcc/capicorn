@@ -99,6 +99,15 @@ verified, WASM web app browser-verified (status log, W5 wake #50).
   copyable blob; the live Tauri app has such a button, the rebuild does not.
 - **Where logged:** status wake #32.
 
+### W9 save & recent UX (2026-11-17) — CLOSED
+
+Filename token expansion ({date}/{time}/{datetime}), Save As (Ctrl+Shift+S,
+doc.save_as), default save dir (HOME/Pictures/SnagCraft + Change/Reset), and
+the Recent strip (newest-first cap 12, in-session + folder scan, click-to-open,
+toggle chip + count + Hide). Recording thumbnails use a film-icon placeholder
+(real video first-frame thumb deferred). Still pending: separate recording
+folder, New-canvas presets, Resize dialog, settings filename live-preview.
+
 ### B4 — The nine reverted parity rows
 
 > **W8 update (2026-11-17): rows 4–9 CLOSED** — Ctrl+. stops a running

@@ -16,7 +16,7 @@ Baseline: Tauri v1.5.2 (commit d25adb1). Rebuild workspace: `rust/` (not yet cre
 | W6 | packaging, docs, suite dossier | complete (bbd2683 + docs); all waves W0–W6 BUILT |
 | W7 | parity backlog (gaps B4#1–3) | complete — timelapse.assemble + OCR lang picker + busy modal (390 tests, ffprobe-verified) |
 | W8 | parity backlog (gaps B4#4–9) | complete — upload POST flow + Ctrl+. (timelapse) + countdown HUD; all 9 B4 rows closed |
-| W9 | parity long-tail (save & recent UX) | in progress — filename tokens + Save As + default dir + Recent strip dispatched |
+| W9 | parity long-tail (save & recent UX) | complete — filename tokens + Save As + default dir + Recent strip (451 tests) |
 
 ## Parity checklist
 
@@ -547,6 +547,25 @@ Baseline: Tauri v1.5.2 (commit d25adb1). Rebuild workspace: `rust/` (not yet cre
 - B4 backlog fully closed. Remaining parity pending rows are other features
   (recent rail, W2 residuals etc.) + rostad gates (KDE pass/trim/relicense/
   cutover). NO releases published.
+
+### 2026-11-17 — wake #84: W9 COMPLETE (save & recent UX)
+- W9 done: io build_filename ({date}/{time}/{datetime} via chrono, fs-safe) +
+  default_save_dir (HOME/Pictures/SnagCraft) + scan_recent (newest-first cap
+  12); engine doc.save uses pattern + doc.save_as (registry 43→44); ui-egui
+  Save As (Ctrl+Shift+S + File menu), settings save-location Change/Reset,
+  Recent filmstrip (toggle chip + count + Hide, in-session + folder scan,
+  click-to-open). Recording thumb = film-icon placeholder.
+- Child ran way over budget (140 calls, 15min, never reported despite 2
+  wrap-up steers) → PARENT STOPPED it + integrated directly from on-disk
+  artifacts. Parent bumped automation drift-guard 43→44 (verified 13/13).
+- Parent-verified: workspace 451 passed / 0 failed / 5 ignored, clippy/fmt/
+  layers/wasm (10 web crates) clean. Recent strip snapshot reviewed: chip
+  "Recent (3)" + filmstrip 3 labeled thumbs + Hide, counts agree, clean.
+  (Pre-existing narrow-width "Sha…" toolbar overflow noted, not W9.)
+- Parity 5 rows W9 (Save As, filename pattern, default dir, Recent strip,
+  recording-thumb placeholder); README 44; gaps W9 note. Still pending:
+  separate recording folder, New-canvas presets, Resize dialog, settings
+  filename live-preview + other long-tail + rostad gates.
 
 ## Appendix — measured reality
 

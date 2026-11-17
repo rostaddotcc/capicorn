@@ -14,10 +14,13 @@
 //! W3b: shell parity — settings panel (persisted through the app's io hook),
 //! light/dark themes, dirty-tracking close guard, tray/hotkey/single-instance
 //! plumbing and the transparent floating widget viewport.
+//! W4d: the live layer — recording (widget Rec + HUD, region/format/audio),
+//! scrolling capture, OCR result window, timelapse dialog, watermark export
+//! and autosave-on-capture. Everything is an engine command dispatch.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::time::Duration;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use egui::{
     Align, Align2, Color32, CornerRadius, FontId, Key, Layout, Modifiers, Pos2, Rect, Response,
@@ -123,6 +126,14 @@ pub struct SettingsView {
     pub filename_pattern: String,
     pub hotkey_full: String,
     pub hotkey_region: String,
+    /// Export watermark text (empty = no watermark).
+    pub watermark_text: String,
+    /// Watermark ink opacity in percent (2..=100).
+    pub watermark_opacity: u8,
+    /// `bottom-right` | `bottom-left` | `top-right` | `top-left`.
+    pub watermark_corner: String,
+    /// Share/upload page opened by `upload.open` (empty = feature off).
+    pub upload_url: String,
 }
 
 impl Default for SettingsView {
@@ -140,6 +151,10 @@ impl Default for SettingsView {
             filename_pattern: "SnagCraft-{date}-{time}".to_string(),
             hotkey_full: "Print".to_string(),
             hotkey_region: "SHIFT+Print".to_string(),
+            watermark_text: String::new(),
+            watermark_opacity: WATERMARK_OPACITY_DEFAULT,
+            watermark_corner: "bottom-right".to_string(),
+            upload_url: String::new(),
         }
     }
 }
@@ -181,6 +196,21 @@ impl SettingsView {
             filename_pattern: s("filename_pattern", &d.filename_pattern),
             hotkey_full: s("hotkey_full", &d.hotkey_full),
             hotkey_region: s("hotkey_region", &d.hotkey_region),
+            watermark_text: s("watermark_text", &d.watermark_text),
+            watermark_opacity: v.get("watermark_opacity").and_then(|x| x.as_u64()).map_or(
+                d.watermark_opacity,
+                |o| {
+                    o.clamp(
+                        u64::from(WATERMARK_OPACITY_MIN),
+                        u64::from(WATERMARK_OPACITY_MAX),
+                    ) as u8
+                },
+            ),
+            watermark_corner: match v.get("watermark_corner").and_then(|x| x.as_str()) {
+                Some(c) if WATERMARK_CORNERS.contains(&c) => c.to_string(),
+                _ => d.watermark_corner,
+            },
+            upload_url: s("upload_url", &d.upload_url),
         }
     }
 
@@ -198,6 +228,11 @@ impl SettingsView {
             "filename_pattern": self.filename_pattern,
             "hotkey_full": self.hotkey_full,
             "hotkey_region": self.hotkey_region,
+            // Engine-owned (io::settings), exact key names.
+            "watermark_text": self.watermark_text,
+            "watermark_opacity": self.watermark_opacity,
+            "watermark_corner": self.watermark_corner,
+            "upload_url": self.upload_url,
         })
     }
 }
@@ -271,6 +306,23 @@ const CALLOUT_MIN_W: f32 = 140.0;
 const CALLOUT_MIN_H: f32 = 72.0;
 /// Freehand sample cap (`tools.ts:1790`).
 const BRUSH_MAX_POINTS: usize = 1200;
+
+/// Watermark ink opacity clamp (percent) — exports below 2% are invisible.
+pub const WATERMARK_OPACITY_MIN: u8 = 2;
+pub const WATERMARK_OPACITY_MAX: u8 = 100;
+pub const WATERMARK_OPACITY_DEFAULT: u8 = 45;
+/// Watermark size in image pixels (the engine default is 24).
+pub const WATERMARK_SIZE: f32 = 24.0;
+/// Corner ids `doc.export` accepts, in menu order.
+pub const WATERMARK_CORNERS: [&str; 4] = ["bottom-right", "bottom-left", "top-right", "top-left"];
+/// Timelapse frame period clamp (seconds) and its default.
+pub const TIMELAPSE_PERIOD_MIN: u32 = 1;
+pub const TIMELAPSE_PERIOD_MAX: u32 = 300;
+pub const TIMELAPSE_PERIOD_DEFAULT: u32 = 30;
+/// Hard cap on the optional frame count so a corrupt value cannot run forever.
+pub const TIMELAPSE_COUNT_MAX: u32 = 100_000;
+/// Upload page used by `upload.open` when the user has not set one.
+pub const UPLOAD_URL_DEFAULT: &str = "https://snagcraft.example/upload";
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Tool {
@@ -446,6 +498,120 @@ impl SelfTest {
     }
 }
 
+/// What a region drag is being collected for (`record.start` / `scroll.start`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum PickPurpose {
+    Record,
+    Scroll,
+}
+
+impl PickPurpose {
+    fn verb(self) -> &'static str {
+        match self {
+            Self::Record => "record",
+            Self::Scroll => "scrolling capture",
+        }
+    }
+}
+
+/// Frozen-screen region picker: the portal screenshot at 1:1, dragged like the
+/// crop frame. Screen pixels == image pixels (`interactive(false)` grabs the
+/// whole screen), so the chosen rect is a `region` the engine can use directly.
+pub struct RegionPick {
+    pub purpose: PickPurpose,
+    surface: Option<Surface>,
+    tex: Option<egui::TextureHandle>,
+    pub rect: Option<GRect>,
+}
+
+impl RegionPick {
+    fn new(purpose: PickPurpose) -> Self {
+        Self {
+            purpose,
+            surface: None,
+            tex: None,
+            rect: None,
+        }
+    }
+}
+
+/// Live recording (engine `record.*` mirror + the picker's options).
+#[derive(Debug)]
+pub struct RecordState {
+    /// `record.start` dispatched, no terminal event yet.
+    pub armed: bool,
+    /// Engine says frames are rolling.
+    pub active: bool,
+    pub paused: bool,
+    /// Set when the `started` event arrives — the HUD's elapsed clock.
+    pub started_at: Option<Instant>,
+    pub format: String,
+    /// PulseAudio/PipeWire source id; `None` records silently.
+    pub audio: Option<String>,
+    /// (id, name) from `audio.sources`, loaded lazily.
+    pub sources: Vec<(String, String)>,
+    /// `audio.sources` was queried (an empty list is a valid answer).
+    pub sources_loaded: bool,
+    pub output: Option<String>,
+}
+
+impl Default for RecordState {
+    fn default() -> Self {
+        Self {
+            armed: false,
+            active: false,
+            paused: false,
+            started_at: None,
+            format: "mp4".to_string(),
+            audio: None,
+            sources: Vec::new(),
+            sources_loaded: false,
+            output: None,
+        }
+    }
+}
+
+/// Scrolling capture (engine `scroll.*` mirror).
+#[derive(Default, Debug)]
+pub struct ScrollState {
+    pub armed: bool,
+    pub active: bool,
+    pub index: u32,
+    pub total_height: u32,
+    pub output: Option<String>,
+}
+
+/// Timelapse (engine `timelapse.*` mirror + the start dialog's values).
+#[derive(Debug)]
+pub struct TimelapseState {
+    pub armed: bool,
+    pub running: bool,
+    pub frames: u32,
+    pub period_secs: u32,
+    pub limit: Option<u32>,
+    pub dialog_open: bool,
+}
+
+impl Default for TimelapseState {
+    fn default() -> Self {
+        Self {
+            armed: false,
+            running: false,
+            frames: 0,
+            period_secs: TIMELAPSE_PERIOD_DEFAULT,
+            limit: None,
+            dialog_open: false,
+        }
+    }
+}
+
+/// OCR result window.
+#[derive(Default)]
+pub struct OcrState {
+    pub open: bool,
+    pub text: String,
+}
+
 pub struct SnagCraftApp {
     pub session: Session,
     pub tool: Tool,
@@ -506,6 +672,15 @@ pub struct SnagCraftApp {
     editing: Option<TextEdit>,
     pub selected: Option<u64>,
     capture_rx: Option<mpsc::Receiver<Result<Surface, String>>>,
+    /// W4d live layer.
+    pub rec: RecordState,
+    pub scroll: ScrollState,
+    pub timelapse: TimelapseState,
+    pub ocr: OcrState,
+    /// `ocr.available` cached: it probes for the tesseract binary.
+    pub ocr_available: Option<bool>,
+    pick: Option<RegionPick>,
+    pick_rx: Option<mpsc::Receiver<Result<Surface, String>>>,
 }
 
 impl SnagCraftApp {
@@ -565,6 +740,13 @@ impl SnagCraftApp {
             editing: None,
             selected: None,
             capture_rx: None,
+            rec: RecordState::default(),
+            scroll: ScrollState::default(),
+            timelapse: TimelapseState::default(),
+            ocr: OcrState::default(),
+            ocr_available: None,
+            pick: None,
+            pick_rx: None,
         }
     }
 
@@ -713,13 +895,22 @@ impl SnagCraftApp {
         match rx.try_recv() {
             Ok(Ok(surface)) => {
                 let (w, h) = (surface.width(), surface.height());
-                self.session.load_surface(surface);
                 self.capture_rx = None;
+                // Autosave a copy first: the document below is a separate
+                // in-memory surface, so this never touches the original file.
+                let autosaved = self.autosave_capture(&surface);
+                self.session.load_surface(surface);
                 self.redraw = true;
                 // A fresh capture starts a clean document.
                 self.doc_dirty = false;
                 self.selected = None;
-                self.status = format!("Captured {w}×{h} — annotate away.");
+                self.status = match autosaved {
+                    Some(path) => format!(
+                        "Captured {w}×{h} — auto-saved to {} — annotate away.",
+                        path.display()
+                    ),
+                    None => format!("Captured {w}×{h} — annotate away."),
+                };
             }
             Ok(Err(e)) => {
                 self.capture_rx = None;
@@ -1006,15 +1197,764 @@ impl SnagCraftApp {
             dialog = dialog.set_directory(dir);
         }
         if let Some(path) = dialog.save_file() {
-            self.dispatch(
-                "doc.export",
-                serde_json::json!({"path": path.to_string_lossy(),
-                    "format": format, "quality": quality}),
-            );
+            let mut params = serde_json::json!({"path": path.to_string_lossy(),
+                "format": format, "quality": quality});
+            if let Some(watermark) = self.watermark_value() {
+                params["watermark"] = watermark;
+            }
+            self.dispatch("doc.export", params);
             self.status = format!("Exported {}", path.display());
             return true;
         }
         false
+    }
+
+    /// `doc.export`'s watermark block, or `None` when the text is blank.
+    pub fn watermark_value(&self) -> Option<serde_json::Value> {
+        let text = self.settings.watermark_text.trim();
+        if text.is_empty() {
+            return None;
+        }
+        let opacity = f64::from(
+            self.settings
+                .watermark_opacity
+                .clamp(WATERMARK_OPACITY_MIN, WATERMARK_OPACITY_MAX),
+        ) / 100.0;
+        Some(serde_json::json!({
+            "text": text,
+            "opacity": opacity,
+            "corner": self.settings.watermark_corner,
+            "size": WATERMARK_SIZE,
+        }))
+    }
+}
+
+// ------------------------------------------------------- W4d: the live layer
+
+/// Seconds since the Unix epoch — file-name stamps only, no calendar math.
+fn epoch_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// First free `<dir>/<stem>.<ext>`, then `-2`, `-3`, … Never returns an
+/// existing path, so an autosave can never overwrite an older capture.
+pub fn dedup_path(dir: &Path, stem: &str, ext: &str) -> PathBuf {
+    let first = dir.join(format!("{stem}.{ext}"));
+    if !first.exists() {
+        return first;
+    }
+    for n in 2..=9_999u32 {
+        let candidate = dir.join(format!("{stem}-{n}.{ext}"));
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+    // Absurdly crowded folder: fall back to a stamp that cannot collide with
+    // the numbered series (still existence-checked by the caller's write).
+    dir.join(format!("{stem}-{}.{ext}", epoch_secs()))
+}
+
+/// `mm:ss` (or `h:mm:ss` past an hour) for the recording HUD.
+pub fn clock_label(secs: u64) -> String {
+    let (h, m, s) = (secs / 3_600, (secs % 3_600) / 60, secs % 60);
+    if h > 0 {
+        format!("{h}:{m:02}:{s:02}")
+    } else {
+        format!("{m:02}:{s:02}")
+    }
+}
+
+impl SnagCraftApp {
+    /// The capture/recording output folder: `settings.save_dir`, else
+    /// `$HOME/Pictures/SnagCraft`.
+    pub fn save_dir(&self) -> PathBuf {
+        if let Some(dir) = self
+            .settings
+            .save_dir
+            .as_ref()
+            .filter(|d| !d.trim().is_empty())
+        {
+            return PathBuf::from(dir);
+        }
+        std::env::var_os("HOME")
+            .map(|home| PathBuf::from(home).join("Pictures").join("SnagCraft"))
+            .unwrap_or_else(|| PathBuf::from("SnagCraft"))
+    }
+
+    /// [`Self::save_dir`], created on demand (failure is reported, not fatal).
+    fn ensure_save_dir(&mut self) -> PathBuf {
+        let dir = self.save_dir();
+        if let Err(err) = std::fs::create_dir_all(&dir) {
+            self.status = format!("Cannot create {}: {err}", dir.display());
+        }
+        dir
+    }
+
+    // ---- recording ---------------------------------------------------------
+
+    /// True while a take is starting or rolling (the widget's stop square).
+    pub fn recording(&self) -> bool {
+        self.rec.armed || self.rec.active
+    }
+
+    /// `record.start` — whole screen, or the region the picker collected.
+    pub fn start_recording(&mut self, region: Option<GRect>) {
+        if self.recording() {
+            return;
+        }
+        let dir = self.ensure_save_dir();
+        let ext = if self.rec.format == "gif" {
+            "gif"
+        } else {
+            "mp4"
+        };
+        let path = dir.join(format!("snagcraft-rec-{}.{ext}", epoch_secs()));
+        let mut params = serde_json::json!({
+            "format": ext,
+            "output": path.to_string_lossy(),
+        });
+        if let Some(source) = self.rec.audio.clone() {
+            params["audio_source"] = serde_json::json!(source);
+        }
+        if let Some(rect) = region {
+            params["region"] = rect_json(rect);
+        }
+        match self.session.dispatch("record.start", params) {
+            Ok(_) => {
+                self.rec.armed = true;
+                self.rec.active = false;
+                self.rec.paused = false;
+                self.rec.started_at = None;
+                self.rec.output = Some(path.display().to_string());
+                self.status = format!("Recording to {}…", path.display());
+                self.redraw = true;
+            }
+            Err(err) => self.status = format!("Record: {err}"),
+        }
+    }
+
+    /// `record.stop` — the encoder finalises and reports `stopped`.
+    pub fn stop_recording(&mut self) {
+        match self.session.dispatch("record.stop", serde_json::json!({})) {
+            Ok(_) => self.status = "Stopping the recording…".into(),
+            Err(err) => self.status = format!("Record stop: {err}"),
+        }
+    }
+
+    /// `audio.sources` for the picker (once per session — enumerating devices
+    /// spawns pactl, so it is not a per-frame call).
+    pub fn refresh_audio_sources(&mut self) {
+        if let Ok(v) = self
+            .session
+            .dispatch("audio.sources", serde_json::json!({}))
+        {
+            self.rec.sources = v["sources"]
+                .as_array()
+                .map(|list| {
+                    list.iter()
+                        .filter_map(|s| {
+                            Some((
+                                s["id"].as_str()?.to_string(),
+                                s["name"].as_str()?.to_string(),
+                            ))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+        }
+        self.rec.sources_loaded = true;
+    }
+
+    /// Pause/resume toggle (HUD + widget).
+    pub fn toggle_record_pause(&mut self) {
+        let cmd = if self.rec.paused {
+            "record.resume"
+        } else {
+            "record.pause"
+        };
+        match self.session.dispatch(cmd, serde_json::json!({})) {
+            Ok(_) => {}
+            Err(err) => self.status = format!("Record pause: {err}"),
+        }
+    }
+
+    /// Clear the "a take is in flight" flags, keeping the chosen options.
+    fn end_recording(&mut self) {
+        self.rec.armed = false;
+        self.rec.active = false;
+        self.rec.paused = false;
+        self.rec.started_at = None;
+    }
+
+    /// Elapsed time of the running take (from the `started` event).
+    pub fn record_elapsed(&self) -> Duration {
+        self.rec
+            .started_at
+            .map_or(Duration::ZERO, |start| start.elapsed())
+    }
+
+    /// HUD clock: `00:12`.
+    pub fn record_clock(&self) -> String {
+        clock_label(self.record_elapsed().as_secs())
+    }
+
+    // ---- region picker (record / scrolling capture) -------------------------
+
+    /// Freeze the screen and let the user drag a rect — same idiom as the crop
+    /// frame, but the pixels are screen pixels, which is what the engine wants.
+    pub fn start_region_pick(&mut self, purpose: PickPurpose) {
+        if self.pick.is_some() || self.pick_rx.is_some() || self.capture_rx.is_some() {
+            return;
+        }
+        self.pick = Some(RegionPick::new(purpose));
+        let (tx, rx) = mpsc::channel();
+        self.pick_rx = Some(rx);
+        self.status = format!("Capturing the screen for the {} region…", purpose.verb());
+        std::thread::spawn(move || {
+            let _ = tx.send(snagcraft_capture::capture_full_blocking().map_err(|e| e.to_string()));
+        });
+    }
+
+    /// Test/seed hook: start a picker with the screen image already in hand.
+    pub fn seed_region_pick(&mut self, purpose: PickPurpose, surface: Surface) {
+        let mut pick = RegionPick::new(purpose);
+        pick.surface = Some(surface);
+        self.pick = Some(pick);
+        self.pick_rx = None;
+    }
+
+    /// The purpose of the picker that is currently up, if any.
+    pub fn region_pick(&self) -> Option<PickPurpose> {
+        self.pick.as_ref().map(|p| p.purpose)
+    }
+
+    fn poll_pick(&mut self) {
+        let Some(rx) = &self.pick_rx else {
+            return;
+        };
+        match rx.try_recv() {
+            Ok(Ok(surface)) => {
+                self.pick_rx = None;
+                if let Some(pick) = &mut self.pick {
+                    pick.surface = Some(surface);
+                }
+                self.status = "Drag a rectangle over the frozen screen, then press Enter.".into();
+            }
+            Ok(Err(err)) => {
+                self.pick_rx = None;
+                self.pick = None;
+                self.status = format!("Region pick failed: {err}");
+            }
+            Err(mpsc::TryRecvError::Empty) => {}
+            Err(mpsc::TryRecvError::Disconnected) => {
+                self.pick_rx = None;
+                self.pick = None;
+                self.status = "Region capture thread ended unexpectedly.".into();
+            }
+        }
+    }
+
+    /// Enter on the picker: hand the rect to the engine. A too-small frame
+    /// keeps the picker up so the user can simply drag again.
+    pub fn confirm_region_pick(&mut self) {
+        let Some(rect) = self.pick.as_ref().and_then(|pick| pick.rect) else {
+            self.status = "Drag a rectangle first, then press Enter.".into();
+            return;
+        };
+        if rect.w < 8.0 || rect.h < 8.0 {
+            self.status = "That region is too small — drag a bigger one.".into();
+            return;
+        }
+        let Some(pick) = self.pick.take() else {
+            return;
+        };
+        self.pick_rx = None;
+        match pick.purpose {
+            PickPurpose::Record => self.start_recording(Some(rect)),
+            PickPurpose::Scroll => self.start_scrolling(rect),
+        }
+    }
+
+    pub fn cancel_region_pick(&mut self) {
+        if self.pick.take().is_some() {
+            self.pick_rx = None;
+            self.status = "Region pick cancelled.".into();
+        }
+    }
+
+    // ---- scrolling capture --------------------------------------------------
+
+    /// `scroll.start` for the picked rect; the HUD guides the user to scroll.
+    pub fn start_scrolling(&mut self, region: GRect) {
+        if self.scroll.armed {
+            return;
+        }
+        let dir = self.ensure_save_dir();
+        let path = dir.join(format!("snagcraft-scroll-{}.png", epoch_secs()));
+        let params = serde_json::json!({
+            "region": rect_json(region),
+            "output": path.to_string_lossy(),
+        });
+        match self.session.dispatch("scroll.start", params) {
+            Ok(_) => {
+                self.scroll = ScrollState {
+                    armed: true,
+                    active: false,
+                    index: 0,
+                    total_height: 0,
+                    output: Some(path.display().to_string()),
+                };
+                self.status = "Scrolling capture — scroll slowly, Enter or Stop ends it.".into();
+                self.redraw = true;
+            }
+            Err(err) => self.status = format!("Scrolling capture: {err}"),
+        }
+    }
+
+    /// Enter / Stop: stitch what was captured and open it in the editor.
+    pub fn stop_scrolling(&mut self) {
+        match self.session.dispatch("scroll.stop", serde_json::json!({})) {
+            Ok(_) => self.status = "Finishing the scrolling capture…".into(),
+            Err(err) => self.status = format!("Scroll stop: {err}"),
+        }
+    }
+
+    // ---- timelapse ----------------------------------------------------------
+
+    /// `timelapse.start` with the dialog's period/count into the save folder.
+    pub fn start_timelapse(&mut self) {
+        if self.timelapse.armed {
+            return;
+        }
+        let dir = self.ensure_save_dir();
+        let period = self
+            .timelapse
+            .period_secs
+            .clamp(TIMELAPSE_PERIOD_MIN, TIMELAPSE_PERIOD_MAX);
+        let mut params = serde_json::json!({
+            "period_secs": period,
+            "dir": dir.to_string_lossy(),
+        });
+        if let Some(count) = self
+            .timelapse
+            .limit
+            .map(|c| c.clamp(1, TIMELAPSE_COUNT_MAX))
+        {
+            params["count"] = serde_json::json!(count);
+        }
+        match self.session.dispatch("timelapse.start", params) {
+            Ok(_) => {
+                self.timelapse.armed = true;
+                self.timelapse.running = true;
+                self.timelapse.frames = 0;
+                self.timelapse.dialog_open = false;
+                self.status = format!("Timelapse every {period}s into {}.", dir.display());
+                self.redraw = true;
+            }
+            Err(err) => self.status = format!("Timelapse: {err}"),
+        }
+    }
+
+    pub fn stop_timelapse(&mut self) {
+        match self
+            .session
+            .dispatch("timelapse.stop", serde_json::json!({}))
+        {
+            Ok(_) => self.status = "Timelapse stopping…".into(),
+            Err(err) => self.status = format!("Timelapse stop: {err}"),
+        }
+    }
+
+    // ---- OCR / upload -------------------------------------------------------
+
+    /// `ocr.run` on the current document, shown in the result window.
+    pub fn run_ocr(&mut self) {
+        match self
+            .session
+            .dispatch("ocr.run", serde_json::json!({"lang": "eng"}))
+        {
+            Ok(v) => {
+                self.ocr.text = v["text"].as_str().unwrap_or_default().to_string();
+                self.ocr.open = true;
+                self.status = format!(
+                    "OCR extracted {} characters.",
+                    self.ocr.text.chars().count()
+                );
+                self.redraw = true;
+            }
+            Err(err) => self.status = format!("OCR: {err}"),
+        }
+    }
+
+    /// Cached `ocr.available` (probing spawns tesseract, so once per session).
+    pub fn ocr_ready(&mut self) -> bool {
+        if let Some(available) = self.ocr_available {
+            return available;
+        }
+        let available = self
+            .session
+            .dispatch("ocr.available", serde_json::json!({}))
+            .ok()
+            .and_then(|v| v["available"].as_bool())
+            .unwrap_or(false);
+        self.ocr_available = Some(available);
+        available
+    }
+
+    /// The configured share page; empty disables the action.
+    pub fn upload_target(&self) -> Option<String> {
+        let url = self.settings.upload_url.trim();
+        (!url.is_empty()).then(|| url.to_string())
+    }
+
+    /// `upload.open` for the configured share page.
+    pub fn open_upload(&mut self) {
+        let Some(url) = self.upload_target() else {
+            self.status =
+                format!("Set an upload URL in Settings — Export (e.g. {UPLOAD_URL_DEFAULT}).");
+            return;
+        };
+        match self
+            .session
+            .dispatch("upload.open", serde_json::json!({"url": url}))
+        {
+            Ok(_) => self.status = format!("Opened {url}"),
+            Err(err) => self.status = format!("Upload page: {err}"),
+        }
+    }
+
+    // ---- autosave -----------------------------------------------------------
+
+    /// W3 gap: a fresh capture is written to the save folder when the setting is
+    /// on. The document keeps its own copy — the file is a *copy*, never a move.
+    fn autosave_capture(&mut self, surface: &Surface) -> Option<PathBuf> {
+        if !self.settings.autosave_captures {
+            return None;
+        }
+        let dir = self.ensure_save_dir();
+        let stem = format!("snagcraft-{}", epoch_secs());
+        let path = dedup_path(&dir, &stem, "png");
+        match image::save_buffer(
+            &path,
+            surface.as_raw(),
+            surface.width(),
+            surface.height(),
+            image::ExtendedColorType::Rgba8,
+        ) {
+            Ok(()) => Some(path),
+            Err(err) => {
+                self.status = format!("Auto-save failed: {err}");
+                None
+            }
+        }
+    }
+
+    // ---- heartbeat ----------------------------------------------------------
+
+    /// Drain the recording/scroll/timelapse channels. Runs from `app_ui` *and*
+    /// `logic` — eframe skips `ui` while the window is hidden, and a recording
+    /// started from the widget must still report its `stopped` event.
+    fn poll_media(&mut self) {
+        self.poll_pick();
+        if self.rec.armed {
+            self.poll_record();
+        }
+        if self.scroll.armed {
+            self.poll_scroll();
+        }
+        if self.timelapse.armed {
+            self.poll_timelapse();
+        }
+    }
+
+    fn poll_record(&mut self) {
+        match self.session.dispatch("record.poll", serde_json::json!({})) {
+            Ok(v) => {
+                let events = v["events"].as_array().cloned().unwrap_or_default();
+                for event in events {
+                    match event["type"].as_str() {
+                        Some("started") => {
+                            self.rec.active = true;
+                            self.rec.armed = true;
+                            self.rec.started_at.get_or_insert_with(Instant::now);
+                            self.status = "Recording — the HUD's Stop ends it.".into();
+                        }
+                        Some("stopped") => {
+                            let path = event["path"].as_str().unwrap_or_default().to_string();
+                            self.end_recording();
+                            self.status = format!("Recording saved: {path}");
+                        }
+                        Some("failed") => {
+                            let msg = event["message"]
+                                .as_str()
+                                .unwrap_or("unknown error")
+                                .to_string();
+                            self.end_recording();
+                            self.status = format!("Recording failed: {msg}");
+                        }
+                        Some("paused") => self.rec.paused = true,
+                        Some("resumed") => self.rec.paused = false,
+                        _ => {}
+                    }
+                }
+                if !v["running"].as_bool().unwrap_or(true) && self.rec.armed {
+                    self.end_recording();
+                }
+            }
+            Err(err) => {
+                self.end_recording();
+                self.status = format!("Record poll: {err}");
+            }
+        }
+        if self.rec.armed
+            && let Ok(v) = self.session.dispatch("record.state", serde_json::json!({}))
+        {
+            if let Some(active) = v["active"].as_bool() {
+                self.rec.active = active;
+            }
+            if let Some(paused) = v["paused"].as_bool() {
+                self.rec.paused = paused;
+            }
+        }
+    }
+
+    fn poll_scroll(&mut self) {
+        match self.session.dispatch("scroll.poll", serde_json::json!({})) {
+            Ok(v) => {
+                let events = v["events"].as_array().cloned().unwrap_or_default();
+                for event in events {
+                    match event["type"].as_str() {
+                        Some("started") => {
+                            self.scroll.active = true;
+                            self.status =
+                                "Scrolling capture — scroll slowly, Enter or Stop ends it.".into();
+                        }
+                        Some("captured") => {
+                            self.scroll.active = true;
+                            self.scroll.index = event["index"].as_u64().unwrap_or(0) as u32;
+                            self.scroll.total_height =
+                                event["total_height"].as_u64().unwrap_or(0) as u32;
+                        }
+                        Some("done") => {
+                            let path = event["path"].as_str().unwrap_or_default().to_string();
+                            self.scroll.armed = false;
+                            self.scroll.active = false;
+                            if path.is_empty() {
+                                self.status = "Scrolling capture finished with no image.".into();
+                            } else {
+                                self.dispatch("doc.open", serde_json::json!({"path": path}));
+                                self.status = format!("Scrolling capture saved: {path}");
+                                self.selected = None;
+                            }
+                        }
+                        Some("failed") => {
+                            let msg = event["message"]
+                                .as_str()
+                                .unwrap_or("unknown error")
+                                .to_string();
+                            self.scroll.armed = false;
+                            self.scroll.active = false;
+                            self.status = format!("Scrolling capture failed: {msg}");
+                        }
+                        Some("stopped") => {
+                            self.scroll.armed = false;
+                            self.scroll.active = false;
+                            self.status = "Scrolling capture stopped.".into();
+                        }
+                        _ => {}
+                    }
+                }
+                if !v["running"].as_bool().unwrap_or(true) && self.scroll.armed {
+                    self.scroll.armed = false;
+                    self.scroll.active = false;
+                }
+            }
+            Err(err) => {
+                self.scroll.armed = false;
+                self.scroll.active = false;
+                self.status = format!("Scroll poll: {err}");
+            }
+        }
+    }
+
+    fn poll_timelapse(&mut self) {
+        match self
+            .session
+            .dispatch("timelapse.poll", serde_json::json!({}))
+        {
+            Ok(v) => {
+                let events = v["events"].as_array().cloned().unwrap_or_default();
+                for event in events {
+                    match event["type"].as_str() {
+                        Some("frame") => {
+                            self.timelapse.running = true;
+                            self.timelapse.frames = self.timelapse.frames.saturating_add(1);
+                        }
+                        Some("done") => {
+                            let frames = event["frames"].as_u64().unwrap_or(0);
+                            self.timelapse.armed = false;
+                            self.timelapse.running = false;
+                            self.timelapse.frames = frames as u32;
+                            self.status = format!("Timelapse finished: {frames} frames.");
+                        }
+                        Some("failed") => {
+                            let msg = event["message"]
+                                .as_str()
+                                .unwrap_or("unknown error")
+                                .to_string();
+                            self.timelapse.armed = false;
+                            self.timelapse.running = false;
+                            self.status = format!("Timelapse failed: {msg}");
+                        }
+                        _ => {}
+                    }
+                }
+                if !v["running"].as_bool().unwrap_or(true) && self.timelapse.armed {
+                    self.timelapse.armed = false;
+                    self.timelapse.running = false;
+                }
+            }
+            Err(err) => {
+                self.timelapse.armed = false;
+                self.timelapse.running = false;
+                self.status = format!("Timelapse poll: {err}");
+            }
+        }
+    }
+
+    // ---- windows ------------------------------------------------------------
+
+    /// OCR result: selectable text plus one-click copy (the document is never
+    /// touched — this is a read of the composite).
+    fn ocr_window(&mut self, ctx: &egui::Context) {
+        if !self.ocr.open {
+            return;
+        }
+        let mut open = true;
+        let mut copy = false;
+        let mut close = false;
+        egui::Window::new("Extracted text")
+            .open(&mut open)
+            .resizable(true)
+            .default_width(440.0)
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new(
+                            "Read from the current image — the document is untouched.",
+                        )
+                        .size(11.0)
+                        .weak(),
+                    );
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "{} characters",
+                                self.ocr.text.chars().count()
+                            ))
+                            .size(11.0)
+                            .color(pal_muted(ui)),
+                        );
+                    });
+                });
+                ui.add_space(4.0);
+                let mut buf = self.ocr.text.clone();
+                ui.add(
+                    egui::TextEdit::multiline(&mut buf)
+                        .desired_rows(12)
+                        .desired_width(f32::INFINITY)
+                        .code_editor(),
+                );
+                ui.horizontal(|ui| {
+                    if ui.button("Copy text").clicked() {
+                        copy = true;
+                    }
+                    if ui.button("Close").clicked() {
+                        close = true;
+                    }
+                });
+            });
+        if copy {
+            ctx.copy_text(self.ocr.text.clone());
+            self.status = "Extracted text copied to the clipboard.".into();
+        }
+        if close || !open {
+            self.ocr.open = false;
+        }
+    }
+
+    /// Timelapse start dialog: period, optional frame limit, target folder.
+    fn timelapse_dialog(&mut self, ctx: &egui::Context) {
+        if !self.timelapse.dialog_open {
+            return;
+        }
+        let dir = self.save_dir();
+        let mut open = true;
+        let mut start = false;
+        let mut cancel = false;
+        egui::Window::new("Timelapse")
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .default_width(340.0)
+            .show(ctx, |ui| {
+                ui.label(
+                    egui::RichText::new("Grab a frame on a timer — good for slow changes.")
+                        .size(11.5)
+                        .weak(),
+                );
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    ui.label("Every");
+                    ui.add(
+                        egui::Slider::new(
+                            &mut self.timelapse.period_secs,
+                            TIMELAPSE_PERIOD_MIN..=TIMELAPSE_PERIOD_MAX,
+                        )
+                        .suffix(" s")
+                        .integer()
+                        .trailing_fill(true),
+                    );
+                });
+                ui.horizontal(|ui| {
+                    let mut limited = self.timelapse.limit.is_some();
+                    if ui.checkbox(&mut limited, "Stop after").changed() {
+                        self.timelapse.limit = limited.then_some(60);
+                    }
+                    if let Some(limit) = self.timelapse.limit.as_mut() {
+                        ui.add(
+                            egui::Slider::new(limit, 1..=TIMELAPSE_COUNT_MAX)
+                                .integer()
+                                .suffix(" frames"),
+                        );
+                    }
+                });
+                ui.add_space(2.0);
+                ui.label(
+                    egui::RichText::new(format!("Folder: {}", dir.display()))
+                        .size(11.0)
+                        .monospace()
+                        .weak(),
+                );
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Start").clicked() {
+                        start = true;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        cancel = true;
+                    }
+                });
+            });
+        if start {
+            self.start_timelapse();
+        }
+        if cancel || !open {
+            self.timelapse.dialog_open = false;
+        }
     }
 }
 
@@ -1029,8 +1969,10 @@ impl Default for SnagCraftApp {
 /// Widget geometry (`windows.rs:205-213`): the outer window, then the folded tab.
 pub const WIDGET_EXPANDED_SIZE: (f32, f32) = (304.0, 60.0);
 pub const WIDGET_FOLDED_SIZE: (f32, f32) = (58.0, 74.0);
-/// Live red dot on the widget (recording itself lands in W4).
+/// Live red dot on the widget.
 const WIDGET_RED: Color32 = Color32::from_rgb(214, 40, 40);
+/// Stop control fill (live widget `#e5484d`).
+const WIDGET_STOP: Color32 = Color32::from_rgb(0xe5, 0x48, 0x4d);
 const WIDGET_BG: Color32 = Color32::from_rgba_premultiplied(26, 29, 35, 242);
 
 /// The floating widget's own viewport (immediate viewport, one per frame).
@@ -1044,6 +1986,7 @@ struct SettingsActions {
     changed: bool,
     pick_dir: bool,
     rebind: bool,
+    open_upload: bool,
 }
 
 impl SnagCraftApp {
@@ -1217,13 +2160,15 @@ impl SnagCraftApp {
 
     /// Apply a settings change: engine first (it owns the values), then the
     /// persistence hook, then the live effects.
-    fn push_settings(&mut self, next: SettingsView) {
+    pub fn push_settings(&mut self, next: SettingsView) {
         let payload = next.to_json();
         match self
             .session
             .dispatch("settings.set", serde_json::json!({"settings": payload}))
         {
             Ok(applied) => {
+                // The engine owns every field, watermark/upload included, so
+                // the answer is the truth — no local mirror to reconcile.
                 self.settings = SettingsView::from_json(&applied);
                 self.settings_dirty = true;
                 self.apply_settings();
@@ -1303,6 +2248,12 @@ impl SnagCraftApp {
         }
         self.main_ctx = Some(ctx.clone());
         self.poll_platform(ctx);
+        // The live layer keeps running while hidden: a recording start/stop or
+        // a scrolling capture must land even with no main window painting.
+        self.poll_media();
+        if self.recording() || self.scroll.armed || self.timelapse.armed {
+            ctx.request_repaint_after(Duration::from_millis(250));
+        }
         self.handle_close_request(ctx);
     }
 
@@ -1410,6 +2361,9 @@ impl SnagCraftApp {
         }
         if acts.rebind {
             self.rebind_hotkeys();
+        }
+        if acts.open_upload {
+            self.open_upload();
         }
     }
 
@@ -1539,6 +2493,76 @@ fn settings_ui(ui: &mut egui::Ui, next: &mut SettingsView, acts: &mut SettingsAc
             .on_hover_text("JPEG/WebP only — PNG is lossless")
             .changed();
     });
+    section(ui, "Watermark");
+    ui.horizontal(|ui| {
+        ui.label("Text");
+        acts.changed |= ui
+            .add(
+                egui::TextEdit::singleline(&mut next.watermark_text)
+                    .desired_width(200.0)
+                    .hint_text("Empty = no watermark"),
+            )
+            .on_hover_text("Stamped onto exported images only, never the document")
+            .changed();
+    });
+    ui.horizontal(|ui| {
+        ui.label("Opacity");
+        acts.changed |= ui
+            .add(
+                egui::Slider::new(
+                    &mut next.watermark_opacity,
+                    WATERMARK_OPACITY_MIN..=WATERMARK_OPACITY_MAX,
+                )
+                .suffix(" %")
+                .trailing_fill(true),
+            )
+            .changed();
+    });
+    ui.horizontal(|ui| {
+        ui.label("Corner");
+        egui::ComboBox::from_id_salt("settings-watermark-corner")
+            .width(140.0)
+            .selected_text(corner_label(&next.watermark_corner))
+            .show_ui(ui, |ui| {
+                for corner in WATERMARK_CORNERS {
+                    acts.changed |= ui
+                        .selectable_value(
+                            &mut next.watermark_corner,
+                            corner.to_string(),
+                            corner_label(corner),
+                        )
+                        .changed();
+                }
+            });
+    });
+    section(ui, "Share");
+    ui.horizontal(|ui| {
+        ui.label("Upload URL");
+        acts.changed |= ui
+            .add(
+                egui::TextEdit::singleline(&mut next.upload_url)
+                    .desired_width(200.0)
+                    .hint_text(UPLOAD_URL_DEFAULT),
+            )
+            .on_hover_text("Opened by Export — Open upload page")
+            .changed();
+    });
+    ui.horizontal(|ui| {
+        ui.add_enabled_ui(!next.upload_url.trim().is_empty(), |ui| {
+            if ui
+                .button("Open upload page")
+                .on_hover_text("Open the share page in the browser")
+                .clicked()
+            {
+                acts.open_upload = true;
+            }
+        });
+        ui.label(
+            egui::RichText::new("Opened with the system browser.")
+                .weak()
+                .size(11.0),
+        );
+    });
 
     ui.separator();
     section(ui, "Save location");
@@ -1628,6 +2652,27 @@ fn widget_button(ui: &mut egui::Ui, rect: Rect, label: &str) -> Response {
     )
 }
 
+/// STOP control for the widget's recording layout: a filled red square with a
+/// white glyph (the live 1.5.0 widget look — no text button).
+fn stop_square_button(ui: &mut egui::Ui, rect: Rect) -> Response {
+    let resp = ui.interact(rect, ui.scope_id().with("widget-stop"), Sense::click());
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Stop"));
+    let fill = if resp.hovered() {
+        WIDGET_STOP.linear_multiply(1.18)
+    } else {
+        WIDGET_STOP
+    };
+    let painter = ui.painter();
+    painter.rect_filled(rect, CornerRadius::same(7), fill);
+    let glyph = (rect.width().min(rect.height()) * 0.40).clamp(9.0, 14.0);
+    painter.rect_filled(
+        Rect::from_center_size(rect.center(), vec2(glyph, glyph)),
+        CornerRadius::same(1),
+        Color32::WHITE,
+    );
+    resp.on_hover_text("Stop recording")
+}
+
 /// The floating widget's contents. Called from an immediate viewport, so the
 /// whole window is transparent and just the pill is painted.
 ///
@@ -1663,38 +2708,42 @@ pub fn widget_ui(ui: &mut egui::Ui, app: &mut SnagCraftApp, class: egui::Viewpor
         let btn_h = (h - 16.0).clamp(18.0, 32.0);
         let y = pill.center().y - btn_h * 0.5;
         let mut x = pill.left() + 10.0;
-        let mut place = |ui: &mut egui::Ui, width: f32, label: &str| -> Response {
-            let rect = Rect::from_min_size(pos2(x, y), vec2(width, btn_h));
-            x += width + 6.0;
-            widget_button(ui, rect, label)
-        };
-        if place(ui, 50.0, "Full").clicked() {
-            app.capture_full();
-        }
-        if place(ui, 62.0, "Region").clicked() {
-            app.capture_region();
-        }
-        // Recording is a W4 feature: keep the affordance visible, disabled.
-        let rec_rect = Rect::from_min_size(pos2(x, y), vec2(52.0, btn_h));
-        ui.add_enabled_ui(false, |ui| {
-            ui.put(
-                rec_rect,
-                egui::Button::new(egui::RichText::new("Rec").size(12.0).color(Color32::WHITE))
-                    .fill(WIDGET_RED.linear_multiply(0.55))
-                    .corner_radius(CornerRadius::same(8)),
-            )
-        })
-        .response
-        .on_disabled_hover_text("Recording lands in W4");
-        // Red live dot next to the disabled Rec button, probe styling (skipped
-        // when a narrow host would make it collide with the fold control).
-        if pill.width() > 240.0 {
-            painter.circle_filled(pos2(pill.right() - 96.0, pill.center().y), 4.0, WIDGET_RED);
+        if app.recording() {
+            // Live layout: [stop square] [one Pause/Resume] [live dot] [×].
+            // No fold control mid-take — the take owns the pill.
+            let square = btn_h.clamp(20.0, 26.0);
+            let stop_rect = Rect::from_min_size(pos2(x, y), vec2(square, square));
+            if stop_square_button(ui, stop_rect).clicked() {
+                app.stop_recording();
+            }
+            let pause_rect = Rect::from_min_size(pos2(x + square + 6.0, y), vec2(58.0, btn_h));
+            let toggle = if app.rec.paused { "Resume" } else { "Pause" };
+            if widget_button(ui, pause_rect, toggle).clicked() {
+                app.toggle_record_pause();
+            }
+            painter.circle_filled(pos2(pill.right() - 44.0, pill.center().y), 4.5, WIDGET_RED);
+        } else {
+            let mut place = |ui: &mut egui::Ui, width: f32, label: &str| -> Response {
+                let rect = Rect::from_min_size(pos2(x, y), vec2(width, btn_h));
+                x += width + 6.0;
+                widget_button(ui, rect, label)
+            };
+            if place(ui, 50.0, "Full").clicked() {
+                app.capture_full();
+            }
+            if place(ui, 62.0, "Region").clicked() {
+                app.capture_region();
+            }
+            if place(ui, 52.0, "Rec").clicked() {
+                app.start_recording(None);
+            }
         }
 
-        let fold_rect = Rect::from_min_size(pos2(pill.right() - 62.0, y), vec2(26.0, btn_h));
-        if widget_button(ui, fold_rect, "»").clicked() {
-            app.widget_expanded = false;
+        if !app.recording() {
+            let fold_rect = Rect::from_min_size(pos2(pill.right() - 62.0, y), vec2(26.0, btn_h));
+            if widget_button(ui, fold_rect, "»").clicked() {
+                app.widget_expanded = false;
+            }
         }
         let close_rect = Rect::from_min_size(pos2(pill.right() - 30.0, y), vec2(22.0, btn_h));
         let close = ui
@@ -1752,6 +2801,19 @@ pub fn widget_ui(ui: &mut egui::Ui, app: &mut SnagCraftApp, class: egui::Viewpor
         // Enter / Space expand the tab (a11y).
         if ui.input(|i| i.key_pressed(Key::Enter) || i.key_pressed(Key::Space)) {
             app.widget_expanded = true;
+        }
+    }
+
+    // Widget-scoped V: start/stop the take. The main window keeps bare V for
+    // the Select tool (13-tool parity), so this only fires in the widget's own
+    // viewport (a real one — embedded/kittest viewports share the root input).
+    if class == egui::ViewportClass::Immediate
+        && ui.input(|i| i.key_pressed(Key::V) && !i.modifiers.any())
+    {
+        if app.recording() {
+            app.stop_recording();
+        } else {
+            app.start_recording(None);
         }
     }
 
@@ -2536,7 +3598,37 @@ fn handle_keys(ctx: &egui::Context, app: &mut SnagCraftApp) {
         return;
     }
 
+    // A region picker owns Enter/Esc while it is up (crop-frame idiom).
+    if app.pick.is_some() {
+        let (confirm, cancel) = ctx.input_mut(|i| {
+            (
+                i.consume_key(Modifiers::NONE, Key::Enter),
+                i.consume_key(Modifiers::NONE, Key::Escape),
+            )
+        });
+        if confirm {
+            app.confirm_region_pick();
+        }
+        if cancel {
+            app.cancel_region_pick();
+        }
+        return;
+    }
+
     ctx.input_mut(|i| {
+        // Ctrl+Alt+V: start/stop a recording. Bare V stays the Select tool
+        // (the 13-tool map owns every unmodified letter).
+        if i.consume_key(Modifiers::CTRL | Modifiers::ALT, Key::V) {
+            if app.recording() {
+                app.stop_recording();
+            } else {
+                app.start_recording(None);
+            }
+        }
+        // Enter finishes a scrolling capture (Enter is otherwise unclaimed).
+        if app.scroll.armed && i.consume_key(Modifiers::NONE, Key::Enter) {
+            app.stop_scrolling();
+        }
         if i.consume_key(Modifiers::CTRL, Key::Z) {
             if i.modifiers.shift {
                 app.dispatch("edit.redo", serde_json::json!({}));
@@ -2594,6 +3686,381 @@ fn handle_keys(ctx: &egui::Context, app: &mut SnagCraftApp) {
     });
 }
 
+/// "bottom-right" → "Bottom right" (menu/combo label).
+fn corner_label(corner: &str) -> &'static str {
+    match corner {
+        "bottom-left" => "Bottom left",
+        "top-right" => "Top right",
+        "top-left" => "Top left",
+        _ => "Bottom right",
+    }
+}
+
+/// One-line HUD text: strong and a touch larger than the status bar.
+fn hud_text(text: impl Into<String>) -> egui::RichText {
+    egui::RichText::new(text.into()).size(12.0).strong()
+}
+
+/// The top banner: whatever live job is running speaks here (recording,
+/// scrolling capture, timelapse), with its own controls.
+fn media_hud(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
+    let scrolling = app.scroll.armed || app.scroll.active;
+    let timelapsing = app.timelapse.armed || app.timelapse.running;
+    if !(app.recording() || scrolling || timelapsing) {
+        return;
+    }
+    let dark = ui.visuals().dark_mode;
+    egui::Panel::top("media-hud")
+        .frame(
+            egui::Frame::new()
+                .fill(if dark {
+                    DARK_SURFACE
+                } else {
+                    Color32::from_rgb(254, 235, 235)
+                })
+                .inner_margin(egui::Margin::symmetric(8, 5))
+                .stroke(Stroke::new(1.0, WIDGET_RED.linear_multiply(0.55))),
+        )
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                if app.recording() {
+                    // Painted dot: the bundled faces have no ● guarantee.
+                    let (dot, _) = ui.allocate_exact_size(vec2(14.0, 14.0), Sense::hover());
+                    ui.painter().circle_filled(dot.center(), 4.5, WIDGET_RED);
+                    let clock = app.record_clock();
+                    let label = if !app.rec.active {
+                        "Starting recorder…".to_string()
+                    } else if app.rec.paused {
+                        format!("Recording paused {clock}")
+                    } else {
+                        format!("Recording {clock}")
+                    };
+                    ui.label(hud_text(label).color(pal_fg(ui)));
+                    if app.rec.active {
+                        let toggle = if app.rec.paused { "Resume" } else { "Pause" };
+                        if ui
+                            .button(toggle)
+                            .on_hover_text("Pause/resume the encoder")
+                            .clicked()
+                        {
+                            app.toggle_record_pause();
+                        }
+                    }
+                    if ui
+                        .button("Stop recording")
+                        .on_hover_text("Finalise the take and save it")
+                        .clicked()
+                    {
+                        app.stop_recording();
+                    }
+                    ui.separator();
+                    let audio = match app.rec.audio.as_deref() {
+                        Some(id) => app
+                            .rec
+                            .sources
+                            .iter()
+                            .find(|(sid, _)| sid == id)
+                            .map(|(_, name)| name.clone())
+                            .unwrap_or_else(|| id.to_string()),
+                        None => "no audio".to_string(),
+                    };
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "{} — {audio}",
+                            app.rec.format.to_ascii_uppercase()
+                        ))
+                        .size(11.0)
+                        .color(pal_muted(ui)),
+                    );
+                }
+                if scrolling {
+                    ui.label(
+                        hud_text(format!(
+                            "Scroll slowly — captured {} px, {} frames. Enter or Stop to finish.",
+                            app.scroll.total_height, app.scroll.index
+                        ))
+                        .color(pal_fg(ui)),
+                    );
+                    if ui.button("Stop scroll").clicked() {
+                        app.stop_scrolling();
+                    }
+                }
+                if timelapsing {
+                    ui.label(
+                        hud_text(format!("Timelapse: {} frames", app.timelapse.frames))
+                            .color(pal_fg(ui)),
+                    );
+                    if ui.button("Stop timelapse").clicked() {
+                        app.stop_timelapse();
+                    }
+                }
+            });
+        });
+}
+
+/// The Capture dropdown: one place for every grab (screen, region, record,
+/// scroll, OCR, timelapse) so the toolbar keeps its single row.
+fn capture_menu(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
+    let capturing = app.capture_rx.is_some();
+    let accent = pal_accent(ui);
+    ui.scope(|ui| {
+        // Paint it as the primary button: accent fill, white ink.
+        let widgets = &mut ui.visuals_mut().widgets;
+        widgets.inactive.weak_bg_fill = accent;
+        widgets.hovered.weak_bg_fill = accent.linear_multiply(1.15);
+        widgets.active.weak_bg_fill = accent.linear_multiply(0.85);
+        widgets.inactive.fg_stroke.color = Color32::WHITE;
+        widgets.hovered.fg_stroke.color = Color32::WHITE;
+        widgets.active.fg_stroke.color = Color32::WHITE;
+        ui.menu_button(egui::RichText::new("Capture").strong(), |ui| {
+            ui.set_min_width(250.0);
+            if ui
+                .add_enabled(!capturing, egui::Button::new("Full screen"))
+                .clicked()
+            {
+                app.capture_full();
+                ui.close();
+            }
+            if ui
+                .add_enabled(!capturing, egui::Button::new("Region…"))
+                .clicked()
+            {
+                app.capture_region();
+                ui.close();
+            }
+            ui.separator();
+            if ui
+                .add_enabled(!app.recording(), egui::Button::new("Record screen"))
+                .on_hover_text("Ctrl+Alt+V")
+                .clicked()
+            {
+                app.start_recording(None);
+                ui.close();
+            }
+            if ui
+                .add_enabled(!app.recording(), egui::Button::new("Record region…"))
+                .clicked()
+            {
+                app.start_region_pick(PickPurpose::Record);
+                ui.close();
+            }
+            ui.menu_button("Recording options", |ui| {
+                ui.set_min_width(220.0);
+                ui.label(egui::RichText::new("Format").size(11.5).weak());
+                for format in ["mp4", "gif"] {
+                    let label = format.to_ascii_uppercase();
+                    if ui
+                        .radio_value(&mut app.rec.format, format.to_string(), label)
+                        .changed()
+                    {
+                        // Recording options are per-take, not persisted.
+                    }
+                }
+                ui.separator();
+                ui.label(egui::RichText::new("Audio").size(11.5).weak());
+                if !app.rec.sources_loaded {
+                    app.refresh_audio_sources();
+                }
+                let mut choice = app.rec.audio.clone();
+                let none = ui.radio_value(&mut choice, None, "None").changed();
+                let mut picked = none;
+                let sources = app.rec.sources.clone();
+                for (id, name) in sources {
+                    if ui
+                        .radio_value(&mut choice, Some(id.clone()), name)
+                        .changed()
+                    {
+                        picked = true;
+                    }
+                }
+                if picked {
+                    app.rec.audio = choice;
+                }
+            });
+            ui.separator();
+            if ui.button("Scrolling capture…").clicked() {
+                app.start_region_pick(PickPurpose::Scroll);
+                ui.close();
+            }
+            let ocr_ready = app.ocr_ready();
+            let ocr = ui
+                .add_enabled(ocr_ready, egui::Button::new("Grab text (OCR)"))
+                .on_hover_text("Read the text in the current image");
+            let ocr = if ocr_ready {
+                ocr
+            } else {
+                ocr.on_disabled_hover_text("Install tesseract")
+            };
+            if ocr.clicked() {
+                app.run_ocr();
+                ui.close();
+            }
+            if ui.button("Timelapse…").clicked() {
+                app.timelapse.dialog_open = true;
+                ui.close();
+            }
+            ui.separator();
+            let upload = app.upload_target();
+            if ui
+                .add_enabled(upload.is_some(), egui::Button::new("Open upload page"))
+                .on_hover_text("Set the URL in Settings — Export")
+                .clicked()
+            {
+                app.open_upload();
+                ui.close();
+            }
+        });
+    });
+}
+
+/// The frozen-screen region picker (record/scroll): crop-frame idiom, but the
+/// pixels are screen pixels so the rect goes straight to the engine.
+/// Returns true when it handled the whole central panel.
+fn region_picker(ui: &mut egui::Ui, app: &mut SnagCraftApp) -> bool {
+    let Some(pick) = app.pick.as_mut() else {
+        return false;
+    };
+    let avail = ui.available_rect_before_wrap();
+    if !avail.is_positive() {
+        return true;
+    }
+    ui.painter()
+        .rect_filled(avail, CornerRadius::ZERO, Color32::from_rgb(16, 18, 22));
+    let Some(surface) = pick.surface.as_ref() else {
+        ui.painter().text(
+            avail.center(),
+            Align2::CENTER_CENTER,
+            "Capturing the screen…",
+            FontId::proportional(14.0),
+            Color32::WHITE,
+        );
+        return true;
+    };
+    let (iw, ih) = (surface.width() as f32, surface.height() as f32);
+    if iw < 1.0 || ih < 1.0 {
+        return true;
+    }
+    let scale = (avail.width() / iw)
+        .min(avail.height() / ih)
+        .clamp(0.01, 8.0);
+    let size = vec2(iw * scale, ih * scale);
+    let origin = avail.center() - size * 0.5;
+    let img_rect = Rect::from_min_size(origin, size);
+    if pick.tex.is_none() {
+        let color_img = egui::ColorImage::from_rgba_unmultiplied(
+            [surface.width() as usize, surface.height() as usize],
+            surface.as_raw(),
+        );
+        pick.tex = Some(ui.ctx().load_texture(
+            "snagcraft-pick",
+            color_img,
+            egui::TextureOptions::LINEAR,
+        ));
+    }
+    if let Some(tex) = &pick.tex {
+        ui.painter().image(
+            tex.id(),
+            img_rect,
+            Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+            Color32::WHITE,
+        );
+    }
+    let to_image = |p: Pos2| Point::new((p.x - origin.x) / scale, (p.y - origin.y) / scale);
+    let resp = ui.interact(
+        img_rect,
+        ui.scope_id().with("region-pick"),
+        Sense::click_and_drag(),
+    );
+    if resp.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
+    }
+    let pointer_img = resp.interact_pointer_pos().map(to_image);
+    let press_img = ui
+        .ctx()
+        .input(|i| i.pointer.press_origin())
+        .map(to_image)
+        .or(pointer_img);
+    if resp.drag_started()
+        && let Some(p) = press_img
+    {
+        pick.rect = Some(GRect::new(p.x, p.y, 0.0, 0.0));
+    }
+    if resp.dragged()
+        && let (Some(p), Some(start)) = (
+            pointer_img,
+            pick.rect.as_ref().map(|r| Point::new(r.x, r.y)),
+        )
+    {
+        let end = Point::new(p.x.clamp(0.0, iw), p.y.clamp(0.0, ih));
+        pick.rect = Some(GRect::from_corners(start, end));
+    }
+
+    // Dim everything outside the frame, then outline it like the crop tool.
+    let frame = pick.rect.map(|frame| {
+        Rect::from_min_size(
+            pos2(origin.x + frame.x * scale, origin.y + frame.y * scale),
+            vec2(frame.w * scale, frame.h * scale),
+        )
+    });
+    match frame {
+        Some(r) => {
+            dim_outside_preview(ui.painter(), img_rect, r, 0.55);
+            ui.painter().rect_stroke(
+                r,
+                CornerRadius::ZERO,
+                Stroke::new(1.5, Color32::WHITE),
+                StrokeKind::Inside,
+            );
+            for corner in [
+                r.left_top(),
+                r.right_top(),
+                r.left_bottom(),
+                r.right_bottom(),
+            ] {
+                ui.painter().rect_filled(
+                    Rect::from_center_size(corner, vec2(6.0, 6.0)),
+                    CornerRadius::ZERO,
+                    Color32::WHITE,
+                );
+            }
+            if let Some(rect) = pick.rect {
+                ui.painter().text(
+                    r.left_top() + vec2(4.0, 18.0),
+                    Align2::LEFT_TOP,
+                    format!("{}×{}", rect.w.round(), rect.h.round()),
+                    FontId::monospace(12.0),
+                    Color32::WHITE,
+                );
+            }
+        }
+        None => {
+            ui.painter()
+                .rect_filled(img_rect, CornerRadius::ZERO, Color32::from_black_alpha(60));
+        }
+    }
+    let hint = format!(
+        "{} — drag a rectangle, Enter to start, Esc to cancel",
+        match pick.purpose {
+            PickPurpose::Record => "Recording region",
+            PickPurpose::Scroll => "Scrolling capture region",
+        }
+    );
+    let bar = Rect::from_min_size(
+        pos2(avail.left() + 12.0, avail.top() + 10.0),
+        vec2(avail.width() - 24.0, 26.0),
+    );
+    ui.painter()
+        .rect_filled(bar, CornerRadius::same(6), Color32::from_black_alpha(190));
+    ui.painter().text(
+        bar.left_center() + vec2(10.0, 0.0),
+        Align2::LEFT_CENTER,
+        hint,
+        FontId::proportional(12.5),
+        Color32::WHITE,
+    );
+    true
+}
+
 // ------------------------------------------------------------------- the shell
 
 /// The whole shell in one fn — shared by eframe and headless kittest.
@@ -2603,7 +4070,19 @@ pub fn app_ui(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
     app.apply_settings();
     app.poll_platform(&ctx);
     app.poll_capture();
+    app.poll_media();
+    if app.recording()
+        || app.scroll.armed
+        || app.scroll.active
+        || app.timelapse.armed
+        || app.timelapse.running
+    {
+        // Elapsed clock + frame counts keep ticking while nothing else does.
+        ctx.request_repaint_after(Duration::from_millis(250));
+    }
     app.handle_close_request(&ctx);
+
+    media_hud(ui, app);
 
     egui::Panel::top("toolbar")
         .frame(
@@ -2653,21 +4132,16 @@ pub fn app_ui(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
                     if ui.button("Open").on_hover_text("Open an image").clicked() {
                         app.open_dialog();
                     }
-                    let cap_btn = ui.add_enabled(
-                        !capturing,
-                        egui::Button::new(
-                            egui::RichText::new("Capture")
-                                .color(Color32::WHITE)
-                                .strong(),
-                        )
-                        .fill(pal_accent(ui)),
-                    );
-                    if cap_btn
-                        .on_hover_text("Capture the full screen via the OS portal")
-                        .clicked()
-                    {
-                        app.start_capture();
-                    }
+                    capture_menu(ui, app);
+                    ui.add_enabled_ui(!capturing, |ui| {
+                        if ui
+                            .button("OCR")
+                            .on_hover_text("Grab text (OCR) from the current image")
+                            .clicked()
+                        {
+                            app.run_ocr();
+                        }
+                    });
                     ui.separator();
 
                     // Tools fill the rest of the row, left to right, one row only:
@@ -2755,6 +4229,10 @@ pub fn app_ui(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
                 .inner_margin(egui::Margin::same(0)),
         )
         .show(ui, |ui| {
+            // Recording / scrolling-capture region picker owns the canvas.
+            if region_picker(ui, app) {
+                return;
+            }
             let avail = ui.available_rect_before_wrap();
             let Some(doc) = app.session.doc() else {
                 ui.label("No document — Capture or Open to begin.");
@@ -3253,6 +4731,8 @@ pub fn app_ui(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
 
     app.settings_window(&ctx);
     app.close_modal(&ctx);
+    app.ocr_window(&ctx);
+    app.timelapse_dialog(&ctx);
     app.floating_widget(&ctx);
 
     if let Some(st) = &mut app.selftest {

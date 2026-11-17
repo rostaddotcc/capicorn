@@ -4041,6 +4041,7 @@ dependencies = [
  "snagcraft-io",
  "snagcraft-ops",
  "snagcraft-raster",
+ "snagcraft-recording",
  "snagcraft-text",
  "thiserror 2.0.21",
 ]

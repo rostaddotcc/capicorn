@@ -8,21 +8,48 @@ repository.workspace = true
 publish = false
 
 [dependencies]
-snagcraft-engine = { path = "../engine" }
-snagcraft-capture = { path = "../capture" }
+# `native` is the desktop default. The web build (`default-features = false`)
+# keeps the pure layers — engine core commands, io codecs, doc, compose,
+# raster, geom, color — and drops everything platform-backed: the tray/hotkey
+# portal, screen capture, the file dialogs and the floating widget viewport.
+snagcraft-engine = { path = "../engine", default-features = false }
+snagcraft-capture = { path = "../capture", optional = true }
 snagcraft-doc = { path = "../doc" }
 snagcraft-compose = { path = "../compose" }
 snagcraft-raster = { path = "../raster" }
 snagcraft-geom = { path = "../geom" }
 snagcraft-color = { path = "../color" }
-snagcraft-platform = { path = "../platform" }
+snagcraft-io = { path = "../io", default-features = false }
+snagcraft-platform = { path = "../platform", optional = true }
 egui.workspace = true
 eframe.workspace = true
 ab_glyph.workspace = true
-rfd.workspace = true
+rfd = { workspace = true, optional = true }
 serde_json.workspace = true
 tracing.workspace = true
 image.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+# Browser plumbing for the web fallbacks (PNG export download, drag-drop open).
+web-sys = { workspace = true, features = [
+    "Event",
+    "EventTarget",
+    "HtmlElement",
+    "BlobPropertyBag",
+] }
+wasm-bindgen-futures.workspace = true
+js-sys.workspace = true
+wasm-bindgen.workspace = true
+
+[features]
+default = ["native"]
+native = [
+    "dep:snagcraft-platform",
+    "dep:snagcraft-capture",
+    "dep:rfd",
+    "snagcraft-engine/native",
+    "snagcraft-io/native",
+]
 
 [lints]
 workspace = true

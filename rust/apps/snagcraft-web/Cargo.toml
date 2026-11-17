@@ -8,7 +8,9 @@ repository.workspace = true
 publish = false
 
 [lib]
-crate-type = ["cdylib", "rlib"]
+# `cdylib` only: trunk builds exactly one wasm artifact per target, and an
+# extra `rlib` made the asset pipeline see two candidates.
+crate-type = ["cdylib"]
 
 [dependencies]
 snagcraft-engine = { path = "../../crates/engine", default-features = false }
@@ -17,7 +19,7 @@ eframe.workspace = true
 egui.workspace = true
 wasm-bindgen.workspace = true
 wasm-bindgen-futures.workspace = true
-web-sys.workspace = true
+web-sys = { workspace = true, features = ["console"] }
 js-sys.workspace = true
 console_error_panic_hook.workspace = true
 tracing.workspace = true

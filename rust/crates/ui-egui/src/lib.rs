@@ -19,17 +19,22 @@
 //! and autosave-on-capture. Everything is an engine command dispatch.
 
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::mpsc;
+#[cfg(feature = "native")]
+use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+#[cfg(feature = "native")]
+use egui::ViewportBuilder;
 use egui::{
     Align, Align2, Color32, CornerRadius, FontId, Key, Layout, Modifiers, Pos2, Rect, Response,
-    Sense, Shape, Stroke, StrokeKind, ViewportBuilder, ViewportCommand, ViewportId, pos2, vec2,
+    Sense, Shape, Stroke, StrokeKind, ViewportCommand, ViewportId, pos2, vec2,
 };
 use snagcraft_doc::{AnnotObject, BlurMode, ShapeKind};
 use snagcraft_engine::Session;
 use snagcraft_geom::{Point, Rect as GRect};
+#[cfg(feature = "native")]
 use snagcraft_platform::{HotkeyEvent, TrayEvent};
 use snagcraft_raster::Surface;
 
@@ -240,6 +245,10 @@ impl SettingsView {
 
 /// Everything the tray/hotkey/single-instance layer hands to the shell. The
 /// handles are only kept alive here — dropping them detaches the service.
+///
+/// Desktop only: the web build has no tray, no global hotkeys and no second
+/// instance, so the struct does not exist there at all.
+#[cfg(feature = "native")]
 #[derive(Default)]
 pub struct PlatformLink {
     tray_rx: Option<Receiver<TrayEvent>>,
@@ -507,6 +516,7 @@ pub enum PickPurpose {
 }
 
 impl PickPurpose {
+    #[cfg(feature = "native")]
     fn verb(self) -> &'static str {
         match self {
             Self::Record => "record",
@@ -661,6 +671,7 @@ pub struct SnagCraftApp {
     main_ctx: Option<egui::Context>,
     widget_shown: bool,
     widget_applied: Option<bool>,
+    #[cfg(feature = "native")]
     platform: PlatformLink,
     /// Set when a settings change must be persisted by the app layer.
     settings_dirty: bool,
@@ -683,6 +694,9 @@ pub struct SnagCraftApp {
     pub ocr_available: Option<bool>,
     pick: Option<RegionPick>,
     pick_rx: Option<mpsc::Receiver<Result<Surface, String>>>,
+    /// Web open path: in-flight browser file read (`w`, `h`) or its error.
+    #[cfg(not(feature = "native"))]
+    drop_rx: Option<mpsc::Receiver<Result<(u32, u32), String>>>,
 }
 
 impl SnagCraftApp {
@@ -745,6 +759,7 @@ impl SnagCraftApp {
             main_ctx: None,
             widget_shown: false,
             widget_applied: None,
+            #[cfg(feature = "native")]
             platform: PlatformLink::default(),
             settings_dirty: false,
             redraw: true,
@@ -763,6 +778,8 @@ impl SnagCraftApp {
             ocr_available: None,
             pick: None,
             pick_rx: None,
+            #[cfg(not(feature = "native"))]
+            drop_rx: None,
         }
     }
 
@@ -890,26 +907,35 @@ impl SnagCraftApp {
     }
 
     fn start_capture_delayed(&mut self, delay_secs: u32) {
-        if self.capture_rx.is_some() {
-            return;
+        #[cfg(not(feature = "native"))]
+        {
+            let _ = delay_secs;
+            self.status =
+                "Screen capture is desktop-only — drop an image file here to annotate it.".into();
         }
-        let (tx, rx) = mpsc::channel();
-        self.capture_rx = Some(rx);
-        self.status = if delay_secs > 0 {
-            format!("Capturing in {delay_secs}s… answer the OS picker if one appears.")
-        } else {
-            "Capturing… answer the OS picker if one appears.".into()
-        };
-        // Hostile input: the delay is clamped by SettingsView (<= 3600) and
-        // capped again here so a corrupt file cannot park the thread forever.
-        let delay = Duration::from_secs(u64::from(delay_secs.min(3_600)));
-        std::thread::spawn(move || {
-            if !delay.is_zero() {
-                std::thread::sleep(delay);
+        #[cfg(feature = "native")]
+        {
+            if self.capture_rx.is_some() {
+                return;
             }
-            let result = snagcraft_capture::capture_full_blocking().map_err(|e| e.to_string());
-            let _ = tx.send(result);
-        });
+            let (tx, rx) = mpsc::channel();
+            self.capture_rx = Some(rx);
+            self.status = if delay_secs > 0 {
+                format!("Capturing in {delay_secs}s… answer the OS picker if one appears.")
+            } else {
+                "Capturing… answer the OS picker if one appears.".into()
+            };
+            // Hostile input: the delay is clamped by SettingsView (<= 3600) and
+            // capped again here so a corrupt file cannot park the thread forever.
+            let delay = Duration::from_secs(u64::from(delay_secs.min(3_600)));
+            std::thread::spawn(move || {
+                if !delay.is_zero() {
+                    std::thread::sleep(delay);
+                }
+                let result = snagcraft_capture::capture_full_blocking().map_err(|e| e.to_string());
+                let _ = tx.send(result);
+            });
+        }
     }
 
     /// Capture the whole screen (toolbar widget's Full button, tray, hotkey).
@@ -974,6 +1000,7 @@ impl SnagCraftApp {
     }
 
     /// Copy the flattened composite to the system clipboard (Ctrl+C / menu).
+    #[cfg(feature = "native")]
     fn copy_to_clipboard(&mut self) {
         match self.exec("clipboard.copy", serde_json::json!({})) {
             Ok(v) => {
@@ -986,7 +1013,17 @@ impl SnagCraftApp {
         }
     }
 
+    /// Web fallback: `clipboard.copy` is a native command (arboard), and the
+    /// async Clipboard API needs a user-activation-safe `ClipboardItem` write
+    /// that is out of scope for the first web build. Say so instead of failing
+    /// silently — Export (PNG download) is the web way to move an image out.
+    #[cfg(not(feature = "native"))]
+    fn copy_to_clipboard(&mut self) {
+        self.status = "Image clipboard is desktop-only — use Export to download a PNG.".into();
+    }
+
     /// Paste an image from the system clipboard (Ctrl+V / menu).
+    #[cfg(feature = "native")]
     fn paste_from_clipboard(&mut self) {
         match self.exec("clipboard.paste", serde_json::json!({})) {
             Ok(v) => {
@@ -1001,6 +1038,12 @@ impl SnagCraftApp {
             }
             Err(e) => self.status = format!("Paste failed: {e}"),
         }
+    }
+
+    /// Web fallback: no image clipboard — drop a file on the canvas instead.
+    #[cfg(not(feature = "native"))]
+    fn paste_from_clipboard(&mut self) {
+        self.status = "Clipboard paste is desktop-only — drop an image file here instead.".into();
     }
 
     fn color_json(&self) -> serde_json::Value {
@@ -1173,6 +1216,7 @@ impl SnagCraftApp {
             "color": color, "width": width}));
     }
 
+    #[cfg(feature = "native")]
     fn open_dialog(&mut self) -> bool {
         if let Some(path) = rfd::FileDialog::new()
             .add_filter("Images", &["png", "jpg", "jpeg", "webp"])
@@ -1188,8 +1232,18 @@ impl SnagCraftApp {
         false
     }
 
+    /// Web fallback: the browser's file picker is not reachable from the Rust
+    /// side without a DOM `<input type=file>`; eframe already delivers dropped
+    /// files, so that is the web open path ([`Self::poll_dropped`]).
+    #[cfg(not(feature = "native"))]
+    fn open_dialog(&mut self) -> bool {
+        self.status = "Open: drop an image file onto the canvas to load it.".into();
+        false
+    }
+
     /// Native "save annotations" dialog. Returns true when a file was written
     /// (the close guard needs to know whether closing is now safe).
+    #[cfg(feature = "native")]
     pub fn save_dialog(&mut self) -> bool {
         let mut dialog = rfd::FileDialog::new()
             .set_file_name("capture.snagcraft")
@@ -1208,7 +1262,16 @@ impl SnagCraftApp {
         false
     }
 
+    /// Web fallback: `doc.save` writes a real file through std::fs, which the
+    /// browser has no access to — the editable format stays desktop-only.
+    #[cfg(not(feature = "native"))]
+    pub fn save_dialog(&mut self) -> bool {
+        self.status = "Editable .snagcraft files are desktop-only — use Export for a PNG.".into();
+        false
+    }
+
     /// Export the flattened image using the settings' format/quality.
+    #[cfg(feature = "native")]
     pub fn export_dialog(&mut self) -> bool {
         let format = self.settings.default_format.clone();
         let quality = self.settings.default_quality;
@@ -1234,6 +1297,59 @@ impl SnagCraftApp {
             return true;
         }
         false
+    }
+
+    /// Web export: `doc.export` writes through `std::fs`, so the browser path
+    /// renders the composite in memory, encodes it with `snagcraft-io` (the
+    /// codecs are platform-free) and hands the bytes to the browser as a
+    /// download via a Blob object URL.
+    ///
+    /// Known gap: the export watermark is skipped — `doc.export` applies it
+    /// with the session's bundled faces, which are private to the engine.
+    #[cfg(not(feature = "native"))]
+    pub fn export_dialog(&mut self) -> bool {
+        let (format, ext, mime) = match self.settings.default_format.as_str() {
+            "jpeg" => (snagcraft_io::ImageFormat::Jpeg, "jpg", "image/jpeg"),
+            "webp" => (snagcraft_io::ImageFormat::WebP, "webp", "image/webp"),
+            _ => (snagcraft_io::ImageFormat::Png, "png", "image/png"),
+        };
+        let quality = self.settings.default_quality;
+        let watermarked = self.watermark_value().is_some();
+        let rendered = {
+            let guard = self
+                .session
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            guard.render().map_err(|e| e.to_string())
+        };
+        let bytes = rendered
+            .and_then(|img| snagcraft_io::encode(&img, format, quality).map_err(|e| e.to_string()));
+        match bytes {
+            Ok(bytes) => {
+                let name = format!("snagcraft.{ext}");
+                match web::download(&name, mime, &bytes) {
+                    Ok(()) => {
+                        self.status = if watermarked {
+                            format!(
+                                "Exported {name} ({} bytes) — watermark is desktop-only.",
+                                bytes.len()
+                            )
+                        } else {
+                            format!("Exported {name} ({} bytes).", bytes.len())
+                        };
+                        true
+                    }
+                    Err(err) => {
+                        self.status = format!("Export failed: {err}");
+                        false
+                    }
+                }
+            }
+            Err(err) => {
+                self.status = format!("Export failed: {err}");
+                false
+            }
+        }
     }
 
     /// `doc.export`'s watermark block, or `None` when the text is blank.
@@ -1434,12 +1550,25 @@ impl SnagCraftApp {
             return;
         }
         self.pick = Some(RegionPick::new(purpose));
-        let (tx, rx) = mpsc::channel();
-        self.pick_rx = Some(rx);
-        self.status = format!("Capturing the screen for the {} region…", purpose.verb());
-        std::thread::spawn(move || {
-            let _ = tx.send(snagcraft_capture::capture_full_blocking().map_err(|e| e.to_string()));
-        });
+        #[cfg(feature = "native")]
+        {
+            let (tx, rx) = mpsc::channel();
+            self.pick_rx = Some(rx);
+            self.status = format!("Capturing the screen for the {} region…", purpose.verb());
+            std::thread::spawn(move || {
+                let _ =
+                    tx.send(snagcraft_capture::capture_full_blocking().map_err(|e| e.to_string()));
+            });
+        }
+        #[cfg(not(feature = "native"))]
+        {
+            // The screen-freeze half of the picker is a desktop service; keep
+            // the picker up so the crop-style rect can still be dragged on the
+            // loaded document instead of pretending a screen grab is coming.
+            self.pick_rx = None;
+            self.status =
+                "Screen preview is desktop-only — drag the region on the current image.".into();
+        }
     }
 
     /// Test/seed hook: start a picker with the screen image already in hand.
@@ -2002,8 +2131,13 @@ struct SettingsActions {
 
 impl SnagCraftApp {
     // ---- platform wiring ----------------------------------------------------
+    //
+    // Every entry point here is a desktop service (StatusNotifier tray, the
+    // XDG global-shortcuts portal, single-instance forwarding). The web build
+    // has none of them, so the whole block is native-only.
 
     /// Hand the live tray over (the handle keeps the icon alive).
+    #[cfg(feature = "native")]
     pub fn attach_tray(&mut self, handle: snagcraft_platform::TrayHandle, rx: Receiver<TrayEvent>) {
         self.tray_ok = handle.is_available();
         if !self.tray_ok {
@@ -2015,22 +2149,26 @@ impl SnagCraftApp {
 
     /// Drain-only variant of [`Self::attach_tray`] (no live handle needed —
     /// the channels are what the shell actually consumes).
+    #[cfg(feature = "native")]
     pub fn attach_tray_events(&mut self, rx: Receiver<TrayEvent>) {
         self.platform.tray_rx = Some(rx);
     }
 
     /// Record why the tray never came up (headless / locked session).
+    #[cfg(feature = "native")]
     pub fn tray_failed(&mut self, error: &snagcraft_platform::PlatformError) {
         self.tray_ok = false;
         self.status = format!("Tray unavailable ({error}) — close-to-tray stays off.");
     }
 
     /// Second-launch argv stream from `acquire_or_forward`.
+    #[cfg(feature = "native")]
     pub fn attach_instance(&mut self, rx: Receiver<Vec<String>>) {
         self.platform.instance_rx = Some(rx);
     }
 
     /// Hotkey portal session: keep the handle, drain the events channel.
+    #[cfg(feature = "native")]
     pub fn attach_hotkeys(
         &mut self,
         tx: Sender<HotkeyEvent>,
@@ -2053,6 +2191,7 @@ impl SnagCraftApp {
 
     /// Re-bind the global hotkeys after the trigger strings changed. The portal
     /// allows one `BindShortcuts` per session, so the old handle is dropped.
+    #[cfg(feature = "native")]
     pub fn rebind_hotkeys(&mut self) {
         let Some(tx) = self.platform.hotkey_tx.clone() else {
             self.status = "No hotkey portal — bindings unchanged.".into();
@@ -2075,6 +2214,8 @@ impl SnagCraftApp {
         }
     }
 
+    /// Drain the tray/hotkey/second-instance channels (desktop only).
+    #[cfg(feature = "native")]
     fn poll_platform(&mut self, ctx: &egui::Context) {
         let tray_events: Vec<TrayEvent> = self
             .platform
@@ -2140,6 +2281,62 @@ impl SnagCraftApp {
         }
     }
 
+    /// Web: there is no tray, no global-hotkey portal and no second instance,
+    /// so there is nothing to drain.
+    #[cfg(not(feature = "native"))]
+    fn poll_platform(&mut self, _ctx: &egui::Context) {}
+
+    /// Web open path: eframe's browser backend turns a dropped file into an
+    /// `egui::DroppedFile`, whose bytes arrive asynchronously. Read them in a
+    /// `wasm-bindgen-futures` task, then decode through `snagcraft-io` (the
+    /// codecs are platform-free) and load the surface into the shared session.
+    #[cfg(not(feature = "native"))]
+    fn poll_dropped(&mut self, ctx: &egui::Context) {
+        // Drain any finished read first: the future cannot touch `self`.
+        let finished: Vec<Result<(u32, u32), String>> = self
+            .drop_rx
+            .as_ref()
+            .map(|rx| std::iter::from_fn(|| rx.try_recv().ok()).take(4).collect())
+            .unwrap_or_default();
+        if !finished.is_empty() {
+            self.drop_rx = None;
+            for result in finished {
+                match result {
+                    Ok((w, h)) => {
+                        self.redraw = true;
+                        self.doc_dirty = false;
+                        self.selected = None;
+                        self.status =
+                            format!("Opened {w}×{h} from the dropped file — annotate away.");
+                    }
+                    Err(err) => self.status = format!("Open failed: {err}"),
+                }
+            }
+        }
+        if self.drop_rx.is_some() {
+            return;
+        }
+        let files = ctx.input(|i| i.raw.dropped_files.clone());
+        let Some(file) = files.into_iter().next() else {
+            return;
+        };
+        let name = file.path().display().to_string();
+        let label = name.clone();
+        let (tx, rx) = mpsc::channel();
+        self.drop_rx = Some(rx);
+        let session = Arc::clone(&self.session);
+        let repaint = ctx.clone();
+        wasm_bindgen_futures::spawn_local(async move {
+            let result = match file.bytes_async().await {
+                Ok(bytes) => load_image_bytes(&session, &bytes),
+                Err(err) => Err(err),
+            };
+            let _ = tx.send(result.map_err(|err| format!("{label}: {err}")));
+            repaint.request_repaint();
+        });
+        self.status = format!("Reading {name}…");
+    }
+
     /// CLI / forwarded argv: `--capture`, `--region`, and image paths.
     pub fn handle_launch_args(&mut self, args: &[String]) {
         for arg in args {
@@ -2200,6 +2397,9 @@ impl SnagCraftApp {
         self.redraw = true;
     }
 
+    /// Tray "Toggle widget" entry (desktop only — the widget itself is a
+    /// second viewport).
+    #[cfg(feature = "native")]
     fn toggle_widget(&mut self, _ctx: &egui::Context) {
         let mut next = self.settings.clone();
         next.show_widget = !next.show_widget;
@@ -2338,45 +2538,71 @@ impl SnagCraftApp {
             self.settings_open = false;
         }
         if acts.pick_dir {
-            let mut dialog = rfd::FileDialog::new();
-            if let Some(current) = &next.save_dir {
-                dialog = dialog.set_directory(current);
+            #[cfg(feature = "native")]
+            {
+                let mut dialog = rfd::FileDialog::new();
+                if let Some(current) = &next.save_dir {
+                    dialog = dialog.set_directory(current);
+                }
+                if let Some(dir) = dialog.pick_folder() {
+                    next.save_dir = Some(dir.to_string_lossy().to_string());
+                    acts.changed = true;
+                }
             }
-            if let Some(dir) = dialog.pick_folder() {
-                next.save_dir = Some(dir.to_string_lossy().to_string());
-                acts.changed = true;
+            #[cfg(not(feature = "native"))]
+            {
+                self.status = "Folder pickers are desktop-only — the web build downloads.".into();
+                acts.changed = false;
             }
         }
         if acts.changed {
             // Login autostart is a real desktop entry, not just a flag: apply
             // it first and roll the checkbox back if the write failed.
-            if next.start_at_login != self.settings.start_at_login {
-                match snagcraft_platform::set_autostart(next.start_at_login) {
-                    Ok(()) => {
-                        self.status = if next.start_at_login {
-                            "SnagCraft will start at login.".into()
-                        } else {
-                            "SnagCraft will no longer start at login.".into()
-                        };
-                    }
-                    Err(err) => {
-                        self.status = format!("Autostart failed: {err}");
-                        next.start_at_login = self.settings.start_at_login;
+            #[cfg(feature = "native")]
+            {
+                if next.start_at_login != self.settings.start_at_login {
+                    match snagcraft_platform::set_autostart(next.start_at_login) {
+                        Ok(()) => {
+                            self.status = if next.start_at_login {
+                                "SnagCraft will start at login.".into()
+                            } else {
+                                "SnagCraft will no longer start at login.".into()
+                            };
+                        }
+                        Err(err) => {
+                            self.status = format!("Autostart failed: {err}");
+                            next.start_at_login = self.settings.start_at_login;
+                        }
                     }
                 }
             }
             self.push_settings(next);
         }
         if acts.rebind {
-            self.rebind_hotkeys();
+            #[cfg(feature = "native")]
+            {
+                self.rebind_hotkeys();
+            }
+            #[cfg(not(feature = "native"))]
+            {
+                self.status = "Global hotkeys are desktop-only.".into();
+            }
         }
         if acts.open_upload {
-            self.open_upload();
+            #[cfg(feature = "native")]
+            {
+                self.open_upload();
+            }
+            #[cfg(not(feature = "native"))]
+            {
+                self.status = "Uploading is desktop-only in this build.".into();
+            }
         }
     }
 
     // ---- floating widget ----------------------------------------------------
 
+    #[cfg(feature = "native")]
     fn floating_widget(&mut self, ctx: &egui::Context) {
         if !self.settings.show_widget {
             if self.widget_shown {
@@ -2401,6 +2627,11 @@ impl SnagCraftApp {
         });
         self.widget_shown = true;
     }
+
+    /// Web: a browser tab cannot host a second transparent always-on-top
+    /// viewport, so the floating widget stays a desktop feature.
+    #[cfg(not(feature = "native"))]
+    fn floating_widget(&mut self, _ctx: &egui::Context) {}
 }
 
 /// A small picture glyph for the close-guard modal (painted, not a font glyph).
@@ -2446,19 +2677,35 @@ fn section(ui: &mut egui::Ui, title: &str) {
 /// The settings body. Pure UI: it mutates `next` and reports what happened.
 fn settings_ui(ui: &mut egui::Ui, next: &mut SettingsView, acts: &mut SettingsActions) {
     section(ui, "General");
-    acts.changed |= ui
-        .checkbox(
-            &mut next.minimize_to_tray,
-            "Minimize to tray instead of closing",
-        )
-        .on_hover_text("Close hides the window; the tray icon brings it back")
-        .changed();
-    acts.changed |= ui
-        .checkbox(&mut next.start_at_login, "Start at login")
-        .changed();
-    acts.changed |= ui
-        .checkbox(&mut next.show_widget, "Show the floating widget")
-        .changed();
+    // Tray / autostart / floating widget are desktop services; the web build
+    // keeps the same settings file shape but has nothing to apply them to.
+    #[cfg(feature = "native")]
+    {
+        acts.changed |= ui
+            .checkbox(
+                &mut next.minimize_to_tray,
+                "Minimize to tray instead of closing",
+            )
+            .on_hover_text("Close hides the window; the tray icon brings it back")
+            .changed();
+        acts.changed |= ui
+            .checkbox(&mut next.start_at_login, "Start at login")
+            .changed();
+        acts.changed |= ui
+            .checkbox(&mut next.show_widget, "Show the floating widget")
+            .changed();
+    }
+    #[cfg(not(feature = "native"))]
+    {
+        // No-op prefixes keep the shape of the native block (and the value
+        // checks) without pretending the services exist in a browser tab.
+        let _ = (next.minimize_to_tray, next.start_at_login, next.show_widget);
+        ui.label(
+            egui::RichText::new("Tray, login autostart and the floating widget are desktop-only.")
+                .weak()
+                .size(11.0),
+        );
+    }
     acts.changed |= ui
         .checkbox(&mut next.autosave_captures, "Auto-save captures")
         .changed();
@@ -2555,6 +2802,7 @@ fn settings_ui(ui: &mut egui::Ui, next: &mut SettingsView, acts: &mut SettingsAc
             .on_hover_text("Opened by Export — Open upload page")
             .changed();
     });
+    #[cfg(feature = "native")]
     ui.horizontal(|ui| {
         ui.add_enabled_ui(!next.upload_url.trim().is_empty(), |ui| {
             if ui
@@ -2571,6 +2819,12 @@ fn settings_ui(ui: &mut egui::Ui, next: &mut SettingsView, acts: &mut SettingsAc
                 .size(11.0),
         );
     });
+    #[cfg(not(feature = "native"))]
+    ui.label(
+        egui::RichText::new("Sharing through the upload page is desktop-only.")
+            .weak()
+            .size(11.0),
+    );
 
     ui.separator();
     section(ui, "Save location");
@@ -2585,6 +2839,7 @@ fn settings_ui(ui: &mut egui::Ui, next: &mut SettingsView, acts: &mut SettingsAc
                 .truncate()
                 .sense(Sense::hover()),
         );
+        #[cfg(feature = "native")]
         if ui.button("Choose…").clicked() {
             acts.pick_dir = true;
         }
@@ -3808,6 +4063,9 @@ fn media_hud(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
 
 /// The Capture dropdown: one place for every grab (screen, region, record,
 /// scroll, OCR, timelapse) so the toolbar keeps its single row.
+///
+/// Desktop only: every entry dispatches a native engine command.
+#[cfg(feature = "native")]
 fn capture_menu(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
     let capturing = app.capture_rx.is_some();
     let accent = pal_accent(ui);
@@ -4077,6 +4335,8 @@ pub fn app_ui(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
     app.main_ctx = Some(ctx.clone());
     app.apply_settings();
     app.poll_platform(&ctx);
+    #[cfg(not(feature = "native"))]
+    app.poll_dropped(&ctx);
     app.poll_capture();
     app.poll_media();
     if app.recording()
@@ -4102,6 +4362,7 @@ pub fn app_ui(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
         .show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    #[cfg(feature = "native")]
                     let capturing = app.capture_rx.is_some();
                     if settings_button(ui).clicked() {
                         app.settings_open = true;
@@ -4144,7 +4405,9 @@ pub fn app_ui(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
                     if ui.button("Open").on_hover_text("Open an image").clicked() {
                         app.open_dialog();
                     }
+                    #[cfg(feature = "native")]
                     capture_menu(ui, app);
+                    #[cfg(feature = "native")]
                     ui.add_enabled_ui(!capturing, |ui| {
                         if ui
                             .button("OCR")
@@ -4808,7 +5071,80 @@ impl eframe::App for SnagCraftApp {
     }
     /// Fully transparent root: the floating widget viewport needs it, and the
     /// main window stays opaque because every panel paints a full-size fill.
+    #[cfg(feature = "native")]
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
         [0.0, 0.0, 0.0, 0.0]
+    }
+
+    /// Web: the canvas is the whole page, so the root fill is the page colour
+    /// (index.html paints the same dark behind it while the wasm boots).
+    #[cfg(not(feature = "native"))]
+    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
+        [0.07, 0.08, 0.10, 1.0]
+    }
+}
+
+// ------------------------------------------------------------- web fallbacks
+
+/// Decode image bytes and load them into the shared session — the web "open"
+/// path (the browser hands over bytes, never a filesystem path).
+#[cfg(not(feature = "native"))]
+fn load_image_bytes(session: &Arc<Mutex<Session>>, bytes: &[u8]) -> Result<(u32, u32), String> {
+    let surface = snagcraft_io::decode(bytes).map_err(|e| e.to_string())?;
+    let (w, h) = (surface.width(), surface.height());
+    let mut guard = session
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    guard.load_surface(surface);
+    Ok((w, h))
+}
+
+/// Browser file plumbing for the web build: the PNG/JPEG/WebP export download.
+#[cfg(all(not(feature = "native"), target_arch = "wasm32"))]
+mod web {
+    use wasm_bindgen::JsCast as _;
+
+    fn js_err(value: wasm_bindgen::JsValue) -> String {
+        format!("{value:?}")
+    }
+
+    /// Save `bytes` through the browser: a typed `Blob`, an object URL, a
+    /// synthetic `<a download>` click, then the URL is revoked. The anchor is
+    /// appended to the body because Chromium ignores a click on a detached one.
+    pub fn download(name: &str, mime: &str, bytes: &[u8]) -> Result<(), String> {
+        let window = web_sys::window().ok_or_else(|| "no window".to_string())?;
+        let document = window.document().ok_or_else(|| "no document".to_string())?;
+
+        let parts = js_sys::Array::new();
+        parts.push(&js_sys::Uint8Array::from(bytes));
+        let bag = web_sys::BlobPropertyBag::new();
+        bag.set_type(mime);
+        let blob =
+            web_sys::Blob::new_with_u8_array_sequence_and_options(&parts, &bag).map_err(js_err)?;
+        let url = web_sys::Url::create_object_url_with_blob(&blob).map_err(js_err)?;
+
+        let anchor: web_sys::HtmlAnchorElement = document
+            .create_element("a")
+            .map_err(js_err)?
+            .dyn_into()
+            .map_err(|_| "createElement('a') did not yield an anchor".to_string())?;
+        anchor.set_href(&url);
+        anchor.set_download(name);
+        if let Some(body) = document.body() {
+            body.append_child(anchor.as_ref()).map_err(js_err)?;
+        }
+        anchor.click();
+        anchor.remove();
+        web_sys::Url::revoke_object_url(&url).ok();
+        Ok(())
+    }
+}
+
+/// Host build without the `native` feature: there is no browser to hand a
+/// download to, so the export path reports it instead of pretending.
+#[cfg(all(not(feature = "native"), not(target_arch = "wasm32")))]
+mod web {
+    pub fn download(_name: &str, _mime: &str, _bytes: &[u8]) -> Result<(), String> {
+        Err("no browser in this build".to_string())
     }
 }

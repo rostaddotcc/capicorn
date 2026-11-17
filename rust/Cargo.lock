@@ -4441,6 +4441,7 @@ dependencies = [
  "egui",
  "egui_kittest",
  "image",
+ "js-sys",
  "rfd",
  "serde_json",
  "snagcraft-capture",
@@ -4449,9 +4450,13 @@ dependencies = [
  "snagcraft-doc",
  "snagcraft-engine",
  "snagcraft-geom",
+ "snagcraft-io",
  "snagcraft-platform",
  "snagcraft-raster",
  "tracing",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
 ]
 
 [[package]]

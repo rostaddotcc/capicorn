@@ -61,6 +61,15 @@ pub struct Session {
             Result<snagcraft_capture::scrolling::ScrollHandle, snagcraft_capture::CaptureError>,
         >,
     >,
+    /// Running recording (W4a). spawn_recording blocks through the share dialog,
+    /// so it runs on a thread; the handle arrives via record_start_rx.
+    record: Option<snagcraft_recording::RecordingHandle>,
+    record_rx: Option<std::sync::mpsc::Receiver<snagcraft_recording::RecordingEvent>>,
+    record_start_rx: Option<
+        std::sync::mpsc::Receiver<
+            Result<snagcraft_recording::RecordingHandle, snagcraft_recording::RecordingError>,
+        >,
+    >,
 }
 
 impl Default for Session {
@@ -90,6 +99,9 @@ impl Session {
             scroll: None,
             scroll_rx: None,
             scroll_start_rx: None,
+            record: None,
+            record_rx: None,
+            record_start_rx: None,
         }
     }
 
@@ -423,6 +435,143 @@ fn cmd_timelapse_poll(s: &mut Session, _p: Value) -> Result<Value, CommandError>
         }
     }
     Ok(json!({"events": events, "running": s.timelapse.is_some()}))
+}
+
+fn cmd_record_start(s: &mut Session, p: Value) -> Result<Value, CommandError> {
+    if s.record.is_some() || s.record_start_rx.is_some() {
+        return Err(CommandError::InvalidParams(
+            "recording already running".into(),
+        ));
+    }
+    let format = match p.get("format").and_then(Value::as_str).unwrap_or("mp4") {
+        "mp4" => snagcraft_recording::RecordingFormat::Mp4,
+        "gif" => snagcraft_recording::RecordingFormat::Gif,
+        other => {
+            return Err(CommandError::InvalidParams(format!(
+                "unknown format '{other}'"
+            )));
+        }
+    };
+    let region = match p.get("region").filter(|r| r.is_object()) {
+        Some(r) => Some(snagcraft_recording::Region {
+            left: p_f32(r, "x")? as i32,
+            top: p_f32(r, "y")? as i32,
+            width: p_f32(r, "w")? as u32,
+            height: p_f32(r, "h")? as u32,
+        }),
+        None => None,
+    };
+    let audio = snagcraft_recording::AudioConfig {
+        source: p
+            .get("audio_source")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+    };
+    let fps = p.get("fps").and_then(Value::as_u64).unwrap_or(30) as u32;
+    let output = p_str(&p, "output")?;
+    let config = snagcraft_recording::RecordingConfig {
+        format,
+        region,
+        audio,
+        fps,
+        output: std::path::PathBuf::from(output),
+    };
+    let (tx, rx) = std::sync::mpsc::channel();
+    let (htx, hrx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = htx.send(snagcraft_recording::spawn_recording(config, tx));
+    });
+    s.record_rx = Some(rx);
+    s.record_start_rx = Some(hrx);
+    Ok(json!({"starting": true}))
+}
+
+fn cmd_record_stop(s: &mut Session, _p: Value) -> Result<Value, CommandError> {
+    match &s.record {
+        Some(h) => {
+            h.stop();
+            Ok(json!({"stopping": true}))
+        }
+        None => Ok(json!({"stopping": false, "starting": s.record_start_rx.is_some()})),
+    }
+}
+
+fn cmd_record_pause(s: &mut Session, _p: Value) -> Result<Value, CommandError> {
+    match &s.record {
+        Some(h) => {
+            h.pause();
+            Ok(json!({"paused": true}))
+        }
+        None => Ok(json!({"paused": false})),
+    }
+}
+
+fn cmd_record_resume(s: &mut Session, _p: Value) -> Result<Value, CommandError> {
+    match &s.record {
+        Some(h) => {
+            h.resume();
+            Ok(json!({"resumed": true}))
+        }
+        None => Ok(json!({"resumed": false})),
+    }
+}
+
+fn cmd_record_state(s: &mut Session, _p: Value) -> Result<Value, CommandError> {
+    Ok(match &s.record {
+        Some(h) => json!({"active": h.is_active(), "paused": h.is_paused()}),
+        None => json!({"active": false, "paused": false, "starting": s.record_start_rx.is_some()}),
+    })
+}
+
+fn cmd_record_poll(s: &mut Session, _p: Value) -> Result<Value, CommandError> {
+    let mut events = Vec::new();
+    if let Some(hrx) = &s.record_start_rx {
+        match hrx.try_recv() {
+            Ok(Ok(handle)) => {
+                s.record = Some(handle);
+                s.record_start_rx = None;
+                events.push(json!({"type": "handle"}));
+            }
+            Ok(Err(e)) => {
+                s.record_start_rx = None;
+                s.record_rx = None;
+                events.push(json!({"type": "failed", "message": e.to_string()}));
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {}
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                s.record_start_rx = None;
+            }
+        }
+    }
+    if let Some(rx) = &s.record_rx {
+        while let Ok(ev) = rx.try_recv() {
+            let j = match ev {
+                snagcraft_recording::RecordingEvent::Started { width, height } => {
+                    json!({"type": "started", "width": width, "height": height})
+                }
+                snagcraft_recording::RecordingEvent::Stopped { path } => {
+                    s.record = None;
+                    json!({"type": "stopped", "path": path.to_string_lossy()})
+                }
+                snagcraft_recording::RecordingEvent::Failed(msg) => {
+                    s.record = None;
+                    json!({"type": "failed", "message": msg})
+                }
+                snagcraft_recording::RecordingEvent::Paused => json!({"type": "paused"}),
+                snagcraft_recording::RecordingEvent::Resumed => json!({"type": "resumed"}),
+            };
+            events.push(j);
+        }
+    }
+    Ok(json!({"events": events, "running": s.record.is_some() || s.record_start_rx.is_some()}))
+}
+
+fn cmd_audio_sources(_s: &mut Session, _p: Value) -> Result<Value, CommandError> {
+    let sources = snagcraft_recording::list_audio_sources()
+        .map_err(|e| CommandError::Capture(e.to_string()))?;
+    Ok(
+        json!({"sources": sources.iter().map(|a| json!({"id": a.id, "name": a.name, "kind": a.kind})).collect::<Vec<_>>()}),
+    )
 }
 
 fn cmd_scroll_start(s: &mut Session, p: Value) -> Result<Value, CommandError> {
@@ -893,6 +1042,48 @@ pub fn registry() -> Vec<CommandSpec> {
             run: cmd_timelapse_poll,
         },
         CommandSpec {
+            id: "record.start",
+            label: "Start screen recording",
+            params_doc: "{format: mp4|gif, region?, audio_source?, fps?, output}",
+            run: cmd_record_start,
+        },
+        CommandSpec {
+            id: "record.stop",
+            label: "Stop recording (finalize file)",
+            params_doc: "{}",
+            run: cmd_record_stop,
+        },
+        CommandSpec {
+            id: "record.pause",
+            label: "Pause recording",
+            params_doc: "{}",
+            run: cmd_record_pause,
+        },
+        CommandSpec {
+            id: "record.resume",
+            label: "Resume recording",
+            params_doc: "{}",
+            run: cmd_record_resume,
+        },
+        CommandSpec {
+            id: "record.state",
+            label: "Recording state",
+            params_doc: "{}",
+            run: cmd_record_state,
+        },
+        CommandSpec {
+            id: "record.poll",
+            label: "Drain recording events",
+            params_doc: "{}",
+            run: cmd_record_poll,
+        },
+        CommandSpec {
+            id: "audio.sources",
+            label: "List audio sources",
+            params_doc: "{}",
+            run: cmd_audio_sources,
+        },
+        CommandSpec {
             id: "scroll.start",
             label: "Start scrolling capture",
             params_doc: "{region:{x,y,w,h}, max_height?, output}",
@@ -1310,6 +1501,56 @@ mod tests {
         let stop = s.dispatch("scroll.stop", json!({})).unwrap();
         assert_eq!(stop["stopped"], false); // handle not arrived yet
         assert_eq!(stop["starting"], true);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn record_commands_headless() {
+        let mut s = Session::new();
+        assert_eq!(
+            s.dispatch("record.stop", json!({})).unwrap()["stopping"],
+            false
+        );
+        assert_eq!(
+            s.dispatch("record.pause", json!({})).unwrap()["paused"],
+            false
+        );
+        assert_eq!(
+            s.dispatch("record.state", json!({})).unwrap()["active"],
+            false
+        );
+        assert!(
+            s.dispatch(
+                "record.start",
+                json!({"format": "avi", "output": "/tmp/x.avi"})
+            )
+            .is_err()
+        );
+        assert!(
+            s.dispatch("record.start", json!({"format": "mp4"}))
+                .is_err()
+        );
+        let a = s.dispatch("audio.sources", json!({})).unwrap();
+        assert!(a["sources"].as_array().is_some());
+        let dir = std::env::temp_dir().join("snagcraft-rec-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let out = dir.join("take.mp4");
+        let r = s
+            .dispatch(
+                "record.start",
+                json!({"format": "mp4", "output": out.to_str().unwrap()}),
+            )
+            .unwrap();
+        assert_eq!(r["starting"], true);
+        assert!(
+            s.dispatch(
+                "record.start",
+                json!({"format": "mp4", "output": out.to_str().unwrap()})
+            )
+            .is_err()
+        );
+        let p = s.dispatch("record.poll", json!({})).unwrap();
+        assert!(p["running"].as_bool().unwrap_or(false));
         std::fs::remove_dir_all(&dir).ok();
     }
 

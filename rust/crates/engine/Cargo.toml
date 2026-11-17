@@ -15,6 +15,7 @@ snagcraft-compose = { path = "../compose" }
 snagcraft-format = { path = "../format" }
 snagcraft-io = { path = "../io" }
 snagcraft-capture = { path = "../capture" }
+snagcraft-recording = { path = "../recording" }
 snagcraft-geom = { path = "../geom" }
 snagcraft-raster = { path = "../raster" }
 snagcraft-color = { path = "../color" }

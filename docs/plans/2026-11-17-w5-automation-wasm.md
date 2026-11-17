@@ -27,6 +27,7 @@ pub fn spawn_control(session: Arc<Mutex<Session>>, port: u16, token: String)
     -> Result<ControlHandle, AutomationError>; // thread + std::net::TcpListener, per-conn thread
 // MCP (rmcp 3.10, stdio transport): tools generated from the engine registry —
 //   command_list, command_run {id, params}, session_info, doc_inspect, doc_export {path,format,quality}
+// rmcp license: Apache-2.0 (allowlist ✓ — NOT MIT as first assumed; corrected wake #34).
 pub fn serve_mcp_stdio(session: Arc<Mutex<Session>>) -> Result<(), AutomationError>; // blocks
 ```
 

@@ -933,8 +933,9 @@ live pass + gates (trim/relicense/cutover/external post). NO releases published.
   clippy/fmt clean incl. wasm target, xtask wasm 10/10.
 - Docs: parity row 84 → W19 (full semantics), About row → W12 + W19, summary
   recounted (155 rows, W0 spike 5, W19 1, 1 pending = Trim).
-- Fresh W19 artifacts from the committed state: release binary + AppImage
-  launch-tested (below). Delivered to rostad.
+- Fresh W19 artifacts from committed 2caae6d: release binary rebuilt, AppImage
+  13.96 MB launch-tested (exit 124, benign locked-GNOME noise only) in
+  rust/dist/w19/, CLI smoke 48 commands. Delivered to rostad.
 - Awaiting rostad unchanged: KDE live pass, trim decision, relicense, cutover.
   Next wake: scrolling-capture flow audit (the last unaudited headline flow).
 

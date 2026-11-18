@@ -762,6 +762,10 @@ live pass + gates (trim/relicense/cutover/external post). NO releases published.
   again, but this time the timelapse flow was audited end-to-end against the
   live anchor, not just the checklist.** Awaiting rostad: KDE live pass, trim
   decision, relicense, cutover. Web C2/C3 polish + design pass = next wakes.
+- Fresh W15 artifacts from committed e6a64ac: release binary rebuilt, AppImage
+  13.94 MB launch-tested (exit 124, benign locked-GNOME noise only) in
+  rust/dist/w15/, CLI smoke 48 commands (unchanged — no new engine commands).
+  Delivered to rostad for the KDE live pass.
 
 ## Appendix — measured reality
 

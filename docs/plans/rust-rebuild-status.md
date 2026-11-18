@@ -804,10 +804,50 @@ live pass + gates (trim/relicense/cutover/external post). NO releases published.
 - **Remaining non-gated: design polish pass (next wake).** Rostad gates
   unchanged: KDE live pass, trim decision, relicense, cutover.
 
+### 2026-11-18 — wake #106: W17 design polish — contrast, grouping, and the invisible-scrollbar root cause
+- Fresh re-check: tree clean at 840ccd3, suite green (490/0/11). Scope = the
+  design pass the loop asks for. Vision-audited light + dark shells and
+  settings, then **code/pixel-verified every flag before fixing** (house rule):
+  shadow-slider "ragged tracks" FALSE (all `add_sized(118px)`); "no status
+  separators" FALSE (ui.separator present); settings-over-toolbar = seeded
+  position, not a layout bug; demo-scene artifacts ignored.
+- **Real fixes (6):**
+  1. Light `FG_MUTED` (107,114,128)→(90,97,109): status/hint contrast on panel
+     4.39:1 → **5.67:1** (WCAG AA at 11px; computed, not eyeballed).
+  2. Dark idle widget outline: `widgets.inactive.bg_stroke` (58,63,71)→
+     (86,93,104) — unchecked checkboxes/buttons were ~1.4:1 on the surface,
+     now ~2.3:1. Panel hairlines untouched. (Override placed AFTER the generic
+     stroke assignment — the first attempt inside the theme match was silently
+     overwritten.)
+  3. Settings `section()`: 10px air above, 13px strong (was 4px / 12.5), 2px
+     below — faster scanning, clearer hierarchy.
+  4. Toolbar grouping separators: edit ops | document ops | menus/tools.
+  5. Settings `default_pos(60, 96)`: first open lands over the canvas, not over
+     the swatches it configures.
+  6. Settings `scroll_bar_visibility(AlwaysVisible)` + **the root cause of the
+     "clipped, no scrollbar" reads: egui 0.37 floating scroll bars have
+     `dormant_handle_opacity = dormant_background_opacity = 0` — AlwaysVisible
+     alone paints NOTHING until the pointer hovers the area.** Proven with
+     minimal kittest probes (Window AND plain ScrollArea both invisible
+     no-hover; the W12 shortcuts snapshot only showed a bar because the test
+     pointer was inside it). Fix: `style_mut_of` both egui themes →
+     dormant handle 0.45 / background 0.12. Pixel-probe confirmed a ~140px
+     dormant thumb at the panel edge with no hover; vision confirmed.
+- Gates: 22 snapshot drifts, ALL verified snapshot-only (zero logic failures),
+  diff vision-checked (text/separators/outlines only, canvas untouched) before
+  re-bless; final snapshots vision-verified (light shell, dark shell, settings).
+  Probe files removed after use.
+- Parent-verified: workspace **490 passed / 0 failed / 11 ignored**, clippy/fmt
+  clean. Native UI changed → fresh release binary + AppImage (below).
+- Awaiting rostad unchanged: KDE live pass, trim decision, relicense, cutover.
+  Non-gated backlog: empty again — next wakes re-audit headline flows or take
+  rostad's feedback.
+
 ## Appendix — measured reality
 
 | Claim | Measured | What changed |
 |---|---|---|
+| Settings "clipped at the bottom, no scrollbar" = layout bug; `AlwaysVisible` should show the bar | egui 0.37 floating bars default to dormant opacity 0 — invisible without hover, in a minimal Window AND a plain ScrollArea probe. The window itself is fine (default outer height 420, content scrolls) | W17 sets dormant handle 0.45 / background 0.12 via `style_mut_of` on both themes; pixel-probe + vision confirm a no-hover thumb. Lesson: probe the pixels before believing a "missing scrollbar" flag |
 | Parity row 191 ticked W4 ("stop converts the run to MP4") + W14 "backlog empty" | The UI's `poll_timelapse` done-arm only reported the frame count — nothing ever called `timelapse.assemble`. The live app auto-assembles on stop (`app.ts:3019-3047`); it has no "Make video" button (the gaps.md framing was wrong too) | W15 wires stop→MP4 off-thread (no session lock). Row split: loop W4 / conversion W15. Lesson: a closed checklist is not an audit — re-read the live anchors of headline flows end-to-end, not just the row text |
 | W1 drag-create worked (spike pattern) | egui's hover_pos on the first drag frame is already the MOVED point → every drag-created object was 0px | UI child's parity.rs drag gates caught it; fixed with pointer.press_origin(). Lesson: seeded-command snapshots cannot catch pointer-path bugs — drag gates are mandatory |
 | ab_glyph `ascent_unscaled() * scale` gives pixel ascent (W0 spike pattern) | Returns RAW font units (Ubuntu-Light ascent=932, upem 1000) → baseline 26 000 px off-canvas → silent text loss in CPU composite | compose uses `font.as_scaled(scale).ascent()` / `.h_advance(gid)` (ScaleFont trait); W0 spike export had the same latent bug (its on-screen text came from egui painter, which masked it) |

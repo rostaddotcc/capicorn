@@ -45,7 +45,7 @@ pub const ACCENT_DARK: Color32 = Color32::from_rgb(0x3d, 0x7e, 0xc2);
 const PANEL_FILL: Color32 = Color32::from_rgb(243, 244, 246);
 const BORDER: Color32 = Color32::from_rgb(209, 213, 219);
 const FG: Color32 = Color32::from_rgb(31, 41, 55);
-const FG_MUTED: Color32 = Color32::from_rgb(107, 114, 128);
+const FG_MUTED: Color32 = Color32::from_rgb(90, 97, 109);
 const DARK_PANEL: Color32 = Color32::from_rgb(30, 33, 38);
 const DARK_SURFACE: Color32 = Color32::from_rgb(35, 38, 44);
 const DARK_BORDER: Color32 = Color32::from_rgb(58, 63, 71);
@@ -3851,7 +3851,13 @@ impl SnagCraftApp {
             // The panel outgrew a short screen in W11: the window caps itself to
             // the viewport and scrolls instead of running off the bottom.
             .vscroll(true)
+            // W17: show the scrollbar even before the first scroll, so the
+            // below-fold rows read as reachable, not clipped (W11 lesson).
+            .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
             .default_width(380.0)
+            // W17: first open lands over the canvas, not over the toolbar/props
+            // rail it configures (the old egui default covered the swatches).
+            .default_pos(egui::pos2(60.0, 96.0))
             .show(ctx, |ui| {
                 settings_ui(ui, &mut next, &mut acts, &sources, &status);
             });
@@ -4025,8 +4031,11 @@ fn picture_icon(ui: &mut egui::Ui) {
 }
 
 fn section(ui: &mut egui::Ui, title: &str) {
-    ui.add_space(4.0);
-    ui.label(egui::RichText::new(title).strong().size(12.5));
+    // W17: clearer hierarchy — more air above each group, a touch larger
+    // than the 12.5 the body rows use, so scanning the panel is faster.
+    ui.add_space(10.0);
+    ui.label(egui::RichText::new(title).strong().size(13.0));
+    ui.add_space(2.0);
 }
 
 /// Human label for a tesseract language code (`swe` → "Swedish (swe)").
@@ -4778,9 +4787,25 @@ pub fn apply_theme(ctx: &egui::Context, theme: Theme) {
     v.widgets.open.fg_stroke = Stroke::new(1.0, fg);
     v.widgets.noninteractive.bg_stroke = Stroke::new(1.0, border);
     v.widgets.inactive.bg_stroke = Stroke::new(1.0, border);
+    if matches!(theme, Theme::Dark) {
+        // W17: unchecked checkboxes and idle buttons were nearly invisible
+        // (DARK_BORDER on DARK_SURFACE ≈ 1.4:1). A lighter idle outline makes
+        // the affordance readable without touching the panel hairlines.
+        v.widgets.inactive.bg_stroke = Stroke::new(1.0, Color32::from_rgb(86, 93, 104));
+    }
     v.widgets.hovered.bg_stroke = Stroke::new(1.0, accent);
     v.widgets.active.bg_stroke = Stroke::new(1.5, accent);
     ctx.set_visuals(v);
+    // W17: egui's default floating scroll bars are INVISIBLE when dormant
+    // (dormant_*_opacity = 0) — `AlwaysVisible` alone draws nothing until the
+    // pointer hovers the area. Give dormant bars a faint but real presence so
+    // below-fold content reads as reachable (settings, shortcuts sheet).
+    for t in [egui::Theme::Light, egui::Theme::Dark] {
+        ctx.style_mut_of(t, |style| {
+            style.spacing.scroll.dormant_handle_opacity = 0.45;
+            style.spacing.scroll.dormant_background_opacity = 0.12;
+        });
+    }
 }
 
 // ------------------------------------------------------------------ painting
@@ -6261,6 +6286,8 @@ pub fn app_ui(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
                             app.dispatch("edit.undo", serde_json::json!({}));
                         }
                     });
+                    // W17: group the strip — edit ops | document ops | menus.
+                    ui.separator();
                     if ui
                         .button("Resize…")
                         .on_hover_text("Resize the canvas — annotations scale with it")
@@ -6292,6 +6319,7 @@ pub fn app_ui(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
                     if ui.button("Open").on_hover_text("Open an image").clicked() {
                         app.open_dialog();
                     }
+                    ui.separator();
                     let recent_chip = egui::Button::new(
                         egui::RichText::new(format!("Recent ({})", app.recent_count())).size(11.0),
                     )

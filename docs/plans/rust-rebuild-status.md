@@ -839,6 +839,10 @@ live pass + gates (trim/relicense/cutover/external post). NO releases published.
   Probe files removed after use.
 - Parent-verified: workspace **490 passed / 0 failed / 11 ignored**, clippy/fmt
   clean. Native UI changed → fresh release binary + AppImage (below).
+- Fresh W17 artifacts from committed dd0b4fc: release binary rebuilt, AppImage
+  13.94 MB launch-tested (exit 124; benign locked-GNOME noise only — portal
+  color-scheme timeouts, arboard X11 fallback, GNOME tray-host absent) in
+  rust/dist/w17/, CLI smoke 48 commands. Delivered to rostad.
 - Awaiting rostad unchanged: KDE live pass, trim decision, relicense, cutover.
   Non-gated backlog: empty again — next wakes re-audit headline flows or take
   rostad's feedback.

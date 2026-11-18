@@ -551,11 +551,32 @@ fn cmd_doc_inspect(s: &mut Session, _p: Value) -> Result<Value, CommandError> {
     Ok(json!({"size": {"w": d.size.w, "h": d.size.h}, "next_id": d.next_id, "objects": d.objects}))
 }
 
+/// W19: a save suffix must stay a simple stem fragment — no separators, no
+/// dots, bounded length — so a hostile param cannot escape the save folder.
+fn sanitize_suffix(raw: &str) -> String {
+    raw.chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+        .take(32)
+        .collect()
+}
+
+/// Insert `suffix` before the extension of `name` (no extension: append).
+fn apply_suffix(name: &str, suffix: &str) -> String {
+    if suffix.is_empty() {
+        return name.to_string();
+    }
+    match name.rfind('.') {
+        Some(i) => format!("{}{}.{}", &name[..i], suffix, &name[i + 1..]),
+        None => format!("{name}{suffix}"),
+    }
+}
+
 /// `doc.save` — with an explicit `path` this writes the editable `.snagcraft`
 /// document (W1 behaviour, unchanged). Without one it is the desktop Save
 /// button: render the watermarked composite, drop it in the save folder (the
 /// `save_dir` setting, else `$HOME/Pictures/SnagCraft`) under the expanded
-/// `filename_pattern`, and report `{saved: <path>}`.
+/// `filename_pattern` (plus the optional `suffix`, W19), and report
+/// `{saved: <path>}`.
 fn cmd_doc_save(s: &mut Session, p: Value) -> Result<Value, CommandError> {
     if s.doc().is_none() {
         return Err(CommandError::NoDoc);
@@ -577,6 +598,10 @@ fn cmd_doc_save(s: &mut Session, p: Value) -> Result<Value, CommandError> {
     let quality = param_quality(&p).unwrap_or(settings.default_quality.clamp(1, 100));
     let dir = snagcraft_io::files::resolve_save_dir(settings.save_dir.as_deref());
     let name = snagcraft_io::files::build_filename_now(&settings.filename_pattern, format);
+    // W19: the live Save writes a copy with an "-edited" suffix
+    // (writeImage, app.ts:1811-1831); the caller supplies the suffix.
+    let suffix = sanitize_suffix(p.get("suffix").and_then(Value::as_str).unwrap_or(""));
+    let name = apply_suffix(&name, &suffix);
     let img = s.render_watermarked(p.get("watermark"))?;
     let path = snagcraft_io::recent::save_in_dir(&img, &dir, &name, format, quality)
         .map_err(|e| CommandError::Io(e.to_string()))?;
@@ -1458,7 +1483,7 @@ pub fn registry() -> Vec<CommandSpec> {
         CommandSpec {
             id: "doc.save",
             label: "Save native .snagcraft",
-            params_doc: "{path?} — no path saves a flat image into the save folder",
+            params_doc: "{path?, suffix?} — no path saves a flat image into the save folder; suffix (e.g. \"-edited\") is inserted before the extension",
             run: cmd_doc_save,
         },
         CommandSpec {
@@ -1975,6 +2000,43 @@ mod tests {
         let second = again["saved"].as_str().unwrap().to_string();
         assert_ne!(second, saved, "same-second saves must not overwrite");
         assert!(std::path::Path::new(&second).is_file());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// W19: the Save suffix lands before the extension, and a hostile suffix
+    /// is sanitized to a plain stem fragment (no separators, no dots).
+    #[test]
+    fn save_suffix_lands_before_extension_and_is_sanitized() {
+        let dir = std::env::temp_dir().join(format!("snagcraft-w19-suffix-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut s = Session::new();
+        s.settings_mut().save_dir = Some(dir.to_string_lossy().to_string());
+        s.settings_mut().filename_pattern = "shot".to_string();
+        s.dispatch("doc.new", json!({"w": 8, "h": 6})).unwrap();
+
+        let out = s
+            .dispatch("doc.save", json!({"suffix": "-edited"}))
+            .unwrap();
+        let name = std::path::Path::new(out["saved"].as_str().unwrap())
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        assert_eq!(name, "shot-edited.png");
+
+        // Hostile: separators and dots are stripped, the folder is never left.
+        let out = s
+            .dispatch("doc.save", json!({"suffix": "../evil/x."}))
+            .unwrap();
+        let saved = out["saved"].as_str().unwrap().to_string();
+        assert!(saved.starts_with(&dir.to_string_lossy().to_string()));
+        let name = std::path::Path::new(&saved)
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        assert_eq!(name, "shotevilx.png");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

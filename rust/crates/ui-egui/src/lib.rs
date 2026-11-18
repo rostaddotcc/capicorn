@@ -1297,7 +1297,7 @@ impl SnagCraftApp {
                 // Autosave a copy first: the document below is a separate
                 // in-memory surface, so this never touches the original file.
                 let autosaved = self.autosave_capture(&surface);
-                if let Some(path) = &autosaved {
+                if let Ok(Some(path)) = &autosaved {
                     self.push_recent(path.clone());
                 }
                 self.sess().load_surface(surface);
@@ -1305,12 +1305,19 @@ impl SnagCraftApp {
                 // A fresh capture starts a clean document.
                 self.doc_dirty = false;
                 self.selected = None;
+                // W19: all three auto-save outcomes stay visible (live
+                // autoSave wording semantics, app.ts:1837-1855).
                 self.status = match autosaved {
-                    Some(path) => format!(
+                    Ok(Some(path)) => format!(
                         "Captured {w}×{h} — auto-saved to {} — annotate away.",
                         path.display()
                     ),
-                    None => format!("Captured {w}×{h} — annotate away."),
+                    Ok(None) => {
+                        format!("Captured {w}×{h} — auto-save is off, not saved to disk.")
+                    }
+                    Err(err) => {
+                        format!("Captured {w}×{h} — kept in the editor — auto-save failed: {err}")
+                    }
                 };
             }
             Ok(Err(e)) => {
@@ -1973,23 +1980,51 @@ impl SnagCraftApp {
         }
     }
 
-    /// Ctrl+S: flatten into the save folder under the filename pattern.
-    pub fn save_now(&mut self) {
-        let mut params = serde_json::json!({});
-        if let Some(watermark) = self.watermark_value() {
-            params["watermark"] = watermark;
+    /// W19: the live Save (`saveEdited`, app.ts:1862-1885) — guards first
+    /// ("Nothing to save yet" / "No changes to save"), then a *new* flattened
+    /// copy with the `-edited` suffix (never overwrites; `save_in_dir`
+    /// dedups), status "Saved copy {filename}", save point moves, Recent
+    /// pickup. Returns whether a file landed (the close guard waits on it).
+    pub fn save_now(&mut self) -> bool {
+        #[cfg(not(feature = "native"))]
+        {
+            // No filesystem in a browser tab: Export downloads the same image.
+            self.export_dialog()
         }
-        match self.exec("doc.save", params) {
-            Ok(value) => {
-                let saved = value["saved"].as_str().unwrap_or_default().to_string();
-                self.status = format!("Saved {saved}");
-                self.doc_dirty = false;
-                self.redraw = true;
-                if !saved.is_empty() {
-                    self.push_recent(PathBuf::from(saved));
+        #[cfg(feature = "native")]
+        {
+            if self.sess().doc().is_none() {
+                self.status = "Nothing to save yet — capture a screen first.".into();
+                return false;
+            }
+            if !self.doc_dirty {
+                self.status = "No changes to save".into();
+                return false;
+            }
+            let mut params = serde_json::json!({"suffix": "-edited"});
+            if let Some(watermark) = self.watermark_value() {
+                params["watermark"] = watermark;
+            }
+            match self.exec("doc.save", params) {
+                Ok(value) => {
+                    let saved = value["saved"].as_str().unwrap_or_default().to_string();
+                    let filename = std::path::Path::new(&saved)
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_else(|| saved.clone());
+                    self.status = format!("Saved copy {filename}");
+                    self.doc_dirty = false;
+                    self.redraw = true;
+                    if !saved.is_empty() {
+                        self.push_recent(PathBuf::from(saved));
+                    }
+                    true
+                }
+                Err(err) => {
+                    self.status = format!("Save failed: {err}");
+                    false
                 }
             }
-            Err(err) => self.status = format!("Save failed: {err}"),
         }
     }
 
@@ -2012,6 +2047,8 @@ impl SnagCraftApp {
             .add_filter(filter, &exts)
             .save_file()
         else {
+            // Live app.ts:1908-1910: a dismissed dialog is reported, not silent.
+            self.status = "Save As cancelled".into();
             return false;
         };
         self.save_as_to(path)
@@ -2701,9 +2738,12 @@ impl SnagCraftApp {
 
     /// W3 gap: a fresh capture is written to the save folder when the setting is
     /// on. The document keeps its own copy — the file is a *copy*, never a move.
-    fn autosave_capture(&mut self, surface: &Surface) -> Option<PathBuf> {
+    /// W19: returns the copy, `Ok(None)` when the setting is off, or the failure
+    /// reason — the caller composes the status so a failed auto-save is never
+    /// swallowed by the "Captured…" message (live autoSave, app.ts:1837-1855).
+    pub fn autosave_capture(&mut self, surface: &Surface) -> Result<Option<PathBuf>, String> {
         if !self.settings.autosave_captures {
-            return None;
+            return Ok(None);
         }
         let dir = self.ensure_save_dir();
         let name = snagcraft_io::files::build_filename_now(
@@ -2712,19 +2752,15 @@ impl SnagCraftApp {
         );
         let stem = name.strip_suffix(".png").unwrap_or(&name);
         let path = dedup_path(&dir, stem, "png");
-        match image::save_buffer(
+        image::save_buffer(
             &path,
             surface.as_raw(),
             surface.width(),
             surface.height(),
             image::ExtendedColorType::Rgba8,
-        ) {
-            Ok(()) => Some(path),
-            Err(err) => {
-                self.status = format!("Auto-save failed: {err}");
-                None
-            }
-        }
+        )
+        .map(|()| Some(path))
+        .map_err(|err| err.to_string())
     }
 
     // ---- heartbeat ----------------------------------------------------------
@@ -3320,6 +3356,14 @@ impl SnagCraftApp {
                 ui.label("Screenshot, annotate and share — one window, no cloud.");
                 ui.add_space(6.0);
                 ui.hyperlink_to(REPO_URL, REPO_URL);
+                // W19: the live About's license line (index.html:1184) — the
+                // W12 tick overclaimed it. Relicensing stays rostad's gate.
+                ui.add_space(4.0);
+                ui.label(
+                    egui::RichText::new("GPL-3.0-or-later · commercial license available")
+                        .size(11.0)
+                        .weak(),
+                );
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
                     if ui.button("OK").clicked() {
@@ -3908,9 +3952,9 @@ impl SnagCraftApp {
                 });
             });
         match action {
-            // Save: only close once the file really landed.
+            // Save: only close once the file really landed (live saveEdited).
             Some(0) => {
-                if self.save_dialog() {
+                if self.save_now() {
                     self.doc_dirty = false;
                     self.force_quit = true;
                     self.confirm_close = false;
@@ -5922,6 +5966,16 @@ fn file_menu(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
             app.save_as_dialog();
             ui.close();
         }
+        // W19: the rebuild's editable format stays reachable, explicitly
+        // labeled — the live app has no native save, so this is an addition.
+        if ui
+            .button("Save editable (.snagcraft)…")
+            .on_hover_text("Save annotations too — reopen and keep editing later")
+            .clicked()
+        {
+            app.save_dialog();
+            ui.close();
+        }
         ui.separator();
         if ui
             .button("Upload…")
@@ -6414,10 +6468,10 @@ pub fn app_ui(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
                     }
                     if ui
                         .button("Save")
-                        .on_hover_text("Save native .snagcraft (editable)")
+                        .on_hover_text("Save a flattened copy into your save folder (Ctrl+S)")
                         .clicked()
                     {
-                        app.save_dialog();
+                        app.save_now();
                     }
                     if ui.button("Open").on_hover_text("Open an image").clicked() {
                         app.open_dialog();
@@ -7160,7 +7214,7 @@ pub fn app_ui(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
                 });
                 ui.separator();
                 if menu_row(ui, "Save As…", "") {
-                    app.save_dialog();
+                    app.save_as_dialog();
                 }
                 if menu_row(ui, "Export PNG…", "") {
                     app.export_dialog();

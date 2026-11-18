@@ -891,6 +891,53 @@ live pass + gates (trim/relicense/cutover/external post). NO releases published.
 - Awaiting rostad unchanged: KDE live pass, trim decision, relicense, cutover.
   Next wake: audit the next headline flow (save/export or scrolling capture).
 
+### 2026-11-18 — wake #108: W19 save-flow audit — live saveEdited semantics + a swallowed error
+- Fresh re-check: tree clean at 9e205f6, suite green (497/0/11). Next headline
+  flow per the W18 plan: **save/export**, walked against the live anchors.
+  Parity row 84 ("Save writes a -edited copy, never overwrites, 'Saved copy …'")
+  was still at "W0 spike (PNG out)" — the semantics had never landed.
+- **Fixes (all live-anchored):**
+  1. `save_now` = live `saveEdited` (app.ts:1862-1885): guards "Nothing to save
+     yet — capture a screen first." / "No changes to save"; writes a NEW
+     flattened copy with the `-edited` suffix (engine `doc.save` gains a
+     sanitized `suffix` param — hostile "../evil/x." → "evilx", tested);
+     "Saved copy {filename}" wording; save point moves (engine saved_depth);
+     Recent pickup; never overwrites (save_in_dir dedup, gate-verified).
+  2. Toolbar Save + close-guard Save now use the same flat-copy path (live:
+     both are saveEdited). The rebuild's editable .snagcraft save stays
+     reachable as an explicit File → "Save editable (.snagcraft)…" entry —
+     an addition, labeled as such (the live app has no native save).
+  3. Context-menu "Save As…" was wired to the NATIVE save dialog — mislabeled;
+     now calls the real save_as_dialog.
+  4. Save As dismissed → "Save As cancelled" (app.ts:1908-1910), was silent.
+  5. **Auto-save failure was swallowed**: autosave_capture set an error status
+     that poll_capture immediately overwrote with "Captured…". Now returns
+     Result<Option<PathBuf>, String>; all three outcomes stay visible (saved /
+     off-not-saved / kept-in-editor-auto-save-failed, live autoSave semantics).
+  6. Web Ctrl+S falls back to Export (no filesystem in a tab).
+  7. **About license line** — vision caught a real W12 overclaim: the live
+     About shows "GPL-3.0-or-later · commercial license available"
+     (index.html:1184), the rebuild modal didn't. Added + label-gated +
+     vision-verified. Relicensing itself stays rostad's gate.
+- **Gates:** 6 UI gates (tests/w19_save.rs: no-doc guard via doc.close, clean
+  guard, -edited copy + save point + Recent, dedup across saves, File-menu
+  both-paths, autosave ×3 outcomes) + 1 engine gate (suffix placement +
+  sanitization). Harness lesson: **push_settings, not app.settings assignment**
+  — doc.save reads the ENGINE's save_dir; the first test run leaked four
+  -edited PNGs into the host's real ~/Pictures/SnagCraft (removed; the gates
+  now sync through settings.set). w12_about re-blessed twice (File-menu item
+  shifted the About row → cursor-only diff; then the license line), both
+  vision-verified. Parallel SIGSEGV in w3_shell = wgpu teardown noise again;
+  serial run clean.
+- Parent-verified: workspace **504 passed / 0 failed / 11 ignored** (serial),
+  clippy/fmt clean incl. wasm target, xtask wasm 10/10.
+- Docs: parity row 84 → W19 (full semantics), About row → W12 + W19, summary
+  recounted (155 rows, W0 spike 5, W19 1, 1 pending = Trim).
+- Fresh W19 artifacts from the committed state: release binary + AppImage
+  launch-tested (below). Delivered to rostad.
+- Awaiting rostad unchanged: KDE live pass, trim decision, relicense, cutover.
+  Next wake: scrolling-capture flow audit (the last unaudited headline flow).
+
 ## Appendix — measured reality
 
 | Claim | Measured | What changed |

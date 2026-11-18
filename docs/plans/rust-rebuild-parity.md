@@ -81,7 +81,7 @@ Effects are applied to the **image layer at export resolution** (scene px × exp
 | **Open image** (`Ctrl+O`) — native picker, filters png/jpg/jpeg/webp/gif/bmp/avif/tif/tiff | `app.ts:4909-4931` (filters :4918), loader `read_image_file` `commands.rs:284-298` | W0 spike (PNG) |
 | **Open from file association / `cli-open` event / launch_request.file** | `app.ts:5238-5262`, backend `cli.rs:62-80` | W3 |
 | **Drag & drop** an image onto the window (`dataTransfer.files[0]`, `image/*`) | `app.ts:5099-5105` | W1 |
-| **Save** (`Ctrl+S`) — writes a *new* copy with `-edited` suffix, never overwrites; status "Saved copy …" | `app.ts:1862-1885`, `writeImage` :1811-1831 | W0 spike (PNG out) |
+| **Save** (`Ctrl+S`) — writes a *new* copy with `-edited` suffix, never overwrites; status "Saved copy …"; guards "Nothing to save yet" / "No changes to save" | `app.ts:1862-1885`, `writeImage` :1811-1831 | W19 (W0 spike proved PNG out; full saveEdited semantics W19 — toolbar Save + close-guard Save match too; the editable .snagcraft save stays reachable as an explicit File-menu addition) |
 | **Save As…** (`Ctrl+Shift+S`) — native dialog, suggested `buildFilename(pattern, format)` | `app.ts:1891-1914`, `save_image_as` `commands.rs:187-228` | W9 |
 | **Auto-save capture on arrival** (setting; off = keep in editor only) | `app.ts:1837-1855`, `AUTOSAVE_KEY` `settings.ts:50`, default on `settings.ts:237` | W4 |
 | **Export formats** PNG / JPEG / WebP, with quality 1–100 (JPEG/WebP only) | `settings.ts:10` (`ExportFormat`), picker `settings.ts:939-944`, default quality 90 `settings.ts:63`, encode `export.rs:85-166`, format enum `export.rs:28-83` | W0 spike (PNG) |
@@ -291,18 +291,18 @@ Sections rendered: General, Capture, Recording audio, Global hotkeys, Save locat
 
 | Feature | Evidence | rust |
 |---|---|---|
-| Modal with logo mark, name, version (from backend `get_version`), one-line description, repo `github.com/rostaddotcc/snagcraft`, license `GPL-3.0-or-later · commercial license available`, OK button | `app.ts:1169-1188` (version `:1181`, repo `:1183`, license `:1184`), `commands.rs:437-444` | W12 |
+| Modal with logo mark, name, version (from backend `get_version`), one-line description, repo `github.com/rostaddotcc/snagcraft`, license `GPL-3.0-or-later · commercial license available`, OK button | `app.ts:1169-1188` (version `:1181`, repo `:1183`, license `:1184`), `commands.rs:437-444` | W12 + W19 (license line W19 — the W12 tick overclaimed it; vision caught it) |
 | Opened from File → About (menu shows the version as its shortcut hint); Esc / OK close it | `app.ts:803`, `:4582`, `openAbout` `:4854-4866` | W12 |
 
 ---
 
-## Wave coverage at W18 (2026-11-18)
+## Wave coverage at W19 (2026-11-18)
 
 The W1-era scope note that used to sit here ("not started at all: shell, recording,
 scrolling, OCR, timelapse, upload, settings, themes, shortcuts, About") is obsolete —
-W2–W5 landed most of it, and W7–W18 closed the rest. The W6b summary that used to
+W2–W5 landed most of it, and W7–W19 closed the rest. The W6b summary that used to
 sit here (45 `pending`) was stale: those rows were closed by W7–W14 but the table
-was never recounted. Current state of the checklist (recounted row-by-row at W18):
+was never recounted. Current state of the checklist (recounted row-by-row at W19):
 
 | Status | Rows |
 |--------|------|
@@ -310,15 +310,16 @@ was never recounted. Current state of the checklist (recounted row-by-row at W18
 | `W4` (incl. `W4 + W13`, `W4 + W18`) | 33 |
 | `W3` | 30 |
 | `W11` | 14 |
-| `W12` | 13 |
+| `W12` (incl. `W12 + W19`) | 13 |
 | `W8` | 7 |
-| `W0 spike` | 6 |
+| `W0 spike` | 5 |
 | `W9` | 5 |
 | `W18` | 4 |
 | `W7` | 3 |
 | `W1` | 2 |
 | `W10` | 2 |
 | `W15` | 1 |
+| `W19` | 1 |
 | `pending` (Trim — rostad-gated) | 1 |
 | `n/a` | 1 |
 | **total** | **155** |
@@ -341,7 +342,12 @@ limits (gaps.md C2/C3). **W18 walked the recording flow end-to-end against the l
 anchors and closed seven residuals the W4 ticks had papered over: live filename
 pattern, stop→Recent pickup + empty-stop report, live start/stop status wording,
 start-error classification, capture-busy guard, pause-aware HUD clock, and the
-Region scope tag (four new rows + the Pause/Resume row split).**
+Region scope tag (four new rows + the Pause/Resume row split).** W19 walked the
+save/export flow: full live `saveEdited` semantics (guards, `-edited` copy, "Saved
+copy" wording, save point, Recent pickup), Save As cancel report, auto-save
+outcomes all visible (the failure was swallowed), toolbar/close-guard Save parity,
+the editable save kept as an explicit File-menu addition, and the About license
+line the W12 tick had overclaimed (vision caught it).
 
 The single `pending` row is **Trim** — deliberately out of parity (the live v1.5.3
 has no trim) and gated on rostad's build-or-drop decision (`docs/gaps.md` A2).

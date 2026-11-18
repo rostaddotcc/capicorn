@@ -77,6 +77,8 @@ fn about_modal_shows_name_version_and_repo() {
     h.get_by_label("SnagCraft");
     h.get_by_label(&format!("version {APP_VERSION}"));
     h.get_by_label_contains("https://github.com/rostaddotcc/snagcraft");
+    // W19: the live license line (the W12 tick overclaimed it).
+    h.get_by_label_contains("GPL-3.0-or-later");
 
     h.snapshot("w12_about");
 

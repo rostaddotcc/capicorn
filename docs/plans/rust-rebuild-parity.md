@@ -147,10 +147,14 @@ Effects are applied to the **image layer at export resolution** (scene px × exp
 | Containers **MP4** (default) / **GIF**; GIF is silent by construction | `recording.rs:23,31-32`; `RecFormat` `settings.ts:12`; picker `settings.ts:951-955` | W4 |
 | **Region recording** — `{left,top,width,height}` in stream px, every frame cropped, ffmpeg sized to even-padded region | `recording.rs:41-44` | W4 |
 | **Source** `monitor` (default) vs `window` — narrows what the portal picker offers | `recording.rs:34-35` | W4 |
-| **Pause/Resume** — frames dropped consumer-side, session + stream + ffmpeg survive, resume writes the same file; paused time leaves no frames | `recording.rs:37-39`; UI button `app.ts:819`, `recPauseBtn` `:1320`, paused-total bookkeeping `:1472` | W4 |
+| **Pause/Resume** — frames dropped consumer-side, session + stream + ffmpeg survive, resume writes the same file; paused time leaves no frames | `recording.rs:37-39`; UI button `app.ts:819`, `recPauseBtn` `:1320`, paused-total bookkeeping `:1472` | W4 + W18 (engine pause/resume W4; HUD clock freeze at the pause moment + paused-span skip on resume W18 — live `paintRecTimer` `app.ts:2289-2292`) |
 | **Audio** — mic (`list_audio_sources` id) and/or default output **monitor**, mixed into one AAC track; never an error when empty | `recording.rs:30-32`; pretty-names `:147-200`; UI mic select `settings.ts:855-863`, system-audio switch `settings.ts:866-870`; `list_audio_sources` wiring `app.ts:4453-4461` | W4 + W13 (single-source W4; mic+monitor `amix` mixing, `@DEFAULT_MONITOR@`, settings fallback W13 — live-verified on pipewire-pulse) |
 | `recording-state {recording, path}` events so a window that missed the invoke result resyncs | `recording.rs:46-47`; widget mirrors it `widget-main.ts:412-416` | W4 |
 | Elapsed timer pill, repainted every 500 ms while a take runs | `app.ts:2326-2340` | W4 |
+| Recording filename `SnagCraft-{date}-{time}.{format}` (tokens expanded at start, not an epoch) | `app.ts:2368-2369` (`recordingFilename`) | W18 |
+| Stop flow: "Finishing the recording…" → "Recording saved: {path}" + immediate Recent-rail pickup; an empty path reports "no file was written" | `app.ts:2497-2515` (`stopRecording`), `:5313-5321` (state mirror) | W18 |
+| Start flow: waiting status names format/region; success "Recording — click Stop when you're done."; errors classified (neutral cancel / permission-recovery hint / portal-log pointer); a capture in flight blocks a new take | `app.ts:2402-2405`, `:2439-2444`, `:2475`, `:2481-2494` | W18 |
+| HUD "Region" scope tag on region takes (absent on whole-screen) | `app.ts:2308-2310` (`paintRecording` / `recScopeEl`) | W18 |
 | Recording thumbnails for the Recent rail | `commands.rs:533-545` (`recording_thumb`) | W9 (film-icon placeholder) |
 | Copy diagnostics (portal + per-take `.rec.log`) to clipboard | `commands.rs:457-501`, `settings.ts` troubleshooting button `:996-1004` | W11 |
 | **Trim** a finished take | *not implemented in v1.5.3* — no trim command or UI (grep `trim` in `recording.rs`/`app.ts` is string-truncation only) | pending |
@@ -292,31 +296,32 @@ Sections rendered: General, Capture, Recording audio, Global hotkeys, Save locat
 
 ---
 
-## Wave coverage at W15 (2026-11-18)
+## Wave coverage at W18 (2026-11-18)
 
 The W1-era scope note that used to sit here ("not started at all: shell, recording,
 scrolling, OCR, timelapse, upload, settings, themes, shortcuts, About") is obsolete —
-W2–W5 landed most of it, and W7–W15 closed the rest. The W6b summary that used to
+W2–W5 landed most of it, and W7–W18 closed the rest. The W6b summary that used to
 sit here (45 `pending`) was stale: those rows were closed by W7–W14 but the table
-was never recounted. Current state of the checklist (recounted row-by-row at W15):
+was never recounted. Current state of the checklist (recounted row-by-row at W18):
 
 | Status | Rows |
 |--------|------|
 | `W2` (incl. 3 `W2 + W14`) | 33 |
-| `W4` (incl. `W4 + W13`) | 33 |
+| `W4` (incl. `W4 + W13`, `W4 + W18`) | 33 |
 | `W3` | 30 |
 | `W11` | 14 |
 | `W12` | 13 |
 | `W8` | 7 |
 | `W0 spike` | 6 |
 | `W9` | 5 |
+| `W18` | 4 |
 | `W7` | 3 |
 | `W1` | 2 |
 | `W10` | 2 |
 | `W15` | 1 |
 | `pending` (Trim — rostad-gated) | 1 |
 | `n/a` | 1 |
-| **total** | **151** |
+| **total** | **155** |
 
 What the waves delivered, per `docs/plans/rust-rebuild-status.md`: 13-tool annotation
 parity with 10 object kinds and 5 shape variants (W2); tray, global hotkeys,
@@ -331,14 +336,19 @@ About + derived dirty-state (W12); mic + system-audio mixing (W13); select-mode
 resize handles, double-click text/callout re-edit, brush nib preview, crop
 click semantics (W14); **stop-time timelapse → MP4 auto-assembly in the UI flow
 (W15 — the W4 tick on the old combined row overclaimed: the loop shipped, the
-stop→video conversion did not until W15).**
+stop→video conversion did not until W15).** W16 closed the web clipboard/drag-drop
+limits (gaps.md C2/C3). **W18 walked the recording flow end-to-end against the live
+anchors and closed seven residuals the W4 ticks had papered over: live filename
+pattern, stop→Recent pickup + empty-stop report, live start/stop status wording,
+start-error classification, capture-busy guard, pause-aware HUD clock, and the
+Region scope tag (four new rows + the Pause/Resume row split).**
 
 The single `pending` row is **Trim** — deliberately out of parity (the live v1.5.3
 has no trim) and gated on rostad's build-or-drop decision (`docs/gaps.md` A2).
 Every other row is backed by live code. The remaining open items in `docs/gaps.md`
 are rostad gates (A1–A4), web-MVP limits (C1–C3) and future platform ports (D1–D2).
 
-**Coverage:** 151 rows across 14 sections. Every TS line number came from a grep/read
+**Coverage:** 155 rows across 14 sections. Every TS line number came from a grep/read
 against commit `3cec2ee` (baseline v1.5.3) during W1; the only exceptions are the two
 `CHANGELOG.md` citations, marked as such. Rust statuses were re-audited at W6b as
-described at the top of this file, and recounted at W15.
+described at the top of this file, recounted at W15, and flow-audited at W18.

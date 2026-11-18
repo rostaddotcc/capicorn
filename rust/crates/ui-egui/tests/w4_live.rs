@@ -42,10 +42,15 @@ fn widget_rec_starts_a_take_without_panicking() {
     h.run_steps(3);
     h.get_by_label("Rec").click();
     h.run_steps(2);
-    // The take is armed and the status names the file we are writing.
+    // W18: the take is armed with the live waiting status (format named),
+    // or the start failure is classified like the live app.
     let status = h.state().status.clone();
     assert!(
-        status.contains("Recording to") || status.contains("Recording failed"),
+        status.contains("Starting MP4 recording")
+            || status.contains("Starting GIF recording")
+            || status.contains("Recording failed")
+            || status.contains("Recording cancelled")
+            || status.contains("Could not start recording"),
         "Rec must either arm a take or report the real failure: {status}"
     );
     // The widget swaps to the stop square while the take is live.
@@ -61,7 +66,7 @@ fn widget_rec_starts_a_take_without_panicking() {
         h.get_by_label("Stop").click();
         h.run_steps(1);
         assert!(
-            h.state().status.contains("Stopping the recording")
+            h.state().status.contains("Finishing the recording")
                 || h.state().status.contains("Recording"),
             "Stop must reach the engine: {}",
             h.state().status
@@ -123,7 +128,7 @@ fn recording_hud_renders_the_injected_take() {
     h.get_by_label("Stop recording").click();
     h.run_steps(1);
     assert!(
-        h.state().status.contains("Stopping the recording"),
+        h.state().status.contains("Finishing the recording"),
         "Stop must dispatch record.stop: {}",
         h.state().status
     );

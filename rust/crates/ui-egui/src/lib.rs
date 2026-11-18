@@ -713,6 +713,15 @@ pub struct RecordState {
     pub paused: bool,
     /// Set when the `started` event arrives — the HUD's elapsed clock.
     pub started_at: Option<Instant>,
+    /// W18: when the current pause began (`None` = not paused). The clock
+    /// freezes here while paused (live `paintRecTimer`, app.ts:2289-2292).
+    pub paused_at: Option<Instant>,
+    /// W18: total time spent paused, subtracted from the elapsed clock so a
+    /// resumed take skips the paused span instead of jumping by it.
+    pub paused_total: Duration,
+    /// W18: the region this take records (`None` = whole screen/window) —
+    /// the HUD's "Region" scope tag (live `recScopeEl`, app.ts:2308-2310).
+    pub region: Option<GRect>,
     pub format: String,
     /// PulseAudio/PipeWire source id; `None` records silently.
     pub audio: Option<String>,
@@ -730,6 +739,9 @@ impl Default for RecordState {
             active: false,
             paused: false,
             started_at: None,
+            paused_at: None,
+            paused_total: Duration::ZERO,
+            region: None,
             format: "mp4".to_string(),
             audio: None,
             sources: Vec::new(),
@@ -737,6 +749,36 @@ impl Default for RecordState {
             output: None,
         }
     }
+}
+
+/// W18: the live recording filename — `SnagCraft-{date}-{time}.{format}`
+/// (`recordingFilename`, app.ts:2368-2369), tokens expanded at start time.
+pub fn recording_filename(dir: &Path, ext: &str) -> PathBuf {
+    let stem = snagcraft_io::files::expand("SnagCraft-{date}-{time}", chrono::Local::now());
+    dir.join(format!("{stem}.{ext}"))
+}
+
+/// W18: classify a failed `record.start` exactly like the live app
+/// (app.ts:2481-2494): a user dismissal stays neutral, a permission/portal
+/// refusal says how to recover, anything else points at the portal log
+/// (the rebuild writes the same `~/.cache/snagcraft-portal.log`).
+///
+/// Order note: the rebuild's portal errors are wrapped ("screen cast portal:
+/// … failed: … cancelled"), so the cancel check runs FIRST — the live app
+/// received bare cancel strings and could test portal keywords first.
+pub fn record_start_error_status(err: &str) -> String {
+    let lower = err.to_ascii_lowercase();
+    if lower.contains("cancel") {
+        return "Recording cancelled — no screen was picked.".into();
+    }
+    if ["portal", "permission", "denied", "deny", "refus"]
+        .iter()
+        .any(|key| lower.contains(key))
+    {
+        return "Recording cancelled — screen sharing wasn't allowed. Approve the system prompt and try again."
+            .into();
+    }
+    format!("Could not start recording: {err} — see ~/.cache/snagcraft-portal.log for details")
 }
 
 /// Scrolling capture (engine `scroll.*` mirror).
@@ -2023,6 +2065,12 @@ impl SnagCraftApp {
         if self.recording() {
             return;
         }
+        // Live app.ts:2402-2405: a capture in flight blocks a new take.
+        #[cfg(feature = "native")]
+        if self.capture_rx.is_some() || self.scroll.armed {
+            self.status = "Wait for the capture to finish before recording.".into();
+            return;
+        }
         // W11: the separate recording folder and the persisted container are
         // what the Record button uses; `rec.format`/`rec.audio` stay the
         // in-session overrides when a picker set them.
@@ -2036,7 +2084,8 @@ impl SnagCraftApp {
             self.rec.format.clone()
         };
         let ext = if format == "gif" { "gif" } else { "mp4" };
-        let path = dir.join(format!("snagcraft-rec-{}.{ext}", epoch_secs()));
+        // W18: the live recording filename (app.ts:2368-2369), not an epoch.
+        let path = recording_filename(&dir, ext);
         let mut params = serde_json::json!({
             "format": ext,
             "output": path.to_string_lossy(),
@@ -2060,18 +2109,32 @@ impl SnagCraftApp {
                 self.rec.active = false;
                 self.rec.paused = false;
                 self.rec.started_at = None;
+                self.rec.paused_at = None;
+                self.rec.paused_total = Duration::ZERO;
+                self.rec.region = region;
                 self.rec.output = Some(path.display().to_string());
-                self.status = format!("Recording to {}…", path.display());
+                // Live app.ts:2439-2444: the waiting status names the format
+                // and the region size when one was picked.
+                let fmt = if ext == "gif" { "GIF" } else { "MP4" };
+                self.status = match region {
+                    Some(r) => format!(
+                        "Starting {fmt} region recording — {} × {}…",
+                        r.w.round() as i64,
+                        r.h.round() as i64
+                    ),
+                    None => format!("Starting {fmt} recording — choose a screen…"),
+                };
                 self.redraw = true;
             }
-            Err(err) => self.status = format!("Record: {err}"),
+            Err(err) => self.status = record_start_error_status(&err),
         }
     }
 
     /// `record.stop` — the encoder finalises and reports `stopped`.
     pub fn stop_recording(&mut self) {
         match self.exec("record.stop", serde_json::json!({})) {
-            Ok(_) => self.status = "Stopping the recording…".into(),
+            // Live app.ts:2501 wording.
+            Ok(_) => self.status = "Finishing the recording…".into(),
             Err(err) => self.status = format!("Record stop: {err}"),
         }
     }
@@ -2116,13 +2179,21 @@ impl SnagCraftApp {
         self.rec.active = false;
         self.rec.paused = false;
         self.rec.started_at = None;
+        self.rec.paused_at = None;
+        self.rec.paused_total = Duration::ZERO;
+        self.rec.region = None;
     }
 
     /// Elapsed time of the running take (from the `started` event).
+    /// W18: paused takes freeze the clock at the pause moment; resumed takes
+    /// skip the paused spans (live `paintRecTimer`, app.ts:2289-2292).
     pub fn record_elapsed(&self) -> Duration {
-        self.rec
-            .started_at
-            .map_or(Duration::ZERO, |start| start.elapsed())
+        let Some(start) = self.rec.started_at else {
+            return Duration::ZERO;
+        };
+        let end = self.rec.paused_at.unwrap_or_else(Instant::now);
+        end.duration_since(start)
+            .saturating_sub(self.rec.paused_total)
     }
 
     /// HUD clock: `00:12`.
@@ -2686,12 +2757,12 @@ impl SnagCraftApp {
                             self.rec.active = true;
                             self.rec.armed = true;
                             self.rec.started_at.get_or_insert_with(Instant::now);
-                            self.status = "Recording — the HUD's Stop ends it.".into();
+                            // Live app.ts:2475 / :5312 wording.
+                            self.status = "Recording — click Stop when you're done.".into();
                         }
                         Some("stopped") => {
                             let path = event["path"].as_str().unwrap_or_default().to_string();
-                            self.end_recording();
-                            self.status = format!("Recording saved: {path}");
+                            self.record_stopped(&path);
                         }
                         Some("failed") => {
                             let msg = event["message"]
@@ -2701,8 +2772,18 @@ impl SnagCraftApp {
                             self.end_recording();
                             self.status = format!("Recording failed: {msg}");
                         }
-                        Some("paused") => self.rec.paused = true,
-                        Some("resumed") => self.rec.paused = false,
+                        Some("paused") => {
+                            self.rec.paused = true;
+                            // W18: freeze the clock at the pause moment.
+                            self.rec.paused_at.get_or_insert_with(Instant::now);
+                        }
+                        Some("resumed") => {
+                            self.rec.paused = false;
+                            // W18: bank the paused span so the clock skips it.
+                            if let Some(at) = self.rec.paused_at.take() {
+                                self.rec.paused_total += at.elapsed();
+                            }
+                        }
                         _ => {}
                     }
                 }
@@ -2724,6 +2805,20 @@ impl SnagCraftApp {
             if let Some(paused) = v["paused"].as_bool() {
                 self.rec.paused = paused;
             }
+        }
+    }
+
+    /// W18: a finished take — live `stopRecording` (app.ts:2505-2511): the
+    /// saved file lands in the Recent rail immediately; an empty path is
+    /// reported, never shown as a blank "saved".
+    pub fn record_stopped(&mut self, path: &str) {
+        self.end_recording();
+        if path.is_empty() {
+            self.status = "Recording stopped, but no file was written.".into();
+        } else {
+            self.status = format!("Recording saved: {path}");
+            self.push_recent(PathBuf::from(path));
+            self.redraw = true;
         }
     }
 
@@ -5723,6 +5818,14 @@ fn media_hud(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
                         format!("Recording {clock}")
                     };
                     ui.label(hud_text(label).color(pal_fg(ui)));
+                    // W18: the live pill's scope tag (app.ts:2308-2310).
+                    if app.rec.region.is_some() {
+                        ui.label(
+                            egui::RichText::new("Region")
+                                .size(11.0)
+                                .color(pal_muted(ui)),
+                        );
+                    }
                     if app.rec.active {
                         let toggle = if app.rec.paused { "Resume" } else { "Pause" };
                         if ui

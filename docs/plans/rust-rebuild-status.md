@@ -847,6 +847,49 @@ live pass + gates (trim/relicense/cutover/external post). NO releases published.
   Non-gated backlog: empty again — next wakes re-audit headline flows or take
   rostad's feedback.
 
+### 2026-11-18 — wake #107: W18 recording-flow audit — seven residuals behind the W4 ticks
+- Fresh re-check: tree clean at 5484bbe, suite green (490/0/11). Applied the W15
+  lesson to the next headline flow: **recording**, walked start→stop→pause
+  against the live anchors line-by-line. The W4 section looked closed; the UI
+  flow was not.
+- **Seven residuals fixed (all live-anchored):**
+  1. Filename: `snagcraft-rec-{epoch}` → live `SnagCraft-{date}-{time}.{format}`
+     (app.ts:2368-2369, `recording_filename` helper).
+  2. Stop → immediate Recent-rail pickup (`record_stopped`, app.ts:2505-2511);
+     empty path → "Recording stopped, but no file was written." (was a blank
+     "Recording saved: ").
+  3. Status wording: waiting "Starting MP4/GIF recording — choose a screen…"
+     (region variant with W×H), started "Recording — click Stop when you're
+     done.", stop "Finishing the recording…" (app.ts:2439-2444/2475/2501).
+  4. Start-error classification (app.ts:2481-2494): cancel → neutral, portal/
+     permission → recovery hint, other → portal-log pointer (the rebuild writes
+     the same ~/.cache/snagcraft-portal.log). Order adapted: rebuild portal
+     errors are WRAPPED ("screen cast portal: … cancelled"), so cancel is
+     checked before portal keywords — live received bare cancel strings.
+  5. Capture-busy guard: "Wait for the capture to finish before recording."
+     (app.ts:2402-2405).
+  6. **Pause-aware HUD clock** (live paintRecTimer app.ts:2289-2292): freeze at
+     the pause moment (`paused_at`), bank the span on resume (`paused_total`),
+     subtract from elapsed. Was ticking straight through pauses.
+  7. HUD "Region" scope tag on region takes (app.ts:2308-2310), gone otherwise.
+- **Gates:** 7 new kittest/unit gates (tests/w18_record.rs): stop→Recent,
+  empty-stop, deterministic pause-clock arithmetic (13 s frozen across reads),
+  error classification ×3, filename pattern, Region tag present/absent,
+  busy-guard. Two harness lessons: inject `rec.active` only — poll_record
+  clears an injected `armed` when the engine reports no take (W4 idiom); and
+  use seeded() + scratch save_dir so the host's real Pictures folder never
+  leaks into recent-rail assertions. w4_live wording assertions updated to the
+  live strings (one SIGSEGV was parallel-teardown noise after the assertion
+  panic; serial run was clean).
+- Parent-verified: workspace **497 passed / 0 failed / 11 ignored**, clippy/fmt
+  clean, layers legal, NO snapshot drift (Region tag only paints when set).
+- Docs: parity §6 Pause/Resume row split (engine W4 / HUD clock W18), four new
+  W18 rows with live anchors, summary recounted (155 rows, 1 pending = Trim).
+- Fresh W18 artifacts from the committed state: release binary + AppImage
+  launch-tested (below). Delivered to rostad.
+- Awaiting rostad unchanged: KDE live pass, trim decision, relicense, cutover.
+  Next wake: audit the next headline flow (save/export or scrolling capture).
+
 ## Appendix — measured reality
 
 | Claim | Measured | What changed |

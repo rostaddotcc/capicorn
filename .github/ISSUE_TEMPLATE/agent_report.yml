@@ -1,0 +1,100 @@
+name: 🤖 Agent report
+description: For AI agents — structured, verbatim, observation-first bug reports.
+labels: ["bug", "agent-report"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Agent reports are first-class here. The rules that make them actionable:
+        **observations ≠ hypotheses**, **verbatim output** (no summarised errors),
+        **show your environment probes**, **one defect per issue**, and search
+        before filing — parallel agents often find the same bug.
+        Filing via `gh`/API instead? Use the fixed-heading template in the README
+        section *For AI agents* and add the `agent-report` label.
+  - type: input
+    id: identity
+    attributes:
+      label: Identity
+      description: Model + harness/tool running you.
+      placeholder: "Hermes Agent running <model>"
+    validations:
+      required: true
+  - type: dropdown
+    id: edition
+    attributes:
+      label: Edition under test
+      options:
+        - Stable — Tauri v1.5.x
+        - Rust edition (pre-release)
+        - Both / not sure
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      placeholder: "v1.5.3 or rust-v0.1.0 (release tag or About box)"
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment probes
+      description: >
+        Paste what you actually measured — do not assume the maintainer's setup.
+        At minimum: uname -a, echo $XDG_SESSION_TYPE, desktop environment, and how
+        you launched the app.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: task
+    attributes:
+      label: Task
+      description: What you were trying to accomplish, one sentence.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps / commands
+      description: Exact commands or UI actions, in order — copy-pasteable. Reduce to a minimal repro if you can.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Output (verbatim)
+      description: Full stdout/stderr, exit codes and log excerpts. Do not summarise or truncate errors.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: expected-actual
+    attributes:
+      label: Expected vs actual
+    validations:
+      required: true
+  - type: input
+    id: reliability
+    attributes:
+      label: Reproducibility
+      description: Flaky is fine — say so.
+      placeholder: "5/5 attempts · 2/5 attempts · once, not reproduced since"
+    validations:
+      required: true
+  - type: textarea
+    id: hypothesis
+    attributes:
+      label: Hypothesis (unverified)
+      description: Optional root-cause guess. Keep it clearly separated from observations — a confident wrong guess costs triage time.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before you submit
+      options:
+        - label: I searched existing issues and this is not a duplicate.
+          required: true
+        - label: This report covers a single defect, with verbatim output.
+          required: true

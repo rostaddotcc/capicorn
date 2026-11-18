@@ -1,16 +1,48 @@
 # SnagCraft ✦
 
-**Open-source Snagit-style screen capture & annotation.** Screenshot, mark up, record — without the subscription.
+[![Release](https://img.shields.io/github/v/release/rostaddotcc/snagcraft)](https://github.com/rostaddotcc/snagcraft/releases/latest)
+[![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)](LICENSE)
+[![Rust CI](https://github.com/rostaddotcc/snagcraft/actions/workflows/rust.yml/badge.svg)](https://github.com/rostaddotcc/snagcraft/actions/workflows/rust.yml)
 
-SnagCraft is a clean-room, cross-platform reimplementation of the Snagit workflow:
-**capture → annotate → share in under ten seconds.** Built with Rust + Tauri, in the
-spirit of the ArtCraft project (open-source clones of proprietary creative tools).
+**Open-source Snagit-style screen capture & annotation.** Screenshot, mark up,
+record — without the subscription. Capture → annotate → share in under ten seconds.
 
-> Status: **alpha, Linux-first.** Linux (Wayland/X11) is the primary target and the only
-> platform tested end-to-end. The **Windows `.exe` is untested** — CI builds it from the
-> same cross-platform code (screenshots, editor, export, clipboard, tray, recording via
-> ffmpeg `gdigrab`), but nobody has run it on real Windows hardware, so treat it as
-> experimental. Scrolling capture and global hotkeys are Linux-only for now.
+SnagCraft is a clean-room, Linux-first reimplementation of the Snagit workflow, in
+the spirit of ArtCraft (open-source clones of proprietary creative tools).
+Bugs, ideas and test reports are welcome — from **humans and AI agents alike**.
+See [Reporting bugs & requesting features](#-bugs-ideas--feedback) for how we like
+them served.
+
+## Two editions — please say which one you're using
+
+| | **Stable — v1.5.x** | **Rust edition — 0.1.0 pre-release** |
+|---|---|---|
+| Download | [Latest release](https://github.com/rostaddotcc/snagcraft/releases/latest) | [rust-v0.1.0](https://github.com/rostaddotcc/snagcraft/releases/tag/rust-v0.1.0) |
+| Stack | Tauri 2 (Rust backend + web frontend) | Pure Rust — egui/eframe on wgpu, no webview |
+| Status | The shipped, tested channel | Feature-parity rewrite, published for testing |
+| Extras | — | Headless CLI, TCP control channel + **MCP server** (46 commands), WASM web build |
+| Source | repo root (`src/`, `src-tauri/`) | [`rust/`](rust/README.md) |
+
+Both editions ship the same capture → annotate → share workflow. The Tauri line
+remains **stable** until an explicit cutover; the Rust edition is where new
+architecture work lands. **Every bug report should name its edition** — the two
+codebases are different, and a report without one costs a round-trip.
+
+## Install
+
+Grab an artifact from the release page of your edition:
+
+```bash
+# AppImage (portable, both editions)
+chmod +x SnagCraft-*.AppImage && ./SnagCraft-*.AppImage
+
+# Debian/Ubuntu
+sudo dpkg -i snagcraft_*.deb
+```
+
+Recording needs `ffmpeg` on `PATH`; OCR needs `tesseract`. On Wayland, capture and
+recording go through the desktop portal — a consent prompt on first use, no root,
+no hacks.
 
 ## Why
 
@@ -26,14 +58,14 @@ share* flow in one lightweight app. SnagCraft fills that gap.
   portal on Wayland (no hacks, no root)
 - **Scrolling capture** — scroll the window by hand and SnagCraft stitches the frames
   into one tall image
-- **Screen recording** to MP4 or GIF — full screen, a region or a picked window
-  (Linux: ScreenCast portal · Windows: ffmpeg `gdigrab`), with an on-screen timer,
-  **pause/resume** and optional **microphone + system audio** (mixed to AAC)
+- **Screen recording** to MP4 or GIF — full screen, a region or a picked window,
+  with an on-screen timer, **pause/resume** and optional **microphone + system audio**
+  (mixed to AAC)
 - **Interval capture** — a screenshot every 5 s / 10 s / 30 s / 60 s / 5 min, optionally
   stitched into an MP4 timelapse
 - Capture timer (off / 3 / 5 / 10 s) and a `PrintScreen` shortcut
 
-**Annotate** (Fabric.js, native resolution)
+**Annotate** (native resolution)
 - 13 tools: select, crop, arrow, text, rectangle, **true Gaussian blur** / pixelate /
   blackout, spotlight, highlighter, callout, step numbers, **live magnify lens**, brush,
   fill bucket
@@ -59,32 +91,28 @@ share* flow in one lightweight app. SnagCraft fills that gap.
 
 **Open & record**
 - **New canvas** (`Ctrl+N`) — start drawing immediately on a white canvas; pick a preset
-  resolution (HD → 4K, square, story) or type your own, white or transparent background.
-  SnagCraft opens on a default 1280×800 white canvas, ready to draw
+  resolution (HD → 4K, square, story) or type your own, white or transparent background
 - **File → Open…** (`Ctrl+O`) to annotate any image on disk; drag-and-drop and `Ctrl+V` too
 - **Audio in recordings** — microphone and/or system audio, mixed into AAC
 - **Pause/resume** a take without starting a new file
 
 **Desktop integration**
-- **Single instance** — launching SnagCraft again focuses the running window instead of
-  opening a second one; `snagcraft --capture` / `--region` trigger a capture from any
-  script, shortcut or panel companion
+- **Single instance** — launching SnagCraft again focuses the running window;
+  `snagcraft --capture` / `--region` trigger a capture from any script or shortcut
 - **File associations** — installers register SnagCraft as an image editor
   (PNG/JPEG/WebP/GIF/BMP/AVIF/TIFF): right-click → *Open with SnagCraft*
-- **Panel companions** for GNOME Shell and KDE Plasma 6 in [`integrations/`](integrations/README.md) —
-  one-click capture buttons that talk to the running app
-- System tray with **click-to-restore** (left click or double click opens the window,
-  middle click toggles the widget, right click is the menu) and minimise-to-tray
-- **Start at login** — Settings → General registers SnagCraft as a login item
-  (XDG autostart on Linux, AppImage-aware; registry on Windows; LaunchAgent on macOS)
-- A collapsible floating capture widget (the "flärp") — a glass bookmark tab with the
-  unicorn mark and a breathing accent spine; hover to open, drag to park anywhere.
-  **Fixed size** — it can never be stretched, maximised or minimised like a window.
-  The pill has Full, Region and a **red Rec button** (full-screen recording; the widget
-  hides itself so it never lands in the video). While a take runs the tab's spine breathes
-  red, and reopening the widget shows a pulsing red **Stop** button
+- **Panel companions** for GNOME Shell and KDE Plasma 6 in [`integrations/`](integrations/README.md)
+- System tray with click-to-restore and minimise-to-tray · **Start at login**
+- A collapsible floating capture widget (the "flärp") — hover to open, drag to park
+  anywhere, fixed size. Full / Region / a red **Rec** button; while a take runs the
+  widget hides itself so it never lands in the video
 - Global hotkeys via the Wayland GlobalShortcuts portal (KDE)
 - Light / dark themes, and a "save before closing?" guard
+
+**Automation (Rust edition)**
+- One command registry, four surfaces: the egui app, a headless **CLI**, a **TCP JSON
+  control channel** and an **MCP server** — 46 commands, same semantics everywhere
+- A **WASM web build** runs the same engine in the browser
 
 ## Shortcuts
 
@@ -102,19 +130,110 @@ share* flow in one lightweight app. SnagCraft fills that gap.
 | `Ctrl` / `Cmd` + `S` | Save |
 | `Ctrl` / `Cmd` + `Shift` + `S` | Save As… |
 | `Ctrl` / `Cmd` + `,` | Settings |
+| `?` | Shortcuts overlay (Rust edition) |
 | `Delete` / `Backspace` | Delete the selected annotation |
 | `Esc` | Cancel / deselect / close |
 
-## Tech stack
+## 🐛 Bugs, ideas & feedback
 
-| Layer | Choice |
-|-------|--------|
-| Shell | [Tauri 2](https://tauri.app) (Rust backend, web frontend) |
-| Capture (Linux) | `ashpd` → xdg-desktop-portal Screenshot |
-| Capture (macOS/Win) | `xcap` |
-| Clipboard | `arboard` |
-| Editor | [Fabric.js](http://fabricjs.com) canvas |
-| Frontend | Vite + TypeScript |
+Reports from **both humans and AI agents** are welcome — automated testing has
+already caught real bugs here. To keep triage fast, this is how we prefer to
+receive them.
+
+### The short version
+
+1. **Search first.** [Open issues](https://github.com/rostaddotcc/snagcraft/issues)
+   (and closed ones) — add a 👍 or new evidence to an existing report instead of
+   opening a duplicate.
+2. **One issue per problem.** A report with three bugs gets triaged as zero.
+3. **Use the issue forms** — *New issue* → **Bug report**, **Feature request** or
+   **Agent report**. They ask for exactly what we need.
+4. **Name the edition and version** — stable v1.5.x or Rust pre-release, plus the
+   release tag or About-box version.
+5. English is preferred; Swedish works too.
+
+### What a good bug report contains
+
+- **Edition + exact version** (release tag you downloaded, or the About box)
+- **OS, desktop environment, session type** — Wayland or X11 matters a lot here
+  (`echo $XDG_SESSION_TYPE`)
+- **Steps to reproduce** — numbered, from a fresh launch, minimal
+- **Expected vs actual behaviour** — two short sentences
+- **Logs** — terminal output, `~/.cache/snagcraft-portal.log` for portal problems,
+  and the `*.rec.log` written next to a failed recording
+- **A screenshot or short clip** for anything visual
+
+Feature requests: describe the **problem** you hit, not only the solution you
+imagined — there may be a better fix, or an existing feature you haven't found.
+
+### 🤖 For AI agents
+
+Agent reports are first-class citizens. Use the **Agent report** form, or file via
+`gh` / the REST API with this structure — fixed headings, verbatim output:
+
+```markdown
+## Identity
+<model + harness, e.g. "Hermes Agent running <model>">
+
+## Environment
+<edition + version · OS · desktop env · session type>
+<probe output: `uname -a`, `echo $XDG_SESSION_TYPE`, app version command>
+
+## Task
+<what you were trying to accomplish, one sentence>
+
+## Steps / commands
+<exact commands or UI actions, in order — copy-pasteable>
+
+## Output
+<verbatim stdout/stderr or log excerpts — do not summarise or truncate errors>
+
+## Expected vs actual
+<two short paragraphs>
+
+## Hypothesis (unverified)
+<optional root-cause guess — clearly separated from observations>
+```
+
+What makes an agent report actionable:
+
+- **Observations ≠ hypotheses.** Report what happened; mark guesses as guesses.
+  A confident wrong root-cause costs more triage time than no guess at all.
+- **Verbatim output.** Full error text and exit codes, not paraphrases.
+- **Show your environment probes.** Don't assume the maintainer's distro, session
+  type or installed deps — paste what you actually measured.
+- **A minimal repro beats a long narrative.** If you can reduce it to three
+  commands, do that first.
+- **Say so when it's flaky.** "Reproduced 2/5 attempts" is useful data, not a
+  disqualifier.
+- **One defect per issue**, and search before filing — parallel agents often find
+  the same bug.
+
+Example:
+
+```bash
+gh issue create --repo rostaddotcc/snagcraft \
+  --title "Region capture grabs the wrong monitor (Rust edition 0.1.0)" \
+  --label bug --label rust-edition --label agent-report \
+  --body-file report.md
+```
+
+### What happens next
+
+- SnagCraft is maintained by one person with agent help; issues are triaged in
+  batches. Expect days, not hours — every report gets read, there is no SLA.
+- Labels you'll see: `bug`, `enhancement`, `agent-report`, `rust-edition`,
+  `stable-edition`, `needs-info`, `good first issue`.
+- `needs-info` means the report is missing something to act on. Issues that stall
+  without a repro may be closed — reopening with new evidence is always welcome.
+- Want to fix it yourself? See [CONTRIBUTING.md](CONTRIBUTING.md) — PRs welcome,
+  dual-license note included.
+
+### Security
+
+Please **don't** open public issues for vulnerabilities. Use
+[private vulnerability reporting](https://github.com/rostaddotcc/snagcraft/security/advisories/new)
+(Security tab → Report a vulnerability).
 
 ## Platforms
 
@@ -125,24 +244,26 @@ share* flow in one lightweight app. SnagCraft fills that gap.
 | Copy / save (PNG / JPEG / WebP) | ✅ | ⚠️ |
 | System tray + floating widget | ✅ | ⚠️ |
 | Start at login | ✅ XDG autostart | ⚠️ registry Run key |
-| Screen recording | ✅ ScreenCast portal (needs `ffmpeg`) | ⚠️ ffmpeg `gdigrab` (needs `ffmpeg`) |
+| Screen recording | ✅ ScreenCast portal (needs `ffmpeg`) | ⚠️ ffmpeg `gdigrab` |
 | Scrolling capture | ✅ | 🔜 |
 | Global hotkeys | ✅ GlobalShortcuts portal | 🔜 |
 
-> **Windows is compile-verified only.** The `.exe` is built by CI from the same code but
-> has not been run on real hardware — **Linux is the focus.** Windows test reports are
-> welcome, but expect rough edges.
+> **Windows is compile-verified only.** The stable line's `.exe` is built by CI from
+> the same code but has not been run on real hardware — **Linux is the focus.**
+> Windows test reports are welcome (they're some of the most useful issues you can
+> file), but expect rough edges. The Rust edition currently ships Linux artifacts.
 
 ## Recording troubleshooting
 
 Linux recording uses the xdg-desktop-portal ScreenCast API and needs `ffmpeg` on
 `PATH`. If a take fails to start, SnagCraft logs every portal step to
 `~/.cache/snagcraft-portal.log`, and each take writes a `*.rec.log` next to the video.
-Those two files pinpoint exactly where the pipeline stopped.
+Those two files pinpoint exactly where the pipeline stopped — attach them to your
+issue.
 
 ## Build from source
 
-Prerequisites: Rust (stable), Node 20+, pnpm, and the
+**Stable line (Tauri):** Rust (stable), Node 20+, pnpm, and the
 [Tauri Linux deps](https://tauri.app/start/prerequisites/) (`libwebkit2gtk-4.1-dev`, …).
 
 ```bash
@@ -151,18 +272,28 @@ pnpm tauri dev      # run in development
 pnpm tauri build    # produce AppImage / deb / dmg / exe
 ```
 
+**Rust edition:** Rust (stable) only — no Node, no webview.
+
+```bash
+cd rust
+cargo run -p snagcraft            # native app
+cargo test --workspace --no-fail-fast
+cargo clippy --workspace          # deny-lints must stay clean
+cargo xtask layers                # enforce crate layering
+```
+
+See [`rust/README.md`](rust/README.md) for the CLI, automation channel, MCP server
+and WASM build.
+
 ## Project layout
 
 ```
-src/            frontend (Vite + TS)
-  editor/       Fabric.js annotation editor
-  ui/           app shell & capture flow
-src-tauri/      Rust backend
-  src/capture.rs    portal / xcap capture
-  src/clipboard.rs  clipboard image
-  src/commands.rs   Tauri command surface
-docs/specs/     design spec
-docs/plans/     implementation plans
+src/            stable frontend (Vite + TS, Fabric.js editor)
+src-tauri/      stable Rust backend (portal / xcap capture, clipboard, commands)
+rust/           Rust edition workspace (sans-I/O engine, egui UI, CLI, MCP, WASM)
+integrations/   GNOME Shell & KDE Plasma 6 panel companions
+docs/specs/     design specs
+docs/plans/     implementation plans & parity tracking
 ```
 
 ## License
@@ -180,9 +311,9 @@ issue or reach out to arrange it.
 
 ## Acknowledgements
 
-Inspired by [ArtCraft](https://github.com/) (clean-room Adobe clones),
+Inspired by the ArtCraft idea (clean-room clones of proprietary creative tools),
 [Cap](https://cap.so) (open-source Loom), and
-[Flameshot](https://flameshot.org). Not affiliated with TechSmith/Snakit.
+[Flameshot](https://flameshot.org). Not affiliated with TechSmith/Snagit.
 
 Bundled fonts (SIL OFL 1.1 — see `src/assets/fonts/OFL.txt`): Inter, Source Serif 4,
 JetBrains Mono, and Caveat.

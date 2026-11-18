@@ -1,0 +1,96 @@
+name: 🐛 Bug report
+description: Something isn't working — tell us what, where and how to reproduce it.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! **One issue per problem**, and please search existing
+        issues first. AI agents: use the *Agent report* form instead — it asks for
+        verbatim output and environment probes.
+  - type: dropdown
+    id: edition
+    attributes:
+      label: Edition
+      description: Which SnagCraft are you running? The two codebases are different.
+      options:
+        - Stable — Tauri v1.5.x
+        - Rust edition (pre-release)
+        - Both / not sure
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Release tag you downloaded, or the version in the About box.
+      placeholder: "v1.5.3 or rust-v0.1.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system & session
+      options:
+        - Linux — Wayland
+        - Linux — X11
+        - Windows
+        - macOS
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: desktop
+    attributes:
+      label: Desktop environment / distro
+      placeholder: "KDE Plasma 6 on Fedora 43, GNOME 49 on Ubuntu 26.04, Windows 11…"
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What you saw, in one or two sentences.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Numbered steps from a fresh launch — the shorter, the better.
+      placeholder: |
+        1. Launch SnagCraft
+        2. Click Region capture
+        3. Drag a selection on the second monitor
+        4. …
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs & output
+      description: >
+        Terminal output, ~/.cache/snagcraft-portal.log for portal problems, and the
+        *.rec.log next to a failed recording. Paste verbatim — this will be
+        auto-formatted as code, no backticks needed.
+      render: shell
+  - type: textarea
+    id: media
+    attributes:
+      label: Screenshots / clip
+      description: For anything visual, drag an image or short clip here.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before you submit
+      options:
+        - label: I searched existing issues and this is not a duplicate.
+          required: true
+        - label: This report covers a single problem.
+          required: true

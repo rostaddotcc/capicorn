@@ -226,18 +226,40 @@ The WASM web build (`rust/apps/snagcraft-web`, trunk) is a working editor —
 browser-verified boot, full editor render, PNG export-download — but it is an MVP,
 not feature parity with the native app.
 
-### C1 — Web command surface is 21 of 41 commands
+### C1 — Web command surface is 25 of 48 commands
+
+> **W16 recount (2026-11-18):** the registry grew to 48 (W12–W14); the web
+> subset is 25 (counted from the `#[cfg(feature = "native")]` gates in
+> `registry()`). The old "21 of 41" figure was stale.
 
 - **What:** the web engine build (`--no-default-features --features web`)
-  registers 21 commands. Native-only: `capture.full`, `clipboard.copy/paste`,
-  `ocr.*` (3), `record.*` (6), `scroll.*` (3), `timelapse.*` (3), `upload.open`,
-  `audio.sources`. `Capture`, OCR, widget and tray are hidden in the web UI.
+  registers 25 commands. Native-only (23): `capture.full`, `clipboard.copy/paste`,
+  `diagnostics.copy`, `ocr.*` (3), `record.*` (6), `scroll.*` (3), `timelapse.*` (4),
+  `upload.open/send`, `audio.sources`. `Capture`, OCR, widget and tray are hidden
+  in the web UI. **W16 note:** web Copy/Paste no longer need the engine's
+  `clipboard.*` commands — the UI talks to the browser Clipboard API directly.
 - **Why:** those commands need Linux platform backends (portal, PipeWire,
   tesseract subprocess, arboard). The web build opens/saves documents and does the
   full annotation toolset.
-- **Where logged:** status wake #39 (21/41 in wasm rlib), wake #50.
+- **Where logged:** status wake #39 (21/41 in wasm rlib), wake #50; W16 recount.
 
 ### C2 — Image copy/paste on web is status-only
+
+> **W16 update (2026-11-18): CLOSED.** Copy renders the same composite Export
+> uses, encodes PNG and writes it via `ClipboardItem` + `clipboard.write()`;
+> Paste reads via `clipboard.read()` → first `image/png` → `load_image_bytes`
+> (the dropped-file path). Both run off the UI thread through
+> `wasm_bindgen_futures::spawn_local` with an mpsc result channel polled in
+> `app_ui`; one op at a time, every terminal path clears it. Text-only
+> clipboards report "Clipboard has no image to paste." (not an error);
+> permission/API failures surface with the Export/drop fallback hint.
+> **Browser-verified (Chromium, trunk release build):** Copy → independent
+> `navigator.clipboard.read()` probe found `image/png` (459 bytes) + status
+> "Copied 120×80 image to clipboard — paste anywhere."; Ctrl+V after dropping a
+> different image restored the original 120×80 composite + "Pasted 120×80 from
+> clipboard."; text-only clipboard → "Clipboard has no image to paste.",
+> canvas untouched. web-sys 0.3.107 `ClipboardItem` is stable (no unstable
+> feature flag needed).
 
 - **What:** the web UI reports clipboard status but does not write the image to
   the browser clipboard; there is no `ClipboardItem` write, so Copy does not put a
@@ -249,6 +271,14 @@ not feature parity with the native app.
   ClipboardItem write)").
 
 ### C3 — Web drag-and-drop open is code-complete but not browser-exercised
+
+> **W16 update (2026-11-18): CLOSED.** Driven in a real Chromium session: a
+> synthetic `DataTransfer` + `File` (120×80 PNG built in an offscreen canvas)
+> dispatched as dragenter/dragover/drop on the eframe canvas opened through
+> `poll_dropped` → `bytes_async` → `load_image_bytes`. Vision-verified: the
+> image rendered, dimensions 120×80, status "Opened 120×80 from the dropped
+> file — annotate away." A second drop (60×40) replaced it, proving the path
+> repeatably works.
 
 - **What:** dropping an image file on the web canvas opens it in the code path,
   but this has not been driven in a real browser session; only boot → render →

@@ -920,6 +920,21 @@ pub struct SnagCraftApp {
     /// Web open path: in-flight browser file read (`w`, `h`) or its error.
     #[cfg(not(feature = "native"))]
     drop_rx: Option<mpsc::Receiver<Result<(u32, u32), String>>>,
+    /// W16: in-flight browser clipboard op (ClipboardItem write/read).
+    #[cfg(not(feature = "native"))]
+    web_clipboard_rx: Option<mpsc::Receiver<Result<WebClipboard, String>>>,
+}
+
+/// W16: the outcome of an async browser clipboard operation.
+#[cfg(not(feature = "native"))]
+#[derive(Debug)]
+enum WebClipboard {
+    /// PNG written to the system clipboard (`w`×`h` of the composite).
+    Copied { w: u32, h: u32 },
+    /// Image read from the clipboard and loaded as the new base.
+    Pasted { w: u32, h: u32 },
+    /// The clipboard holds no image (text or empty) — not an error.
+    Empty,
 }
 
 /// Canvas zoom range for Ctrl+scroll: 25 %–400 % of the fit-to-window view.
@@ -1054,6 +1069,8 @@ impl SnagCraftApp {
             pick_rx: None,
             #[cfg(not(feature = "native"))]
             drop_rx: None,
+            #[cfg(not(feature = "native"))]
+            web_clipboard_rx: None,
         }
     }
 
@@ -1317,11 +1334,57 @@ impl SnagCraftApp {
         self.status = "Recording diagnostics are desktop-only.".into();
     }
 
-    /// Web fallback: `clipboard.copy` is a native command (arboard), and the
-    /// async Clipboard API needs a user-activation-safe `ClipboardItem` write
-    /// that is out of scope for the first web build. Say so instead of failing
-    /// silently — Export (PNG download) is the web way to move an image out.
-    #[cfg(not(feature = "native"))]
+    /// W16 web copy: render the same composite Export uses, encode it as PNG
+    /// (the clipboard interchange format) and write it through the async
+    /// Clipboard API (`ClipboardItem`). The write needs user activation — a
+    /// button click or Ctrl+C qualifies — and clipboard-write permission;
+    /// failures surface with the Export fallback hint.
+    #[cfg(all(not(feature = "native"), target_arch = "wasm32"))]
+    fn copy_to_clipboard(&mut self) {
+        if self.web_clipboard_rx.is_some() {
+            return; // one clipboard op at a time
+        }
+        let watermark = self.watermark_value();
+        let rendered = self
+            .sess()
+            .render_watermarked(watermark.as_ref())
+            .map_err(|e| e.to_string());
+        let surface = match rendered {
+            Ok(surface) => surface,
+            Err(err) => {
+                self.status = format!("Copy failed: {err}");
+                return;
+            }
+        };
+        let (w, h) = (surface.width(), surface.height());
+        let bytes = match snagcraft_io::encode(
+            &surface,
+            snagcraft_io::ImageFormat::Png,
+            self.settings.default_quality,
+        ) {
+            Ok(bytes) => bytes,
+            Err(err) => {
+                self.status = format!("Copy failed: {err}");
+                return;
+            }
+        };
+        let (tx, rx) = mpsc::channel();
+        self.web_clipboard_rx = Some(rx);
+        self.status = "Copying to clipboard…".into();
+        let repaint = self.main_ctx.clone();
+        wasm_bindgen_futures::spawn_local(async move {
+            let result = web::clipboard_write_png(&bytes)
+                .await
+                .map(|()| WebClipboard::Copied { w, h });
+            let _ = tx.send(result);
+            if let Some(ctx) = repaint {
+                ctx.request_repaint();
+            }
+        });
+    }
+
+    /// Host build without a browser: no Clipboard API to call.
+    #[cfg(all(not(feature = "native"), not(target_arch = "wasm32")))]
     fn copy_to_clipboard(&mut self) {
         self.status = "Image clipboard is desktop-only — use Export to download a PNG.".into();
     }
@@ -1344,10 +1407,75 @@ impl SnagCraftApp {
         }
     }
 
-    /// Web fallback: no image clipboard — drop a file on the canvas instead.
-    #[cfg(not(feature = "native"))]
+    /// W16 web paste: read the clipboard through the async Clipboard API
+    /// (`clipboard.read()` — the browser shows its permission prompt), load
+    /// the first image/png as the new base, exactly like the dropped-file
+    /// path. Text-only clipboards report "no image", never an error.
+    #[cfg(all(not(feature = "native"), target_arch = "wasm32"))]
+    fn paste_from_clipboard(&mut self) {
+        if self.web_clipboard_rx.is_some() {
+            return; // one clipboard op at a time
+        }
+        let (tx, rx) = mpsc::channel();
+        self.web_clipboard_rx = Some(rx);
+        self.status = "Reading clipboard…".into();
+        let session = Arc::clone(&self.session);
+        let repaint = self.main_ctx.clone();
+        wasm_bindgen_futures::spawn_local(async move {
+            let result = match web::clipboard_read_png().await {
+                Ok(Some(bytes)) => {
+                    load_image_bytes(&session, &bytes).map(|(w, h)| WebClipboard::Pasted { w, h })
+                }
+                Ok(None) => Ok(WebClipboard::Empty),
+                Err(err) => Err(err),
+            };
+            let _ = tx.send(result);
+            if let Some(ctx) = repaint {
+                ctx.request_repaint();
+            }
+        });
+    }
+
+    /// Host build without a browser: no Clipboard API to call.
+    #[cfg(all(not(feature = "native"), not(target_arch = "wasm32")))]
     fn paste_from_clipboard(&mut self) {
         self.status = "Clipboard paste is desktop-only — drop an image file here instead.".into();
+    }
+
+    /// W16: collect the async clipboard result; every terminal path clears
+    /// the channel so the next Copy/Paste can run.
+    #[cfg(not(feature = "native"))]
+    fn poll_web_clipboard(&mut self) {
+        let Some(rx) = self.web_clipboard_rx.as_ref() else {
+            return;
+        };
+        match rx.try_recv() {
+            Ok(Ok(WebClipboard::Copied { w, h })) => {
+                self.web_clipboard_rx = None;
+                self.status = format!("Copied {w}×{h} image to clipboard — paste anywhere.");
+            }
+            Ok(Ok(WebClipboard::Pasted { w, h })) => {
+                self.web_clipboard_rx = None;
+                self.redraw = true;
+                self.doc_dirty = true;
+                self.selected = None;
+                self.status = format!("Pasted {w}×{h} from clipboard.");
+            }
+            Ok(Ok(WebClipboard::Empty)) => {
+                self.web_clipboard_rx = None;
+                self.status = "Clipboard has no image to paste.".into();
+            }
+            Ok(Err(err)) => {
+                self.web_clipboard_rx = None;
+                self.status =
+                    format!("Clipboard: {err} — use Export or drop an image file instead.");
+            }
+            Err(mpsc::TryRecvError::Empty) => {}
+            Err(mpsc::TryRecvError::Disconnected) => {
+                self.web_clipboard_rx = None;
+                self.status = "Clipboard operation stopped unexpectedly.".into();
+            }
+        }
     }
 
     fn color_json(&self) -> serde_json::Value {
@@ -6084,6 +6212,8 @@ pub fn app_ui(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
     app.poll_platform(&ctx);
     #[cfg(not(feature = "native"))]
     app.poll_dropped(&ctx);
+    #[cfg(not(feature = "native"))]
+    app.poll_web_clipboard();
     app.poll_capture();
     app.poll_media();
     app.scan_recent_folder();
@@ -7084,6 +7214,70 @@ mod web {
         web_sys::Url::revoke_object_url(&url).ok();
         Ok(())
     }
+
+    /// W16: write a PNG to the system clipboard through the async Clipboard
+    /// API. Needs user activation (the caller runs from a click/Ctrl+C) and
+    /// clipboard-write permission; the browser rejects the promise otherwise
+    /// and the caller surfaces the error with the Export fallback hint.
+    pub async fn clipboard_write_png(bytes: &[u8]) -> Result<(), String> {
+        let window = web_sys::window().ok_or_else(|| "no window".to_string())?;
+        let clipboard = window.navigator().clipboard();
+
+        let parts = js_sys::Array::new();
+        parts.push(&js_sys::Uint8Array::from(bytes));
+        let bag = web_sys::BlobPropertyBag::new();
+        bag.set_type("image/png");
+        let blob =
+            web_sys::Blob::new_with_u8_array_sequence_and_options(&parts, &bag).map_err(js_err)?;
+
+        let record = js_sys::Object::new();
+        js_sys::Reflect::set(&record, &"image/png".into(), &blob).map_err(js_err)?;
+        let item = web_sys::ClipboardItem::new_with_record_from_str_to_blob_promise(&record)
+            .map_err(js_err)?;
+        let items = js_sys::Array::new();
+        items.push(&item);
+        wasm_bindgen_futures::JsFuture::from(clipboard.write(items.as_ref()))
+            .await
+            .map_err(js_err)?;
+        Ok(())
+    }
+
+    /// W16: read the first `image/png` from the system clipboard. `Ok(None)`
+    /// means the clipboard holds text or nothing — not an error. `read()`
+    /// triggers the browser's clipboard-read permission prompt.
+    pub async fn clipboard_read_png() -> Result<Option<Vec<u8>>, String> {
+        let window = web_sys::window().ok_or_else(|| "no window".to_string())?;
+        let clipboard = window.navigator().clipboard();
+        let value = wasm_bindgen_futures::JsFuture::from(clipboard.read())
+            .await
+            .map_err(js_err)?;
+        let items: js_sys::Array = value
+            .dyn_into()
+            .map_err(|_| "clipboard.read() did not yield an array".to_string())?;
+        for value in items.iter() {
+            let item: web_sys::ClipboardItem = value
+                .dyn_into()
+                .map_err(|_| "clipboard entry is not a ClipboardItem".to_string())?;
+            let has_png = item
+                .types()
+                .iter()
+                .any(|t| t.as_string().is_some_and(|s| s == "image/png"));
+            if !has_png {
+                continue;
+            }
+            let value = wasm_bindgen_futures::JsFuture::from(item.get_type("image/png"))
+                .await
+                .map_err(js_err)?;
+            let blob: web_sys::Blob = value
+                .dyn_into()
+                .map_err(|_| "getType() did not yield a Blob".to_string())?;
+            let buffer = wasm_bindgen_futures::JsFuture::from(blob.array_buffer())
+                .await
+                .map_err(js_err)?;
+            return Ok(Some(js_sys::Uint8Array::new(&buffer).to_vec()));
+        }
+        Ok(None)
+    }
 }
 
 /// Host build without the `native` feature: there is no browser to hand a
@@ -7091,6 +7285,14 @@ mod web {
 #[cfg(all(not(feature = "native"), not(target_arch = "wasm32")))]
 mod web {
     pub fn download(_name: &str, _mime: &str, _bytes: &[u8]) -> Result<(), String> {
+        Err("no browser in this build".to_string())
+    }
+
+    pub async fn clipboard_write_png(_bytes: &[u8]) -> Result<(), String> {
+        Err("no browser in this build".to_string())
+    }
+
+    pub async fn clipboard_read_png() -> Result<Option<Vec<u8>>, String> {
         Err("no browser in this build".to_string())
     }
 }

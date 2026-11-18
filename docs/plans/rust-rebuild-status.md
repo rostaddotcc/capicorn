@@ -767,6 +767,43 @@ live pass + gates (trim/relicense/cutover/external post). NO releases published.
   rust/dist/w15/, CLI smoke 48 commands (unchanged — no new engine commands).
   Delivered to rostad for the KDE live pass.
 
+### 2026-11-18 — wake #105: W16 web clipboard + drag-drop — C2/C3 CLOSED in a real browser
+- Fresh re-check: tree clean at b0022c0, suite green (490/0/11). Scope = the
+  web-MVP limits C2 (status-only clipboard) and C3 (unexercised drag-drop)
+  from gaps.md §(c).
+- **C2 fix:** web Copy renders the Export composite → PNG → `ClipboardItem` +
+  `clipboard.write()`; web Paste → `clipboard.read()` → first image/png →
+  `load_image_bytes` (the dropped-file path). Async via `spawn_local` + mpsc
+  result channel polled in `app_ui` (`poll_web_clipboard`); one op at a time,
+  every terminal path clears the channel; text-only clipboard = "no image"
+  (not an error); failures carry the Export/drop fallback hint. Status-only
+  fallbacks kept for the non-wasm host build. web-sys 0.3.107 `ClipboardItem`
+  is STABLE — no `web_sys_unstable_apis` needed (checked the vendored source).
+- **Browser evidence (Chromium, trunk release build, served on 127.0.0.1:8091):**
+  boot → full editor render; **C3**: synthetic DataTransfer+File drop opened a
+  120×80 PNG ("Opened 120×80 from the dropped file — annotate away.",
+  vision-verified), a second 60×40 drop replaced it; **C2 write**: Copy →
+  independent `navigator.clipboard.read()` probe found image/png (459 bytes) +
+  "Copied 120×80 image to clipboard — paste anywhere."; **C2 read**: trusted
+  CDP Ctrl+V restored the 120×80 composite ("Pasted 120×80 from clipboard.");
+  **empty branch**: text-only clipboard → "Clipboard has no image to paste.",
+  canvas untouched. Permissions via `Browser.grantPermissions`
+  (clipboardReadWrite + clipboardSanitizedWrite).
+- Harness lessons: synthetic `KeyboardEvent` on window does NOT reach egui —
+  use CDP `Input.dispatchKeyEvent` (modifiers=2 for Ctrl); synthetic
+  `DragEvent` with a real `DataTransfer` DOES work for drop; the "LOADING
+  SNAGCRAFT…" DOM text lingers behind the canvas after boot — judge boot from
+  a screenshot, not body text.
+- Parent-verified: native suite **490 passed / 0 failed / 11 ignored**
+  (unchanged — all new code is cfg-gated web), wasm clippy clean
+  (`--target wasm32-unknown-unknown --no-default-features`), trunk release
+  build success, xtask wasm 10/10. No native behavior change → no new
+  AppImage (w15 artifact stays current).
+- Docs: gaps.md C2/C3 CLOSED with the browser evidence, C1 recounted
+  (25 of 48 — the old 21/41 was stale; counted from the registry cfg gates).
+- **Remaining non-gated: design polish pass (next wake).** Rostad gates
+  unchanged: KDE live pass, trim decision, relicense, cutover.
+
 ## Appendix — measured reality
 
 | Claim | Measured | What changed |

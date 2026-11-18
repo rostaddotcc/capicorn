@@ -885,8 +885,9 @@ live pass + gates (trim/relicense/cutover/external post). NO releases published.
   clean, layers legal, NO snapshot drift (Region tag only paints when set).
 - Docs: parity §6 Pause/Resume row split (engine W4 / HUD clock W18), four new
   W18 rows with live anchors, summary recounted (155 rows, 1 pending = Trim).
-- Fresh W18 artifacts from the committed state: release binary + AppImage
-  launch-tested (below). Delivered to rostad.
+- Fresh W18 artifacts from committed d4caef9: release binary rebuilt, AppImage
+  13.94 MB launch-tested (exit 124, benign locked-GNOME noise only) in
+  rust/dist/w18/, CLI smoke 48 commands. Delivered to rostad.
 - Awaiting rostad unchanged: KDE live pass, trim decision, relicense, cutover.
   Next wake: audit the next headline flow (save/export or scrolling capture).
 

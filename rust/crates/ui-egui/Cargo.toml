@@ -14,6 +14,7 @@ publish = false
 # portal, screen capture, the file dialogs and the floating widget viewport.
 snagcraft-engine = { path = "../engine", default-features = false }
 snagcraft-capture = { path = "../capture", optional = true }
+snagcraft-recording = { path = "../recording", optional = true }
 snagcraft-doc = { path = "../doc" }
 snagcraft-compose = { path = "../compose" }
 snagcraft-raster = { path = "../raster" }
@@ -47,6 +48,7 @@ default = ["native"]
 native = [
     "dep:snagcraft-platform",
     "dep:snagcraft-capture",
+    "dep:snagcraft-recording",
     "dep:rfd",
     "snagcraft-engine/native",
     "snagcraft-io/native",

@@ -188,7 +188,8 @@ Effects are applied to the **image layer at export resolution** (scene px × exp
 
 | Feature | Evidence | rust |
 |---|---|---|
-| Interval loop: one PNG per tick named `SnagCraft-interval-*.png` into the save folder; stop converts the run to MP4 — a failed render never costs the shots | `timelapse.rs:1-6` | W4 |
+| Interval loop: one PNG per tick into the save folder (live `SnagCraft-interval-*.png`; rebuild `snagcraft-timelapse-NNNNN.png` — zero-padded index = playback order) | `timelapse.rs:1-6`, `app.ts:2820-2830` | W4 |
+| Stop converts the run to MP4 — auto `make_timelapse` at 10 fps into the run folder (`SnagCraft-timelapse-{date}-{time}.mp4`); zero shots report "nothing was saved"; a failed render never costs the shots | `app.ts:3019-3047`, `timelapse.rs:100` | W15 |
 | `make_timelapse(dir, pattern, fps, out)` — glob resolved inside `dir` (no separators), ffmpeg `-pattern_type glob`, zero-padded numbers give playback order | `timelapse.rs:8-18`, `:100` | W7 |
 | Interval period setting (default **30 s**), select "every N s / every 5 min" | `settings.ts:69` (`DEFAULT_INTERVAL`), select `settings.ts:837-842` | W4 |
 | Capture → Interval menu entry ("a screenshot every few seconds, then a timelapse") + per-mode banner copy | `app.ts:865-870`, `app.ts:2239-2243` | W4 |
@@ -291,39 +292,53 @@ Sections rendered: General, Capture, Recording audio, Global hotkeys, Save locat
 
 ---
 
-## Wave coverage at W6b (2026-11-17)
+## Wave coverage at W15 (2026-11-18)
 
 The W1-era scope note that used to sit here ("not started at all: shell, recording,
 scrolling, OCR, timelapse, upload, settings, themes, shortcuts, About") is obsolete —
-W2–W5 landed most of it. Current state of the checklist:
+W2–W5 landed most of it, and W7–W15 closed the rest. The W6b summary that used to
+sit here (45 `pending`) was stale: those rows were closed by W7–W14 but the table
+was never recounted. Current state of the checklist (recounted row-by-row at W15):
 
 | Status | Rows |
 |--------|------|
-| `W4` | 33 |
-| `W2` | 33 |
+| `W2` (incl. 3 `W2 + W14`) | 33 |
+| `W4` (incl. `W4 + W13`) | 33 |
 | `W3` | 30 |
-| `pending` | 45 |
+| `W11` | 14 |
+| `W12` | 13 |
+| `W8` | 7 |
 | `W0 spike` | 6 |
+| `W9` | 5 |
+| `W7` | 3 |
 | `W1` | 2 |
+| `W10` | 2 |
+| `W15` | 1 |
+| `pending` (Trim — rostad-gated) | 1 |
 | `n/a` | 1 |
-| **total** | **150** |
+| **total** | **151** |
 
 What the waves delivered, per `docs/plans/rust-rebuild-status.md`: 13-tool annotation
 parity with 10 object kinds and 5 shape variants (W2); tray, global hotkeys,
 autostart, single instance, floating widget, close guard, settings panel and themes
-(W3); recording (MP4/GIF, region, pause/resume, single audio source), scrolling
-stitch, OCR, interval/timelapse frames and watermark (W4); CLI, TCP control, MCP and
-the WASM web app (W5); AppImage + `.deb` + CI artifacts (W6a).
+(W3); recording (MP4/GIF, region, pause/resume), scrolling stitch, OCR,
+interval/timelapse frames and watermark (W4); CLI, TCP control, MCP and the WASM web
+app (W5); AppImage + `.deb` + CI artifacts (W6a); OCR language/busy UI + timelapse
+assemble command (W7); `Ctrl+.`, compact countdown HUD, upload POST (W8); save-dir /
+Save As / filename tokens / Recent strip (W9); New-canvas presets + Resize (W10);
+the settings cluster + diagnostics copy + PrintScreen (W11); shortcuts overlay +
+About + derived dirty-state (W12); mic + system-audio mixing (W13); select-mode
+resize handles, double-click text/callout re-edit, brush nib preview, crop
+click semantics (W14); **stop-time timelapse → MP4 auto-assembly in the UI flow
+(W15 — the W4 tick on the old combined row overclaimed: the loop shipped, the
+stop→video conversion did not until W15).**
 
-The 45 `pending` rows are the honest backlog. They cluster in: OCR modal/language UI,
-timelapse video assembly, `Ctrl+.`, shrunk countdown HUD and upload POST (§6/§8/§9/§10);
-the recent-media rail, New-canvas presets, canvas resize and filename-pattern
-expansion (§3); per-source audio settings, interval/mic/system-audio settings,
-diagnostics copy and recording format (§11); PrintScreen + Ctrl+N/O/S key handling
-(§13); the About box (§14). The blockers and the reason for each are collected in
-`docs/gaps.md`.
+The single `pending` row is **Trim** — deliberately out of parity (the live v1.5.3
+has no trim) and gated on rostad's build-or-drop decision (`docs/gaps.md` A2).
+Every other row is backed by live code. The remaining open items in `docs/gaps.md`
+are rostad gates (A1–A4), web-MVP limits (C1–C3) and future platform ports (D1–D2).
 
-**Coverage:** 150 rows across 14 sections. Every TS line number came from a grep/read
+**Coverage:** 151 rows across 14 sections. Every TS line number came from a grep/read
 against commit `3cec2ee` (baseline v1.5.3) during W1; the only exceptions are the two
 `CHANGELOG.md` citations, marked as such. Rust statuses were re-audited at W6b as
-described at the top of this file.
+described at the top of this file, and recounted at W15.

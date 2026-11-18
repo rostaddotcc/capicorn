@@ -724,10 +724,50 @@ live pass + gates (trim/relicense/cutover/external post). NO releases published.
 - **LOOP BACKLOG EMPTY**: every non-gated parity row and gap register entry is
   closed. Further iteration needs rostad's gates/feedback → loop completed.
 
+### 2026-11-18 — wake #104: W15 timelapse stop→MP4 — a real gap behind a green checklist
+- Fresh re-check: tree clean at 6869563, suite green (487/0/11). The W14 close
+  said "backlog empty", but a code-level re-audit of the timelapse flow found a
+  genuine functional gap: **the rebuild never assembled the video**. The live
+  app auto-calls `make_timelapse` when a run stops (`app.ts:3019-3047`, 10 fps,
+  `SnagCraft-timelapse-{date}-{time}.mp4` in the run folder); the rebuild's
+  `poll_timelapse` "done" arm only reported the frame count. `timelapse.assemble`
+  existed as a command (W7) but nothing in the UI flow called it. Parity row 191
+  ("stop converts the run to MP4") was ticked W4 — an overclaim: the loop shipped,
+  the conversion did not. gaps.md's "no Make video button" framing was also wrong
+  (the live app has no button — it auto-assembles).
+- **W15 fix (parent-direct):** `finish_timelapse(frames)` — zero shots → live
+  "nothing was saved" wording; shots > 0 → "Building a timelapse from N shots…"
+  + off-thread `assemble_timelapse` (pure L4 call, **no session lock** — the
+  editor keeps painting during the encode, unlike the OCR worker). Result poll
+  in `poll_media` (runs hidden too): "Timelapse saved: path (N shots, 10 fps)"
+  + push to the Recent rail; failure → "Timelapse failed: err — the N shots are
+  still in dir" (shots never lost); disconnected worker cleared likewise.
+  Failed capture runs with shots on disk get the same shots-kept note. Run
+  folder tracked in `TimelapseState.dir`; `assembling` joins the 250 ms repaint
+  heartbeat. Dialog subtitle now says what stopping does ("…stopping builds a
+  10 fps video."). ui-egui gains an optional native `snagcraft-recording` dep
+  (L4→L6, layers legal).
+- **Gates:** `tests/w15_timelapse.rs` — real ffprobe-verified h264 encode
+  (3 frames, 34×22 padded) + recent-rail pickup + live wording; empty-run
+  wording; NoFrames failure clears the flag and a second run assembles again
+  (runs even without ffmpeg — NoFrames precedes the spawn). Dialog snapshot
+  re-blessed (447 px, vision-confirmed subtitle-only) and vision-verified.
+- Parent-verified: workspace **490 passed / 0 failed / 11 ignored**, clippy/fmt
+  clean, layers 23 crates legal, wasm 10/10. No new engine commands → automation
+  guard untouched (48).
+- Docs: parity row 191 split (loop W4 / stop→MP4 W15), stale W6b summary table
+  recounted row-by-row (claimed 45 pending; actual 1 — Trim, rostad-gated;
+  151 rows total). gaps.md B4 row 3 residual closed with the corrected framing.
+- **Pending parity = 1 (Trim, gated). No non-gated functional gaps remain —
+  again, but this time the timelapse flow was audited end-to-end against the
+  live anchor, not just the checklist.** Awaiting rostad: KDE live pass, trim
+  decision, relicense, cutover. Web C2/C3 polish + design pass = next wakes.
+
 ## Appendix — measured reality
 
 | Claim | Measured | What changed |
 |---|---|---|
+| Parity row 191 ticked W4 ("stop converts the run to MP4") + W14 "backlog empty" | The UI's `poll_timelapse` done-arm only reported the frame count — nothing ever called `timelapse.assemble`. The live app auto-assembles on stop (`app.ts:3019-3047`); it has no "Make video" button (the gaps.md framing was wrong too) | W15 wires stop→MP4 off-thread (no session lock). Row split: loop W4 / conversion W15. Lesson: a closed checklist is not an audit — re-read the live anchors of headline flows end-to-end, not just the row text |
 | W1 drag-create worked (spike pattern) | egui's hover_pos on the first drag frame is already the MOVED point → every drag-created object was 0px | UI child's parity.rs drag gates caught it; fixed with pointer.press_origin(). Lesson: seeded-command snapshots cannot catch pointer-path bugs — drag gates are mandatory |
 | ab_glyph `ascent_unscaled() * scale` gives pixel ascent (W0 spike pattern) | Returns RAW font units (Ubuntu-Light ascent=932, upem 1000) → baseline 26 000 px off-canvas → silent text loss in CPU composite | compose uses `font.as_scaled(scale).ascent()` / `.h_advance(gid)` (ScaleFont trait); W0 spike export had the same latent bug (its on-screen text came from egui painter, which masked it) |
 | egui = "0.37" bundles fonts by default | egui's own `default = []`; `default_fonts` is enabled via eframe — CLI (egui-only) got EMPTY FontDefinitions | workspace egui enables `default_fonts` explicitly; CLI text export verified pixel-wise |

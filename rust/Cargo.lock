@@ -4455,6 +4455,7 @@ dependencies = [
  "snagcraft-io",
  "snagcraft-platform",
  "snagcraft-raster",
+ "snagcraft-recording",
  "tracing",
  "wasm-bindgen",
  "wasm-bindgen-futures",

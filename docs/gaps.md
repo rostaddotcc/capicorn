@@ -149,6 +149,18 @@ folder, New-canvas presets, Resize dialog, settings filename live-preview.
 
 ### B4 — The nine reverted parity rows
 
+> **W15 update (2026-11-18): row 3's UI residual CLOSED.** The old "no Make
+> video button" framing was wrong — the live app auto-assembles the MP4 when a
+> timelapse run stops (`app.ts:3019-3047`), it has no button. The rebuild's
+> `poll_timelapse` only reported the frame count; the stop→video conversion was
+> never wired (the W4 tick on the combined parity row overclaimed). W15 wires
+> it: `finish_timelapse` → off-thread `assemble_timelapse` (no session lock, so
+> the editor keeps painting), live status wording ("Building…" / "Timelapse
+> saved: … (N shots, 10 fps)" / "Timelapse failed: … shots are still in …"),
+> zero-shot "nothing was saved" report, failed-run shots-kept note, and the
+> finished video pushed to the Recent rail. kittest gates: real ffprobe-verified
+> h264 encode + recent pickup, empty-run wording, NoFrames failure + re-assemble.
+>
 > **W8 update (2026-11-17): rows 4–9 CLOSED** — Ctrl+. stops a running
 > timelapse (live parity, app.ts:5181), compact countdown HUD, and the upload
 > POST flow (io `upload_image` via curl + engine `upload.send` + File→Upload,
@@ -167,7 +179,7 @@ audit because the code did not back them (see
 |---|-----|-----------------|-----------------|
 | 1 | OCR language select (UI) | **CLOSED W7**: ComboBox from `ocr.languages`, persisted `ocr_lang` | — |
 | 2 | OCR busy modal | **CLOSED W7**: off-thread worker, spinner + disabled Extract, cleared on result/error/dead worker | — |
-| 3 | Timelapse video assembly (`make_timelapse`) | **CLOSED W7**: `timelapse.assemble` ffmpeg glob → h264 mp4 (ffprobe: 34×22 yuv420p, 5 frames) | no "Make video" dialog button yet (command + tests only) |
+| 3 | Timelapse video assembly (`make_timelapse`) | **CLOSED W7**: `timelapse.assemble` ffmpeg glob → h264 mp4 (ffprobe: 34×22 yuv420p, 5 frames). **W15**: the live app has no "Make video" button — it auto-assembles on stop (`app.ts:3019-3047`); the rebuild now does the same (off-thread encode, 10 fps, live status wording, recent-rail pickup) | — |
 | 4 | `Ctrl+.` stop hotkey | stop via HUD button / `record.stop` | the live app's `Ctrl+.` global-ish stop shortcut |
 | 5 | Shrunk countdown HUD | countdown HUD before recording starts | the shrunk/compact countdown variant |
 | 6–9 | Upload POST-to-endpoint flow | `upload.open` opens an `http(s)` URL only (scheme-guarded) | POSTing the file bytes to an endpoint via `curl` as the live app does |

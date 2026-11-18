@@ -758,6 +758,11 @@ pub struct TimelapseState {
     pub period_secs: u32,
     pub limit: Option<u32>,
     pub dialog_open: bool,
+    /// Frame folder of the current/last run — where the stop-time MP4 lands
+    /// (the live `dir`, `app.ts:3031`). `None` before the first start.
+    pub dir: Option<PathBuf>,
+    /// W15: the stop-time video encode is running on its own thread.
+    pub assembling: bool,
 }
 
 impl Default for TimelapseState {
@@ -769,8 +774,19 @@ impl Default for TimelapseState {
             period_secs: TIMELAPSE_PERIOD_DEFAULT,
             limit: None,
             dialog_open: false,
+            dir: None,
+            assembling: false,
         }
     }
+}
+
+/// W15: the finished stop-time timelapse video (what `assemble_timelapse`
+/// reports, owned so the worker channel needs no recording-crate type on web).
+#[derive(Debug)]
+struct TimelapseVideo {
+    video: PathBuf,
+    frames: u32,
+    fps: u32,
 }
 
 /// OCR result window.
@@ -896,6 +912,9 @@ pub struct SnagCraftApp {
     pub countdown: Option<Countdown>,
     /// Off-thread `ocr.run`: the worker sends the extracted text (or its error).
     ocr_rx: Option<mpsc::Receiver<Result<String, String>>>,
+    /// W15: stop-time timelapse encode worker result (native only; the web
+    /// build has no ffmpeg and never arms a timelapse).
+    timelapse_assemble_rx: Option<mpsc::Receiver<Result<TimelapseVideo, String>>>,
     pick: Option<RegionPick>,
     pick_rx: Option<mpsc::Receiver<Result<Surface, String>>>,
     /// Web open path: in-flight browser file read (`w`, `h`) or its error.
@@ -1030,6 +1049,7 @@ impl SnagCraftApp {
             film_scanned: false,
             countdown: None,
             ocr_rx: None,
+            timelapse_assemble_rx: None,
             pick: None,
             pick_rx: None,
             #[cfg(not(feature = "native"))]
@@ -2145,6 +2165,7 @@ impl SnagCraftApp {
                 self.timelapse.running = true;
                 self.timelapse.frames = 0;
                 self.timelapse.dialog_open = false;
+                self.timelapse.dir = Some(dir.clone());
                 self.status = format!("Timelapse every {period}s into {}.", dir.display());
                 self.redraw = true;
             }
@@ -2156,6 +2177,123 @@ impl SnagCraftApp {
         match self.exec("timelapse.stop", serde_json::json!({})) {
             Ok(_) => self.status = "Timelapse stopping…".into(),
             Err(err) => self.status = format!("Timelapse stop: {err}"),
+        }
+    }
+
+    /// W15 — a finished run becomes a video, exactly like the live app
+    /// (`app.ts:3019-3047`): zero shots report that nothing was saved; any
+    /// shots trigger `make_timelapse` (10 fps) into the run's own folder.
+    /// A failed render never costs the shots — they stay on disk for a retry
+    /// via `timelapse.assemble` (`src-tauri/src/timelapse.rs:1-6`).
+    pub fn finish_timelapse(&mut self, frames: u64) {
+        if frames == 0 {
+            self.status =
+                "Interval capture stopped before the first shot — nothing was saved.".into();
+            return;
+        }
+        let Some(dir) = self.timelapse.dir.clone() else {
+            // No run folder known (never started here): report, don't guess.
+            self.status = format!("Timelapse finished: {frames} frames.");
+            return;
+        };
+        self.status = format!("Building a timelapse from {frames} shots…");
+        self.redraw = true;
+        self.start_timelapse_assemble(dir, frames);
+    }
+
+    /// Encode the run's frames off-thread. The pure `assemble_timelapse` call
+    /// needs no session lock, so the editor keeps painting during the encode
+    /// (unlike `ocr.run`, which holds the session for its subprocess).
+    fn start_timelapse_assemble(&mut self, dir: PathBuf, frames: u64) {
+        #[cfg(not(feature = "native"))]
+        {
+            let _ = (dir, frames);
+            self.status =
+                format!("Timelapse finished: {frames} frames — video assembly is desktop-only.");
+        }
+        #[cfg(feature = "native")]
+        {
+            if self.timelapse.assembling {
+                return; // one encode at a time
+            }
+            // Live app.ts:3031-3036: SnagCraft-timelapse-{date}-{time}.mp4,
+            // fps 10, glob = exactly the frames this engine writes.
+            let out = dir.join(snagcraft_io::files::expand(
+                "SnagCraft-timelapse-{date}-{time}.mp4",
+                chrono::Local::now(),
+            ));
+            let pattern = snagcraft_capture::timelapse::FRAME_GLOB;
+            let dir_label = dir.display().to_string();
+            let (tx, rx) = mpsc::channel();
+            let spawned = std::thread::Builder::new()
+                .name("snagcraft-timelapse-assemble".to_string())
+                .spawn(move || {
+                    let outcome = snagcraft_recording::assemble_timelapse(&dir, pattern, 10, &out)
+                        .map(|report| TimelapseVideo {
+                            video: report.video,
+                            frames: report.frames,
+                            fps: report.fps,
+                        })
+                        .map_err(|err| err.to_string());
+                    let _ = tx.send(outcome);
+                });
+            match spawned {
+                Ok(_) => {
+                    self.timelapse.assembling = true;
+                    self.timelapse_assemble_rx = Some(rx);
+                }
+                Err(err) => {
+                    self.status = format!(
+                        "Timelapse failed: cannot start the encoder ({err}) — the {frames} shots are still in {dir_label}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Collect the encode worker's result; every terminal path clears the
+    /// busy flag so a later run can assemble again.
+    fn poll_timelapse_assemble(&mut self) {
+        let Some(rx) = self.timelapse_assemble_rx.as_ref() else {
+            return;
+        };
+        match rx.try_recv() {
+            Ok(Ok(video)) => {
+                self.timelapse.assembling = false;
+                self.timelapse_assemble_rx = None;
+                self.status = format!(
+                    "Timelapse saved: {} ({} shots, {} fps)",
+                    video.video.display(),
+                    video.frames,
+                    video.fps
+                );
+                self.push_recent(video.video);
+                self.redraw = true;
+            }
+            Ok(Err(err)) => {
+                self.timelapse.assembling = false;
+                self.timelapse_assemble_rx = None;
+                let dir = self
+                    .timelapse
+                    .dir
+                    .as_ref()
+                    .map(|d| d.display().to_string())
+                    .unwrap_or_else(|| "the save folder".to_string());
+                self.status = format!(
+                    "Timelapse failed: {err} — the {} shots are still in {dir}",
+                    self.timelapse.frames
+                );
+                self.redraw = true;
+            }
+            Err(mpsc::TryRecvError::Empty) => {}
+            Err(mpsc::TryRecvError::Disconnected) => {
+                self.timelapse.assembling = false;
+                self.timelapse_assemble_rx = None;
+                self.status =
+                    "Timelapse encoder stopped unexpectedly — the shots are still in the save folder."
+                        .into();
+                self.redraw = true;
+            }
         }
     }
 
@@ -2398,6 +2536,7 @@ impl SnagCraftApp {
     fn poll_media(&mut self) {
         self.poll_ocr();
         self.poll_pick();
+        self.poll_timelapse_assemble();
         if self.rec.armed {
             self.poll_record();
         }
@@ -2534,7 +2673,8 @@ impl SnagCraftApp {
                             self.timelapse.armed = false;
                             self.timelapse.running = false;
                             self.timelapse.frames = frames as u32;
-                            self.status = format!("Timelapse finished: {frames} frames.");
+                            // W15: stop converts the run to MP4 (live parity).
+                            self.finish_timelapse(frames);
                         }
                         Some("failed") => {
                             let msg = event["message"]
@@ -2543,7 +2683,18 @@ impl SnagCraftApp {
                                 .to_string();
                             self.timelapse.armed = false;
                             self.timelapse.running = false;
-                            self.status = format!("Timelapse failed: {msg}");
+                            // A failed run never costs the shots already on disk.
+                            if self.timelapse.frames > 0
+                                && let Some(dir) = &self.timelapse.dir
+                            {
+                                self.status = format!(
+                                    "Timelapse failed: {msg} — the {} shots are still in {}",
+                                    self.timelapse.frames,
+                                    dir.display()
+                                );
+                            } else {
+                                self.status = format!("Timelapse failed: {msg}");
+                            }
                         }
                         _ => {}
                     }
@@ -2684,9 +2835,11 @@ impl SnagCraftApp {
             .default_width(340.0)
             .show(ctx, |ui| {
                 ui.label(
-                    egui::RichText::new("Grab a frame on a timer — good for slow changes.")
-                        .size(11.5)
-                        .weak(),
+                    egui::RichText::new(
+                        "Grab a frame on a timer — stopping builds a 10 fps video.",
+                    )
+                    .size(11.5)
+                    .weak(),
                 );
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
@@ -3486,7 +3639,11 @@ impl SnagCraftApp {
         // The live layer keeps running while hidden: a recording start/stop or
         // a scrolling capture must land even with no main window painting.
         self.poll_media();
-        if self.recording() || self.scroll.armed || self.timelapse.armed {
+        if self.recording()
+            || self.scroll.armed
+            || self.timelapse.armed
+            || self.timelapse.assembling
+        {
             ctx.request_repaint_after(Duration::from_millis(250));
         }
         self.handle_close_request(ctx);
@@ -5935,6 +6092,7 @@ pub fn app_ui(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
         || app.scroll.active
         || app.timelapse.armed
         || app.timelapse.running
+        || app.timelapse.assembling
     {
         // Elapsed clock + frame counts keep ticking while nothing else does.
         ctx.request_repaint_after(Duration::from_millis(250));

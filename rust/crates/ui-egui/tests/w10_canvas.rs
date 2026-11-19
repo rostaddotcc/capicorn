@@ -179,11 +179,13 @@ fn resize_dialog_prefills_applies_and_scales_annotations() {
         .and_then(|d| d.objects.first().map(|o| o.bounds()))
         .expect("seeded app has annotations");
 
+    h.get_by_label("File").click();
+    h.run_steps(3);
     h.get_by_label("Resize…").click();
     h.run_steps(2);
     {
         let app = h.state();
-        assert!(app.resize_open, "the toolbar button opens the dialog");
+        assert!(app.resize_open, "the File menu item opens the dialog");
         assert_eq!(
             (app.resize_w, app.resize_h),
             (900.0, 600.0),
@@ -227,6 +229,8 @@ fn resize_dialog_esc_closes_without_changing_the_canvas() {
     let dir = scratch_dir("resize-esc");
     let mut h = harness(&dir);
     h.run_steps(2);
+    h.get_by_label("File").click();
+    h.run_steps(3);
     h.get_by_label("Resize…").click();
     h.run_steps(2);
     assert!(h.state().resize_open);

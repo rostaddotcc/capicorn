@@ -31,6 +31,10 @@ use thiserror::Error;
 /// Hard cap on how long the screenshot portal may take before we give up.
 pub const PORTAL_TIMEOUT: Duration = Duration::from_secs(15);
 
+/// Budget for the *interactive* fallback: the user answers a real dialog, so
+/// give them the same time as the ScreenCast picker (`scrolling/source.rs`).
+pub const PORTAL_INTERACTIVE_TIMEOUT: Duration = Duration::from_secs(120);
+
 /// Anything that can go wrong trying to obtain a screen image.
 #[derive(Debug, Error)]
 pub enum CaptureError {
@@ -46,31 +50,78 @@ pub enum CaptureError {
     /// This platform/build cannot capture at all.
     #[error("unsupported: {0}")]
     Unsupported(String),
+    /// The user dismissed the portal dialog. The UI's cancel classification
+    /// keys on the word "cancel", so keep it in the display text.
+    #[error("cancelled")]
+    Cancelled,
 }
 
 /// Capture the full primary screen as an RGBA surface.
+///
+/// Non-interactive first (instant grab on GNOME and on fixed KDE backends).
+/// Plasma ≤ 6.7's portal backend fails non-interactive requests outright —
+/// it instantiates the screenshot dialog even when nothing should be shown
+/// (KDE bug 527399, fixed 2026-11-17; flameshot#4883 documents the same
+/// failure) — so on a portal refusal we retry once through the interactive
+/// dialog, which works on every backend. A user cancel, a timeout or a local
+/// I/O failure is final: retrying would only nag the user or hang.
 #[cfg(target_os = "linux")]
 pub async fn capture_full() -> Result<Surface, CaptureError> {
+    match portal_screenshot(false).await {
+        Ok(surface) => Ok(surface),
+        Err(err) if retry_interactive(&err) => {
+            tracing::debug!(
+                error = %err,
+                "non-interactive screenshot refused; retrying with the portal dialog"
+            );
+            portal_screenshot(true).await
+        }
+        Err(err) => Err(err),
+    }
+}
+
+/// Whether a failed non-interactive attempt deserves the interactive retry.
+/// Only a portal refusal (the KDE bug shape) — never a cancel/timeout/I/O.
+#[cfg(target_os = "linux")]
+fn retry_interactive(err: &CaptureError) -> bool {
+    matches!(err, CaptureError::Portal(_))
+}
+
+/// One Screenshot portal round trip with the given interactivity.
+#[cfg(target_os = "linux")]
+async fn portal_screenshot(interactive: bool) -> Result<Surface, CaptureError> {
     use ashpd::desktop::screenshot::Screenshot;
 
-    let request = Screenshot::request().interactive(false).send();
-    let response = tokio::time::timeout(PORTAL_TIMEOUT, request)
+    let budget = if interactive {
+        PORTAL_INTERACTIVE_TIMEOUT
+    } else {
+        PORTAL_TIMEOUT
+    };
+    let request = Screenshot::request().interactive(interactive).send();
+    let response = tokio::time::timeout(budget, request)
         .await
         .map_err(|_| CaptureError::Timeout)?
-        .map_err(|err| CaptureError::Portal(err.to_string()))?;
+        .map_err(map_ashpd_error)?;
 
-    let shot = response
-        .response()
-        .map_err(|err| CaptureError::Portal(err.to_string()))?;
+    let shot = response.response().map_err(map_ashpd_error)?;
 
     // ashpd 0.14 models the reply URI as an opaque string: no `to_file_path`.
     let uri = shot.uri().as_str();
     let path = file_uri_to_path(uri)?;
-    tracing::debug!(path = %path.display(), "portal delivered a screenshot file");
+    tracing::debug!(path = %path.display(), interactive, "portal delivered a screenshot file");
 
     let bytes = std::fs::read(&path)
         .map_err(|err| CaptureError::Io(format!("reading {}: {err}", path.display())))?;
     decode_screenshot(&bytes)
+}
+
+/// Keep the user's cancel distinguishable from a backend refusal.
+#[cfg(target_os = "linux")]
+fn map_ashpd_error(err: ashpd::Error) -> CaptureError {
+    match err {
+        ashpd::Error::Response(ashpd::desktop::ResponseError::Cancelled) => CaptureError::Cancelled,
+        other => CaptureError::Portal(other.to_string()),
+    }
 }
 
 /// Capture the primary screen on macOS/Windows through `xcap`.
@@ -356,6 +407,39 @@ mod tests {
             CaptureError::Unsupported("wayland only".into()).to_string(),
             "unsupported: wayland only"
         );
+        // The UI's cancel classification keys on "cancel" before portal
+        // keywords — the display text must carry it.
+        assert_eq!(CaptureError::Cancelled.to_string(), "cancelled");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn only_portal_refusal_earns_the_interactive_retry() {
+        // The KDE bug 527399 shape: the backend refuses the non-interactive
+        // request outright -> retry once through the interactive dialog.
+        assert!(retry_interactive(&CaptureError::Portal(
+            "Response error: Other".into()
+        )));
+        // Final outcomes: never nag the user twice, never hang on a dead
+        // portal, never re-run a grab whose file already failed to decode.
+        assert!(!retry_interactive(&CaptureError::Cancelled));
+        assert!(!retry_interactive(&CaptureError::Timeout));
+        assert!(!retry_interactive(&CaptureError::Io("read failed".into())));
+        assert!(!retry_interactive(&CaptureError::Unsupported("no".into())));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn ashpd_cancel_maps_to_cancelled_not_portal() {
+        use ashpd::desktop::ResponseError;
+        assert!(matches!(
+            map_ashpd_error(ashpd::Error::Response(ResponseError::Cancelled)),
+            CaptureError::Cancelled
+        ));
+        assert!(matches!(
+            map_ashpd_error(ashpd::Error::Response(ResponseError::Other)),
+            CaptureError::Portal(_)
+        ));
     }
 
     /// Live portal round trip. Ignored by default: it needs an unlocked,

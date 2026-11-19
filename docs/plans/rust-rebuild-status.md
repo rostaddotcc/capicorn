@@ -1321,10 +1321,58 @@ live pass + gates (trim/relicense/cutover/external post). NO releases published.
 - The honest record now matches the code: the only open items are the rostad gates
   (A1 KDE live pass, A2 Trim, A3 relicense, A4 cutover) + inherent web MVP limits.
 
+### 2026-11-19 — W29: rostad's bug reports — capture root-caused (KDE portal), magnify sees annotations, toolbar fits all 13 tools
+- **"capture fungerar ej alls" root cause is the KDE portal backend, not the
+  app.** Plasma ≤ 6.7's xdg-desktop-portal-kde fails NON-interactive Screenshot
+  requests outright (code 2, no dialog, no KWin call) — it instantiates the
+  QuickDialog even when nothing should be shown (KDE bug 527399, fixed
+  2026-11-17 e14658ea; flameshot#4883 documents the same failure with busctl
+  traces, even for an empty parent_window). Both SnagCraft editions call
+  `interactive(false)`, so capture died instantly on rostad's Plasma box.
+  Fix (Rust edition only — Tauri stays frozen): non-interactive first, on a
+  portal refusal retry ONCE via `interactive(true)` with a 120 s user budget
+  (the ScreenCast picker's). Cancelled/Timeout/Io are final — no nagging, no
+  double hang. New `CaptureError::Cancelled` keeps the UI's cancel wording.
+- **Hide/settle/restore parity closed** (live commands.rs:41-96): the worker
+  sends `HideForGrab` after the countdown, the UI hides root + widget, 220 ms
+  settle, grab, `Done(result)`; windows restored on EVERY outcome (success,
+  error, disconnect). `poll_capture` now runs in `logic` too — eframe skips
+  `ui` for a hidden root, so logic is the only pump that can land the result
+  (the W28 lesson). 3 gates (w29_capture_hide): real-thread e2e (wall-time
+  wait; locked host = 15 s timeout path, CI = fast-refusal path), logic-path
+  success, logic-path failure + widget. 2 capture-crate gates for the retry
+  decision + cancel mapping.
+- **Magnify now magnifies annotations** (rostad's second report): `draw_magnify`
+  samples the working composite instead of `ctx.base` — everything below the
+  lens in z-order (capture + arrows/shapes/effects) is enlarged; later objects
+  paint over it. Intentional live deviation (parity row 6 updated). Regression
+  gate fails on the old code (probed), passes on the new; the seeded lens sits
+  in the spotlight's dimmed zone, so all shell snapshots drifted lens-only —
+  re-blessed, and a pixel probe proved the new lens matches the surrounding
+  dimmed canvas (vision had misread it as "bright/undimmed").
+- **Design: all 13 tools visible again.** The single toolbar row overflowed at
+  1100 px — Callout/Step/Magnify hid in an invisible horizontal scroll.
+  Open/Export/Resize… moved into the File menu (live keeps Open there too;
+  w10 gates updated), tool buttons 32→28 px + spacing 4→3, and every tool
+  button got a real accesskit label (a11y + queryable). Gate: all 13 rects
+  inside the window at 1100 px + File-menu carries the moved ops. The
+  custom-color chip is now 20×20 like the swatches (egui sizes it from
+  `interact_size`, BOTH axes — setting only `.y` left the wide pill).
+- Also removed the dead `Ctx.base` field and the web-only dead `item_path` /
+  `video_seen` bindings (clippy clean on native AND wasm targets).
+- 559/0/11 twice serial, clippy/fmt clean both targets, wasm 10/10. Snapshots
+  re-blessed + vision-verified (13/13 icons, uniform swatch row).
+- **Lesson:** a "capture doesn't work" report on KDE is the portal backend's
+  non-interactive bug until proven otherwise — read the backend source, don't
+  just re-test the app. And vision brightness flags on magnified checkers need
+  a pixel probe (old-vs-new mean vs surrounding) before any "fix".
+
 ## Appendix — measured reality
 
 | Claim | Measured | What changed |
 |---|---|---|
+| "Capture doesn't work at all" on rostad's KDE box = an app bug in the rebuild | The app's portal call is byte-identical to the stable edition's (`interactive(false)`, ashpd 0.14). Plasma ≤ 6.7's portal backend rejects non-interactive Screenshot with code 2 before ever calling KWin (flameshot#4883 busctl trace; KDE bug 527399 fixed 2026-11-17). pn53's own portal times out (locked session) — the live round trip is only testable on rostad's unlocked KDE | W29: non-interactive → interactive fallback on refusal; hide/settle/restore + logic pump. The KDE live pass (A1) now also proves the fallback dialog flow |
+| Vision: the re-blessed magnify lens shows "bright, undimmed content" — the fix isn't sampling the composite | Pixel probe: OLD lens interior mean RGB (127,155,202) vs NEW (91,111,146); surrounding dimmed canvas (93,100,131) unchanged. New lens ≈ surrounding (0.98×) = it DOES sample the spotlight-dimmed composite; the magnified checker just reads brighter to vision | No code change — the probe disproved the flag (third vision false positive on checker/dim patterns) |
 | Settings "clipped at the bottom, no scrollbar" = layout bug; `AlwaysVisible` should show the bar | egui 0.37 floating bars default to dormant opacity 0 — invisible without hover, in a minimal Window AND a plain ScrollArea probe. The window itself is fine (default outer height 420, content scrolls) | W17 sets dormant handle 0.45 / background 0.12 via `style_mut_of` on both themes; pixel-probe + vision confirm a no-hover thumb. Lesson: probe the pixels before believing a "missing scrollbar" flag |
 | Parity row 191 ticked W4 ("stop converts the run to MP4") + W14 "backlog empty" | The UI's `poll_timelapse` done-arm only reported the frame count — nothing ever called `timelapse.assemble`. The live app auto-assembles on stop (`app.ts:3019-3047`); it has no "Make video" button (the gaps.md framing was wrong too) | W15 wires stop→MP4 off-thread (no session lock). Row split: loop W4 / conversion W15. Lesson: a closed checklist is not an audit — re-read the live anchors of headline flows end-to-end, not just the row text |
 | W1 drag-create worked (spike pattern) | egui's hover_pos on the first drag frame is already the MOVED point → every drag-created object was 0px | UI child's parity.rs drag gates caught it; fixed with pointer.press_origin(). Lesson: seeded-command snapshots cannot catch pointer-path bugs — drag gates are mandatory |

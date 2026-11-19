@@ -101,7 +101,6 @@ pub fn composite_styled<'f, 'a, F: Font>(
     let ctx = Ctx {
         fonts,
         shear: clean_shear(italic_shear),
-        base: doc.base.as_ref(),
     };
     let mut img: Surface = doc.base.as_ref().clone();
 
@@ -120,7 +119,6 @@ pub fn composite_styled<'f, 'a, F: Font>(
 struct Ctx<'f, 'a, F> {
     fonts: &'f dyn Fn(&str, bool) -> Option<&'a F>,
     shear: f32,
-    base: &'f Surface,
 }
 
 /// The drop shadow of `obj`, when the kind carries one.
@@ -883,9 +881,17 @@ fn fill_round_rect(img: &mut Surface, rect: Rect, radius: f32, color: Rgba) {
     }
 }
 
-/// Magnify lens (`tools.ts:264-380`): sample the *capture* around the lens
-/// centre (a rect `1/zoom` of the lens size), scale it up to the lens rect and
-/// clip it to a rounded aperture, then draw the 2 px border and zoom chip.
+/// Magnify lens: sample everything painted so far (the capture *and* any
+/// annotations below the lens) around the lens centre (a rect `1/zoom` of the
+/// lens size), scale it up to the lens rect and clip it to a rounded aperture,
+/// then draw the 2 px border and zoom chip.
+///
+/// Intentional deviation from the live app (`tools.ts:264-380` samples only
+/// the background capture): rostad 2026-11-19 asked that drawn arrows/shapes
+/// be magnified too. Sampling the working image is z-order faithful — what is
+/// below the lens is magnified, what is above it paints over it — and the
+/// separate `sampled` buffer is filled before any lens pixel is written, so
+/// the overlapping source/destination rects can never feed back.
 fn draw_magnify<F: Font>(img: &mut Surface, rect: Rect, zoom: f32, ctx: &Ctx<'_, '_, F>) {
     if !rect.is_finite() || rect.w < 1.0 || rect.h < 1.0 {
         return;
@@ -910,7 +916,7 @@ fn draw_magnify<F: Font>(img: &mut Surface, rect: Rect, zoom: f32, ctx: &Ctx<'_,
     let sw = (hw * 2.0 / zoom).max(1.0);
     let sh = (hh * 2.0 / zoom).max(1.0);
     let src = Rect::new(cx - sw / 2.0, cy - sh / 2.0, sw, sh);
-    let sampled = resize_region(ctx.base, src, dw, dh);
+    let sampled = resize_region(img, src, dw, dh);
 
     for y in 0..dh {
         for x in 0..dw {
@@ -1799,6 +1805,68 @@ mod tests {
             border
         );
         assert!(is_white(px(&out, 5, 5)), "outside the lens untouched");
+    }
+
+    #[test]
+    fn magnify_includes_annotations_below_the_lens() {
+        // rostad 2026-11-19: the lens must magnify drawn arrows/shapes too,
+        // not just the raw capture. A red brush band below the lens has to
+        // appear enlarged inside the aperture.
+        let base = snagcraft_raster::filled(Size::new(64, 64), Rgba::WHITE);
+        let mut doc = Document::new(base);
+        doc.add(AnnotObject::BrushStroke {
+            id: 0,
+            points: vec![Point::new(8.0, 32.0), Point::new(56.0, 32.0)],
+            color: RED,
+            width: 6.0,
+        });
+        // Lens centred on the band, zoom 4: the 11x11 source about (32,32)
+        // maps to the 44x44 aperture, so the 6px band fills dest y ~20..44.
+        doc.add(AnnotObject::Magnify {
+            id: 1,
+            rect: Rect::new(10.0, 10.0, 44.0, 44.0),
+            zoom: 4.0,
+        });
+        let out = composite::<ab_glyph::FontVec>(&doc, None);
+        // All three probes are white in the raw capture and inside the
+        // magnified band; none touches the border or the bottom-right chip.
+        for (x, y) in [(32, 32), (32, 24), (20, 40)] {
+            let p = px(&out, x, y);
+            assert!(
+                p[0] > 180 && p[1] < 90 && p[2] < 90,
+                "lens must magnify the red annotation at ({x},{y}): {p:?}"
+            );
+        }
+        // The stroke still exists outside the lens, unmagnified.
+        let p = px(&out, 58, 32);
+        assert!(p[0] > 180 && p[1] < 90, "stroke outside lens: {p:?}");
+    }
+
+    #[test]
+    fn magnify_keeps_z_order_for_later_annotations() {
+        // Annotations ABOVE the lens paint over it at their own scale —
+        // the lens magnifies only what is below it in z-order.
+        let base = snagcraft_raster::filled(Size::new(64, 64), Rgba::WHITE);
+        let mut doc = Document::new(base);
+        doc.add(AnnotObject::Magnify {
+            id: 0,
+            rect: Rect::new(10.0, 10.0, 44.0, 44.0),
+            zoom: 4.0,
+        });
+        doc.add(AnnotObject::BrushStroke {
+            id: 1,
+            points: vec![Point::new(8.0, 32.0), Point::new(56.0, 32.0)],
+            color: RED,
+            width: 6.0,
+        });
+        let out = composite::<ab_glyph::FontVec>(&doc, None);
+        let centre = px(&out, 32, 32);
+        assert!(
+            centre[0] > 180 && centre[1] < 90,
+            "later stroke paints over the aperture: {centre:?}"
+        );
+        // 8px above the band is white: the stroke was NOT magnified.
+        assert!(is_white(px(&out, 32, 24)));
     }
 
     #[test]

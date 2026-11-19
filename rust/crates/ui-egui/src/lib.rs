@@ -708,6 +708,21 @@ impl RegionPick {
     }
 }
 
+/// How long to let the compositor redraw after hiding our own windows before
+/// the grab — the live app's `HIDE_SETTLE_MS` (commands.rs:41), so the window
+/// and its shadow/animation are genuinely gone from the shot.
+#[cfg(feature = "native")]
+const CAPTURE_HIDE_SETTLE: Duration = Duration::from_millis(220);
+
+/// Messages from the off-thread capture worker. `HideForGrab` lands once the
+/// countdown delay has elapsed: the UI hides its own windows (live
+/// `hide_app_windows`), the worker lets the compositor settle, then grabs.
+/// Public so integration gates can drive the state machine without a portal.
+pub enum CaptureMsg {
+    HideForGrab,
+    Done(Result<Surface, String>),
+}
+
 /// Compact 3-2-1 countdown shown before a delayed grab starts (B4#5).
 ///
 /// Presentational only: the capture thread still sleeps `capture_delay_secs`,
@@ -998,11 +1013,11 @@ pub struct SnagCraftApp {
     pub tray_ok: bool,
     /// Main window hidden (to tray or to the widget): eframe then runs
     /// `App::logic` instead of `App::ui`, so the channels are pumped there.
-    hidden: bool,
+    pub hidden: bool,
     applied_theme: Option<Theme>,
     /// Root context, captured each frame so settings changes can re-theme.
     main_ctx: Option<egui::Context>,
-    widget_shown: bool,
+    pub widget_shown: bool,
     widget_applied: Option<bool>,
     #[cfg(feature = "native")]
     platform: PlatformLink,
@@ -1017,7 +1032,9 @@ pub struct SnagCraftApp {
     brush_pts: Vec<Point>,
     editing: Option<TextEdit>,
     pub selected: Option<u64>,
-    capture_rx: Option<mpsc::Receiver<Result<Surface, String>>>,
+    capture_rx: Option<mpsc::Receiver<CaptureMsg>>,
+    /// The capture hid the app's windows; every outcome must restore them.
+    pub capture_hidden: bool,
     /// W25: in-app monitor picker (Windows/macOS, where no OS picker exists).
     /// `monitors` is the `capture.monitors` list; the dialog opens only when it
     /// is non-empty. Native-only — the web build has no screen capture.
@@ -1200,6 +1217,7 @@ impl SnagCraftApp {
             editing: None,
             selected: None,
             capture_rx: None,
+            capture_hidden: false,
             #[cfg(feature = "native")]
             monitor_picker_open: false,
             #[cfg(feature = "native")]
@@ -1384,8 +1402,12 @@ impl SnagCraftApp {
                 if !delay.is_zero() {
                     std::thread::sleep(delay);
                 }
+                // Hide/settle/restore dance (live commands.rs:79-96): the
+                // app's own windows must not end up in their own shot.
+                let _ = tx.send(CaptureMsg::HideForGrab);
+                std::thread::sleep(CAPTURE_HIDE_SETTLE);
                 let result = snagcraft_capture::capture_full_blocking().map_err(|e| e.to_string());
-                let _ = tx.send(result);
+                let _ = tx.send(CaptureMsg::Done(result));
             });
         }
     }
@@ -1399,6 +1421,15 @@ impl SnagCraftApp {
     /// W25: is a screen grab in flight? (test seam for the monitor picker)
     pub fn capture_in_flight(&self) -> bool {
         self.capture_rx.is_some()
+    }
+
+    /// Test seam: arm the capture channel without spawning a portal thread,
+    /// so gates can drive `HideForGrab`/`Done` directly (a live portal round
+    /// trip needs an unlocked desktop — see the capture crate's ignored test).
+    pub fn seed_capture_channel(&mut self) -> mpsc::Sender<CaptureMsg> {
+        let (tx, rx) = mpsc::channel();
+        self.capture_rx = Some(rx);
+        tx
     }
 
     /// Capture and switch straight into the crop tool (Region button/hotkey).
@@ -1445,15 +1476,19 @@ impl SnagCraftApp {
         self.status = "Capturing the selected monitor…".into();
         self.redraw = true;
         std::thread::spawn(move || {
+            let _ = tx.send(CaptureMsg::HideForGrab);
+            std::thread::sleep(CAPTURE_HIDE_SETTLE);
             let result = snagcraft_capture::capture_monitor_index(index).map_err(|e| e.to_string());
-            let _ = tx.send(result);
+            let _ = tx.send(CaptureMsg::Done(result));
         });
     }
 
-    fn poll_capture(&mut self) {
+    fn poll_capture(&mut self, ctx: &egui::Context) {
         let Some(rx) = &self.capture_rx else { return };
         match rx.try_recv() {
-            Ok(Ok(surface)) => {
+            Ok(CaptureMsg::HideForGrab) => self.hide_for_capture(ctx),
+            Ok(CaptureMsg::Done(Ok(surface))) => {
+                self.restore_after_capture(ctx);
                 let (w, h) = (surface.width(), surface.height());
                 self.capture_rx = None;
                 self.countdown = None;
@@ -1486,19 +1521,61 @@ impl SnagCraftApp {
                     }
                 };
             }
-            Ok(Err(e)) => {
+            Ok(CaptureMsg::Done(Err(e))) => {
+                self.restore_after_capture(ctx);
                 self.capture_rx = None;
                 self.countdown = None;
                 self.status = format!("Capture failed: {e}");
             }
             Err(mpsc::TryRecvError::Empty) => {}
             Err(mpsc::TryRecvError::Disconnected) => {
+                self.restore_after_capture(ctx);
                 self.capture_rx = None;
                 self.countdown = None;
                 self.status = "Capture thread ended unexpectedly.".into();
             }
         }
     }
+
+    /// Hide the app's own windows so they cannot end up in their own capture
+    /// (live `hide_app_windows`, commands.rs:47-62). eframe stops calling
+    /// `App::ui` for a hidden root, so [`Self::logic`] keeps polling the
+    /// capture channel until the result lands.
+    #[cfg(feature = "native")]
+    fn hide_for_capture(&mut self, ctx: &egui::Context) {
+        self.capture_hidden = true;
+        self.hidden = true;
+        ctx.send_viewport_cmd(ViewportCommand::Visible(false));
+        if self.widget_shown {
+            ctx.send_viewport_cmd_to(widget_viewport_id(), ViewportCommand::Visible(false));
+        }
+        ctx.send_viewport_cmd(ViewportCommand::RequestPaintWhileHidden);
+        ctx.request_repaint_after(Duration::from_millis(250));
+    }
+
+    /// Bring the windows back on EVERY capture outcome — the live
+    /// `restore_app_windows` runs on the error path too, so no window can be
+    /// left hidden behind a failed screenshot.
+    #[cfg(feature = "native")]
+    fn restore_after_capture(&mut self, ctx: &egui::Context) {
+        if !self.capture_hidden {
+            return;
+        }
+        self.capture_hidden = false;
+        self.hidden = false;
+        ctx.send_viewport_cmd(ViewportCommand::Visible(true));
+        ctx.send_viewport_cmd(ViewportCommand::Focus);
+        if self.widget_shown && self.settings.show_widget {
+            ctx.send_viewport_cmd_to(widget_viewport_id(), ViewportCommand::Visible(true));
+        }
+    }
+
+    /// Web: no windows to hide — the browser tab is the capture surface's
+    /// only viewer and screen capture is desktop-only anyway.
+    #[cfg(not(feature = "native"))]
+    fn hide_for_capture(&mut self, _ctx: &egui::Context) {}
+    #[cfg(not(feature = "native"))]
+    fn restore_after_capture(&mut self, _ctx: &egui::Context) {}
 
     fn dispatch(&mut self, cmd: &str, params: serde_json::Value) {
         match self.exec(cmd, params) {
@@ -4462,15 +4539,20 @@ impl SnagCraftApp {
     /// painting, but the tray/hotkey/instance channels must stay drained or the
     /// window could never be brought back.
     pub fn logic(&mut self, ctx: &egui::Context) {
-        if self.hidden {
+        if self.hidden || self.capture_rx.is_some() {
             // Slow heartbeat: eframe otherwise only wakes for OS events, and a
             // hidden window has none. A quarter second keeps the tray snappy
-            // without burning a frame loop.
+            // without burning a frame loop. A capture in flight needs it too:
+            // its HideForGrab hides the root, and only logic can land the
+            // result and bring the windows back.
             ctx.send_viewport_cmd(ViewportCommand::RequestPaintWhileHidden);
             ctx.request_repaint_after(Duration::from_millis(250));
         }
         self.main_ctx = Some(ctx.clone());
         self.poll_platform(ctx);
+        // The capture result must land even while the root is hidden (the
+        // hide/settle/restore dance hides it for the grab itself).
+        self.poll_capture(ctx);
         // The live layer keeps running while hidden: a recording start/stop or
         // a scrolling capture must land even with no main window painting.
         self.poll_media();
@@ -5825,7 +5907,9 @@ fn settings_button(ui: &mut egui::Ui) -> Response {
 }
 
 fn tool_button(ui: &mut egui::Ui, tool: Tool, active: bool) -> Response {
-    let (rect, resp) = ui.allocate_exact_size(vec2(32.0, 32.0), Sense::click());
+    // W29: 28px (was 32) so all 13 tools fit the row at common desktop
+    // widths; icons are painted proportionally, so they scale with the box.
+    let (rect, resp) = ui.allocate_exact_size(vec2(28.0, 28.0), Sense::click());
     let accent = pal_accent(ui);
     let fill = if active {
         accent.linear_multiply(0.16)
@@ -5844,6 +5928,9 @@ fn tool_button(ui: &mut egui::Ui, tool: Tool, active: bool) -> Response {
     );
     let ink = if active { accent } else { pal_fg(ui) };
     icon(ui.painter(), rect, tool, ink);
+    // W29: a real accesskit label — screen readers name the tool, and gates
+    // can query its rect to prove the whole row fits (no clipped tools).
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, tool.label()));
     resp.on_hover_text(tool.label())
 }
 
@@ -5872,8 +5959,15 @@ fn palette(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
             app.color = color;
         }
     }
-    ui.color_edit_button_srgba(&mut app.color)
-        .on_hover_text("Custom color");
+    // W29: the custom-color slot matches the swatch footprint — the default
+    // button is interact_size wide and read as an unlabeled fill chip.
+    let custom = ui
+        .scope(|ui| {
+            ui.spacing_mut().interact_size = vec2(20.0, 20.0);
+            ui.color_edit_button_srgba(&mut app.color)
+        })
+        .inner;
+    custom.on_hover_text("Custom color");
     ui.separator();
 }
 
@@ -6603,6 +6697,14 @@ fn file_menu(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
             app.open_new_canvas();
             ui.close();
         }
+        if ui
+            .button("Open…")
+            .on_hover_text("Open an image from disk and annotate it (Ctrl+O)")
+            .clicked()
+        {
+            app.open_dialog();
+            ui.close();
+        }
         ui.separator();
         if ui
             .button("Save")
@@ -6628,6 +6730,25 @@ fn file_menu(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
             .clicked()
         {
             app.save_dialog();
+            ui.close();
+        }
+        ui.separator();
+        // W29: document ops live in the menu (live keeps Open here too) —
+        // the toolbar row stays compact enough for all 13 tools.
+        if ui
+            .button("Export…")
+            .on_hover_text("Export the flattened image")
+            .clicked()
+        {
+            app.export_dialog();
+            ui.close();
+        }
+        if ui
+            .button("Resize…")
+            .on_hover_text("Resize the canvas — annotations scale with it")
+            .clicked()
+        {
+            app.open_resize();
             ui.close();
         }
         ui.separator();
@@ -7029,13 +7150,13 @@ fn filmstrip(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
                         // W28: live MEDIA_VIDEO_THUMBS — only the newest 8 video
                         // items get an ffmpeg thumbnail; the rest keep the film
                         // placeholder. Count videos by position (newest first).
+                        #[cfg(feature = "native")]
                         let mut video_seen = 0usize;
                         for index in 0..app.recent.len() {
-                            let item_path = app.recent[index].path.clone();
                             #[cfg(feature = "native")]
-                            let is_video = snagcraft_io::recent::is_video_container(&item_path);
-                            #[cfg(not(feature = "native"))]
-                            let is_video = false;
+                            let is_video =
+                                snagcraft_io::recent::is_video_container(&app.recent[index].path);
+                            #[cfg(feature = "native")]
                             if is_video {
                                 video_seen += 1;
                             }
@@ -7211,7 +7332,7 @@ pub fn app_ui(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
     app.poll_dropped(&ctx);
     #[cfg(not(feature = "native"))]
     app.poll_web_clipboard();
-    app.poll_capture();
+    app.poll_capture(&ctx);
     app.poll_media();
     // W28: land finished off-thread video thumbnails onto the Recent tiles.
     #[cfg(feature = "native")]
@@ -7262,21 +7383,9 @@ pub fn app_ui(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
                         }
                     });
                     // W17: group the strip — edit ops | document ops | menus.
+                    // W29: Open/Export/Resize moved into the File menu so the
+                    // row leaves room for all 13 tools at common widths.
                     ui.separator();
-                    if ui
-                        .button("Resize…")
-                        .on_hover_text("Resize the canvas — annotations scale with it")
-                        .clicked()
-                    {
-                        app.open_resize();
-                    }
-                    if ui
-                        .button("Export")
-                        .on_hover_text("Export the flattened image")
-                        .clicked()
-                    {
-                        app.export_dialog();
-                    }
                     if ui
                         .button("Copy")
                         .on_hover_text("Copy image to clipboard (Ctrl+C)")
@@ -7290,9 +7399,6 @@ pub fn app_ui(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
                         .clicked()
                     {
                         app.save_now();
-                    }
-                    if ui.button("Open").on_hover_text("Open an image").clicked() {
-                        app.open_dialog();
                     }
                     ui.separator();
                     let recent_chip = egui::Button::new(
@@ -7333,7 +7439,7 @@ pub fn app_ui(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
                                 .id_salt("toolbar-tools")
                                 .show(ui, |ui| {
                                     ui.horizontal(|ui| {
-                                        ui.spacing_mut().item_spacing = vec2(4.0, 0.0);
+                                        ui.spacing_mut().item_spacing = vec2(3.0, 0.0);
                                         for tool in Tool::ALL {
                                             if tool_button(ui, tool, app.tool == tool).clicked() {
                                                 app.select_tool(tool);

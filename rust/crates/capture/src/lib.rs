@@ -80,6 +80,20 @@ pub fn diagnose_portal_at_startup() {
             let sc = tokio::time::timeout(Duration::from_secs(8), Screencast::new()).await;
             portal_log(&format!("STARTUP PROBE Screencast::new(): {}", match sc {
                 Ok(Ok(_)) => "OK".to_string(), Ok(Err(e)) => format!("ERR {e}"), Err(_) => "TIMEOUT".to_string() }));
+            // 4) the actual Screenshot method, WITHOUT hiding the window — isolates
+            //    the hide/settle dance from the Screenshot call + Response signal.
+            use ashpd::desktop::screenshot::Screenshot;
+            let shot = tokio::time::timeout(Duration::from_secs(15),
+                Screenshot::request().interactive(false).send()).await;
+            match shot {
+                Ok(Ok(req)) => {
+                    let detail = req.response().map(|s| s.uri().as_str().to_string())
+                        .unwrap_or_else(|e| format!("response err {e}"));
+                    portal_log(&format!("STARTUP PROBE Screenshot(no hide): OK {detail}"));
+                }
+                Ok(Err(e)) => portal_log(&format!("STARTUP PROBE Screenshot(no hide): ERR {e}")),
+                Err(_) => portal_log("STARTUP PROBE Screenshot(no hide): TIMEOUT 15s"),
+            }
         });
     });
 }

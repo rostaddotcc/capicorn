@@ -53,24 +53,31 @@ fn widget_rec_starts_a_take_without_panicking() {
             || status.contains("Could not start recording"),
         "Rec must either arm a take or report the real failure: {status}"
     );
-    // The widget swaps to the stop square while the take is live.
+    // The widget swaps to the stop square once the take is LIVE; during the
+    // starting phase (portal picker open) it shows "Starting…" instead (W34).
     if h.state().recording() {
-        // Recording layout: painted stop square + one pause toggle, no fold.
-        let _ = h.get_by_label("Stop");
-        let _ = h.get_by_label("Pause");
         assert_eq!(
             h.query_all_by_label("»").count(),
             0,
-            "the fold control must be gone while a take is live"
+            "the fold control must be gone while a take is in flight"
         );
-        h.get_by_label("Stop").click();
-        h.run_steps(1);
-        assert!(
-            h.state().status.contains("Finishing the recording")
-                || h.state().status.contains("Recording"),
-            "Stop must reach the engine: {}",
-            h.state().status
-        );
+        if h.state().rec.active {
+            // Recording layout: painted stop square + one pause toggle.
+            let _ = h.get_by_label("Stop");
+            let _ = h.get_by_label("Pause");
+            h.get_by_label("Stop").click();
+            h.run_steps(1);
+            assert!(
+                h.state().status.contains("Finishing the recording")
+                    || h.state().status.contains("Recording"),
+                "Stop must reach the engine: {}",
+                h.state().status
+            );
+        } else {
+            // W34: the picker owns the starting phase — no stop/pause yet.
+            assert_eq!(h.query_all_by_label("Stop").count(), 0);
+            assert_eq!(h.query_all_by_label("Pause").count(), 0);
+        }
     }
 }
 

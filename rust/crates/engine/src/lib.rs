@@ -216,6 +216,17 @@ impl Session {
         self.saved_depth = 0;
     }
 
+    /// Test seam: simulate the portal-picker phase (a pending recording
+    /// start) without spawning the portal thread. The paired sender is kept
+    /// alive so the channel never disconnects; nothing ever arrives, so
+    /// `record.poll` reports `running` and the UI's armed state survives.
+    #[cfg(feature = "native")]
+    pub fn seed_record_starting(&mut self) {
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.record_start_rx = Some(rx);
+        std::mem::forget(tx);
+    }
+
     pub fn dispatch(&mut self, id: &str, params: Value) -> Result<Value, CommandError> {
         let spec = registry().into_iter().find(|c| c.id == id);
         let result = match spec {

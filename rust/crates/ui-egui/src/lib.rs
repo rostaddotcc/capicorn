@@ -2582,6 +2582,13 @@ impl SnagCraftApp {
 
     /// `record.stop` — the encoder finalises and reports `stopped`.
     pub fn stop_recording(&mut self) {
+        // W34: during the starting phase the OS picker owns the take — there
+        // is nothing to finalise yet, so say so instead of "Finishing…".
+        if self.rec.armed && !self.rec.active {
+            self.status =
+                "The recording hasn't started — answer or cancel the system picker.".into();
+            return;
+        }
         match self.exec("record.stop", serde_json::json!({})) {
             // Live app.ts:2501 wording.
             Ok(_) => self.status = "Finishing the recording…".into(),
@@ -5589,15 +5596,28 @@ pub fn widget_ui(ui: &mut egui::Ui, app: &mut SnagCraftApp, class: egui::Viewpor
         if app.recording() {
             // Live layout: [stop square] [one Pause/Resume] [live dot] [×].
             // No fold control mid-take — the take owns the pill.
-            let square = btn_h.clamp(20.0, 26.0);
-            let stop_rect = Rect::from_min_size(pos2(x, y), vec2(square, square));
-            if stop_square_button(ui, stop_rect).clicked() {
-                app.stop_recording();
-            }
-            let pause_rect = Rect::from_min_size(pos2(x + square + 6.0, y), vec2(58.0, btn_h));
-            let toggle = if app.rec.paused { "Resume" } else { "Pause" };
-            if widget_button(ui, pause_rect, toggle).clicked() {
-                app.toggle_record_pause();
+            // W34: stop/pause only once the take is LIVE — during the
+            // starting phase the OS picker owns it (live hides the pill
+            // until active).
+            if app.rec.active {
+                let square = btn_h.clamp(20.0, 26.0);
+                let stop_rect = Rect::from_min_size(pos2(x, y), vec2(square, square));
+                if stop_square_button(ui, stop_rect).clicked() {
+                    app.stop_recording();
+                }
+                let pause_rect = Rect::from_min_size(pos2(x + square + 6.0, y), vec2(58.0, btn_h));
+                let toggle = if app.rec.paused { "Resume" } else { "Pause" };
+                if widget_button(ui, pause_rect, toggle).clicked() {
+                    app.toggle_record_pause();
+                }
+            } else {
+                painter.text(
+                    pos2(x, pill.center().y),
+                    egui::Align2::LEFT_CENTER,
+                    "Starting…",
+                    egui::FontId::proportional(12.0),
+                    Color32::WHITE,
+                );
             }
             painter.circle_filled(pos2(pill.right() - 44.0, pill.center().y), 4.5, WIDGET_RED);
         } else {
@@ -6901,6 +6921,10 @@ fn media_hud(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
                                 .color(pal_muted(ui)),
                         );
                     }
+                    // W34: controls only once the take is LIVE. During the
+                    // starting phase the OS picker owns the take — a Stop
+                    // button there finalised nothing and misled (live hides
+                    // the whole pill until active, app.ts:2307).
                     if app.rec.active {
                         let toggle = if app.rec.paused { "Resume" } else { "Pause" };
                         if ui
@@ -6910,13 +6934,17 @@ fn media_hud(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
                         {
                             app.toggle_record_pause();
                         }
-                    }
-                    if ui
-                        .button("Stop recording")
-                        .on_hover_text("Finalise the take and save it")
-                        .clicked()
-                    {
-                        app.stop_recording();
+                        if ui
+                            .button("Stop recording")
+                            .on_hover_text("Finalise the take and save it")
+                            .clicked()
+                        {
+                            app.stop_recording();
+                        }
+                    } else {
+                        ui.label(
+                            hud_text("answer the system picker to begin").color(pal_muted(ui)),
+                        );
                     }
                     ui.separator();
                     let audio = match app.rec.audio.as_deref() {

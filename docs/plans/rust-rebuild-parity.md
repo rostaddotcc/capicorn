@@ -119,7 +119,7 @@ Effects are applied to the **image layer at export resolution** (scene px × exp
 | Feature | Evidence | rust |
 |---|---|---|
 | **Floating widget** — frameless always-on-top window, two states: folded tab **58×74**, expanded pill **292×50** (window 304×60) | `windows.rs:186-260` (sizes doc :205-213, `WIDGET_LABEL` :203, `build_widget` :228, always-on-top :259), `widget.css` | W3 |
-| Widget buttons: Full, Region, **Rec** (red dot → Stop square mid-take), fold, close, drag grip; `Rec` tooltip "Record the screen (V)" | `widget-main.ts:9-27` (invoke modes :26-27), buttons :210-245, rec icon :104-105, tip :226 | W4 |
+| Widget buttons: Full, Region, **Rec** (red dot → Stop square mid-take), fold, close, drag grip; `Rec` tooltip "Record the screen (V)" | `widget-main.ts:9-27` (invoke modes :26-27), buttons :210-245, rec icon :104-105, tip :226 | W4 + W34 (stop square/Pause only once the take is LIVE; the starting phase shows "Starting…" + live dot) |
 | Widget `V` shortcut → recording; mirrors `recording-state` broadcast from any window | `widget-main.ts:412-416`, tip :226 | W4 (widget V / main Ctrl+Alt+V) |
 | Widget keyboard: Enter/Space activate the tab (a11y) | `widget-main.ts:336-339` | W3 |
 | Widget parks top-right, kept in place across states | `windows.rs:270-287` (`widget_apply_size` :288) | W3 |
@@ -164,6 +164,7 @@ Effects are applied to the **image layer at export resolution** (scene px × exp
 | Stop flow: "Finishing the recording…" → "Recording saved: {path}" + immediate Recent-rail pickup; an empty path reports "no file was written" | `app.ts:2497-2515` (`stopRecording`), `:5313-5321` (state mirror) | W18 |
 | Start flow: waiting status names format/region; success "Recording — click Stop when you're done."; errors classified (neutral cancel / permission-recovery hint / portal-log pointer); a capture in flight blocks a new take | `app.ts:2402-2405`, `:2439-2444`, `:2475`, `:2481-2494` | W18 |
 | HUD "Region" scope tag on region takes (absent on whole-screen) | `app.ts:2308-2310` (`paintRecording` / `recScopeEl`) | W18 |
+| **Starting phase owns no controls** — the rec pill stays hidden until the take is ACTIVE; while the portal picker is open there is nothing to stop/pause | `app.ts:2307` (`recPillEl.hidden = !active`) | W34 (HUD + widget show "Starting recorder…" / "Starting…" with the picker hint, no Stop/Pause; `stop_recording` during starting explains the picker instead of claiming "Finishing…"; engine seam `seed_record_starting` for gates) |
 | Recording thumbnails for the Recent rail | `commands.rs:533-545` (`recording_thumb`) | W9 + W28 (real first-frame ffmpeg thumbnail off-thread, newest 8 videos = live `MEDIA_VIDEO_THUMBS`; unreadable/absent ffmpeg keeps the W22 painter-drawn film placeholder) |
 | Copy diagnostics (portal + per-take `.rec.log`) to clipboard | `commands.rs:457-501`, `settings.ts` troubleshooting button `:996-1004` | W11 |
 | **Trim** a finished take | *not implemented in v1.5.3* — no trim command or UI (grep `trim` in `recording.rs`/`app.ts` is string-truncation only) | pending |

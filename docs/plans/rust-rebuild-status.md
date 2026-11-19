@@ -1506,6 +1506,37 @@ live pass + gates (trim/relicense/cutover/external post). NO releases published.
   end-of-pass focus clear (needs next-pass re-request), and teardown paths
   that run before the draw (flush pending style on target loss).
 
+### 2026-11-19 — W34: recording flow walked end-to-end — starting-phase Stop misled
+- **Walked start→HUD→pause→stop→Recent against the live anchors**
+  (app.ts:2402-2515, recording.rs, session.rs): the stop path finalises
+  properly (capture thread joins ffmpeg, session dropped, exactly one
+  terminal event, Stopped{path} → Recent + W28 thumbnail), pause/resume
+  clock bookkeeping matches paintRecTimer, error classification W18 ✓.
+- **One real bug found:** the HUD and widget offered **Stop recording while
+  the portal picker was still open** (armed, not active). `record.stop` has
+  no handle then → `stopping:false`, but the UI printed "Finishing the
+  recording…" — finalising nothing; and once the picker was answered the
+  take started despite the Stop click. Live hides the whole rec pill until
+  active (app.ts:2307).
+- **Fix:** HUD + widget show Stop/Pause only when `rec.active`; the starting
+  phase shows "Starting recorder… / answer the system picker to begin" (HUD)
+  and "Starting…" + live dot (widget). `stop_recording` during starting
+  explains the picker phase instead of claiming "Finishing…". No engine
+  change needed — the phase semantics were already correct there.
+- **Gate injection trap:** `poll_record`'s running-fallback clears an
+  injected `rec.armed` when the engine reports no run — starting-phase gates
+  must seed the ENGINE side too: new `Session::seed_record_starting()` seam
+  (pending start channel, sender kept alive, nothing arrives). The w4
+  Rec-click test now branches on rec.active (pn53 sits in the picker phase;
+  CI fails fast and skips the branch).
+- 4 new gates (w34_record_start) + w34_widget_starting snapshot
+  (vision-verified: Starting… + dot, no stop/pause; the pill "overlapping
+  the HUD" is the known kittest embedded-viewport artifact, not app layout).
+  585/0/11 twice serial, clippy/fmt clean both targets, wasm 10/10.
+- **Lesson:** audit media flows phase by phase — the armed/active split is
+  where controls lie; and kittest state injection must satisfy the poll
+  loops' consistency checks (engine + UI sides), not just the draw flags.
+
 ## Appendix — measured reality
 
 | Claim | Measured | What changed |

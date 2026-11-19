@@ -1082,6 +1082,9 @@ live pass + gates (trim/relicense/cutover/external post). NO releases published.
   clippy/fmt clean incl. wasm target, layers legal, xtask wasm 10/10.
 - Docs: parity row 94 → W10 + W23 (overclaim noted), summary prose updated
   (159 rows unchanged, 1 pending = Trim).
+- Fresh W23 artifacts from committed 52e4b3a: release binary rebuilt, AppImage
+  13.99 MB launch-tested (exit 124, benign locked-GNOME noise only) in
+  rust/dist/w23/, CLI smoke 49 commands. Delivered to rostad.
 - Awaiting rostad unchanged: KDE live pass, trim decision, relicense, cutover.
 
 ## Appendix — measured reality

@@ -160,10 +160,10 @@ fn close_request_on_dirty_document_shows_the_guard() {
         "the close must be cancelled while the modal is open"
     );
     h.run_steps(2);
-    let _ = h.get_by_label("Unsaved changes");
-    let _ = h.get_by_label("You have unsaved annotations");
-    // "Save" also exists in the toolbar, so the modal's copy is the second one.
-    assert!(h.query_all_by_label("Save").count() >= 2);
+    // W24: the live guard title + button hierarchy.
+    let _ = h.get_by_label("Save changes before closing?");
+    let _ = h.get_by_label_contains("You have unsaved annotations");
+    let _ = h.get_by_label("Save & close");
     for label in ["Discard", "Cancel"] {
         let _ = h.get_by_label(label);
     }

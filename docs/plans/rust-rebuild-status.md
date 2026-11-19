@@ -1087,6 +1087,31 @@ live pass + gates (trim/relicense/cutover/external post). NO releases published.
   rust/dist/w23/, CLI smoke 49 commands. Delivered to rostad.
 - Awaiting rostad unchanged: KDE live pass, trim decision, relicense, cutover.
 
+### 2026-11-19 — wake #113: W24 close-guard + OCR button hierarchy
+- Fresh re-check: tree clean at de14aaf, suite green (533/0/11 serial). Design
+  pass on the remaining modals. Vision flagged the close guard's flat buttons
+  and the OCR Copy button; the code audit against the live markup confirmed
+  BOTH real: the live guard (index.html:1148-1166) is "Save changes before
+  closing?" with Cancel left + ghost-danger Discard + btn-primary "Save & close"
+  right, and the live OCR Copy is btn-primary (index.html:1293). Vision's other
+  flags were false (OCR monospace IS the live font; the guard's image icon IS
+  the live ICONS.image; scrim is the egui-window idiom).
+- **Fixes:**
+  1. Close guard: live title, Cancel (secondary) left, Discard (danger ink +
+     border, transparent fill — new theme-aware pal_danger, live --danger
+     #c9405c/#ff6f86) + "Save & close" (accent primary) grouped right.
+  2. OCR "Copy text" → accent-filled primary (keeps W21 disabled-until-text).
+- **Gates:** 4 new (tests/w24_guard.rs): Save & close writes the copy before
+  quitting, Discard quits WITHOUT writing, Cancel keeps the doc, hierarchy
+  snapshot (vision-verified). w3_shell guard test updated to the new labels;
+  w3_close_guard + the three OCR snapshots re-blessed (diffs vision-checked =
+  Copy-button fill only). Two consecutive full serial runs green.
+- Parent-verified: workspace **537 passed / 0 failed / 11 ignored** (×2 serial),
+  clippy/fmt clean incl. wasm target, layers legal, xtask wasm 10/10.
+- Docs: new close-guard-design parity row (W24), OCR-copy row → W4+W21+W24,
+  summary recounted (160 rows, 1 pending = Trim).
+- Awaiting rostad unchanged: KDE live pass, trim decision, relicense, cutover.
+
 ## Appendix — measured reality
 
 | Claim | Measured | What changed |

@@ -126,6 +126,7 @@ Effects are applied to the **image layer at export resolution** (scene px × exp
 | **Global hotkeys** via `org.freedesktop.portal.GlobalShortcuts` (Wayland-only path); actions `capture-full`, `capture-region`; default triggers `Print` / `SHIFT+Print` | `hotkeys.rs:1-28` (module doc), status enum :45-75, `xdg_trigger` :156-196, `normalize_key` :197, `description_for` :234-237; defaults `settings.ts:66-67`; frontend listen `app.ts:5265-5269` | W3 |
 | Re-binding allowed only per new portal session (one BindShortcuts per session) | `hotkeys.rs:28` | W3 |
 | **Close guard** — `CloseRequested` is always prevented, then a decision tree runs: force-quit flag → exit; **dirty document** → emit `close-requested` so the frontend shows its own non-blocking save modal (which calls `force_close`); widget visible → hide main, keep the pill; "Minimize to tray" + a real tray present → hide + `window-hidden-to-tray`; otherwise exit | `windows.rs:26-28` (flags), `request_quit` `:89-94`, `handle_close` `:96-140` (`:100`, `:105-110`, `:112-122`, `:126-137`), `register_close_guard` `:142-154`, `force_close` `:156-160`; setting `app.ts:1657` | W3 |
+| **Close-guard modal design** — "Save changes before closing?" title; Cancel (secondary) left, Discard (ghost-danger) + "Save & close" (accent primary) grouped right; Save writes the copy before quitting, Discard quits without saving | `index.html:1148-1166` (`close-guard`, `btn-ghost-danger`/`btn-primary`), `style.css:2623` | W24 (was three equal-weight gray buttons, "Unsaved changes" title) |
 | **Single instance** — a second launch forwards argv to the running app, which re-dispatches it | `lib.rs:30-33` (`tauri_plugin_single_instance::init`), `cli.rs:5` | W3 |
 | **Start at login** via `tauri-plugin-autostart` (XDG autostart on Linux, Run key on Windows) | `lib.rs:35-39`, UI `settings.ts:804-806`, README:127 | W3 |
 | **File associations** — open images with SnagCraft from the file manager | `tauri.conf.json:47` (`fileAssociations`), `cli.rs:45-57` (path in argv → `file`) | W3 |
@@ -188,7 +189,7 @@ Effects are applied to the **image layer at export resolution** (scene px × exp
 | Extract text from the current capture; language `eng` \| `swe`, stored in `snagcraft:ocr-lang`; "Capture something first" guard; empty result suggests another language, success points at Copy | `app.ts:671-676` (`OCR_LANG_KEY`, `OCR_LANGS`), toolbar chip `:906`, `runOcr` `:4149-4179` | W7 + W21 (guard + live result wording W21; the worker also runs tesseract WITHOUT the session lock now) |
 | Modal: language select, "Extract text", busy "Reading…", read-only textarea, live status | `app.ts:1265-1287` (lang `:1278`, run `:1283`, busy `:1284`, textarea `:1286`) | W7 |
 | Backend: `ocr_image(dataUrl, lang?)`, `ocr_available()`, `ocr_languages()` | `ocr.rs:183-206`; `sanitize_lang` `:49`, `clean_output` `:72` | W4 |
-| Copy the recognised text to the clipboard — disabled until there is text | `app.ts:4181` (`copyOcrText`, `ocrCopyBtn.disabled` `:4162`), `copy_text` `commands.rs:431-435` | W4 + W21 (disabled-until-text affordance W21) |
+| Copy the recognised text to the clipboard — disabled until there is text, accent-filled primary | `app.ts:4181` (`copyOcrText`, `ocrCopyBtn.disabled` `:4162`, `btn-primary` `index.html:1293`), `copy_text` `commands.rs:431-435` | W4 + W21 + W24 (disabled-until-text W21; primary styling W24) |
 
 ---
 
@@ -300,19 +301,18 @@ Sections rendered: General, Capture, Recording audio, Global hotkeys, Save locat
 
 ---
 
-## Wave coverage at W23 (2026-11-19)
+## Wave coverage at W24 (2026-11-19)
 
 The W1-era scope note that used to sit here ("not started at all: shell, recording,
 scrolling, OCR, timelapse, upload, settings, themes, shortcuts, About") is obsolete —
-W2–W5 landed most of it, and W7–W23 closed the rest. The W6b summary that used to
+W2–W5 landed most of it, and W7–W24 closed the rest. The W6b summary that used to
 sit here (45 `pending`) was stale: those rows were closed by W7–W14 but the table
-was never recounted. Current state of the checklist (recounted row-by-row at W22,
-W23 extended existing rows without adding new ones):
+was never recounted. Current state of the checklist (recounted row-by-row at W24):
 
 | Status | Rows |
 |--------|------|
 | `W2` (incl. 3 `W2 + W14`) | 33 |
-| `W4` (incl. `W4 + W13`, `W4 + W18`, `W4 + W20`, `W4 + W21`) | 33 |
+| `W4` (incl. `W4 + W13`, `W4 + W18`, `W4 + W20`, `W4 + W21`, `W4 + W21 + W24`) | 33 |
 | `W3` | 30 |
 | `W11` | 14 |
 | `W12` (incl. `W12 + W19`) | 13 |
@@ -327,9 +327,10 @@ W23 extended existing rows without adding new ones):
 | `W15` | 1 |
 | `W19` | 1 |
 | `W22` | 1 |
+| `W24` | 1 |
 | `pending` (Trim — rostad-gated) | 1 |
 | `n/a` | 1 |
-| **total** | **159** |
+| **total** | **160** |
 
 What the waves delivered, per `docs/plans/rust-rebuild-status.md`: 13-tool annotation
 parity with 10 object kinds and 5 shape variants (W2); tray, global hotkeys,
@@ -370,14 +371,17 @@ placeholder with a painter-drawn film icon (the bundled fonts have no ▶ glyph)
 **W23 finished the New-canvas dialog against the live design: the white/transparent
 background choice (the W10 tick overclaimed it — doc.new was white-only), radio
 preset cards that fill the fields and highlight the match, and remembered size/bg
-(the live localStorage prefs, now persisted settings).**
+(the live localStorage prefs, now persisted settings).** **W24 gave the close-guard
+modal the live hierarchy ("Save changes before closing?", Cancel left, ghost-danger
+Discard + accent "Save & close" right) and made the OCR Copy text button the accent
+primary it is in the live app.**
 
 The single `pending` row is **Trim** — deliberately out of parity (the live v1.5.3
 has no trim) and gated on rostad's build-or-drop decision (`docs/gaps.md` A2).
 Every other row is backed by live code. The remaining open items in `docs/gaps.md`
 are rostad gates (A1–A4), web-MVP limits (C1–C3) and future platform ports (D1–D2).
 
-**Coverage:** 159 rows across 14 sections. Every TS line number came from a grep/read
+**Coverage:** 160 rows across 14 sections. Every TS line number came from a grep/read
 against commit `3cec2ee` (baseline v1.5.3) during W1; the only exceptions are the two
 `CHANGELOG.md` citations, marked as such. Rust statuses were re-audited at W6b as
-described at the top of this file, recounted at W15, and flow-audited at W18–W23.
+described at the top of this file, recounted at W15, and flow-audited at W18–W24.

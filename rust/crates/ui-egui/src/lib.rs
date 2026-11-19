@@ -81,6 +81,15 @@ fn pal_hover(ui: &egui::Ui) -> Color32 {
     ui.visuals().widgets.hovered.bg_fill
 }
 
+/// W24: destructive-action ink, theme-aware (the live `--danger`).
+fn pal_danger(ui: &egui::Ui) -> Color32 {
+    if ui.visuals().dark_mode {
+        DANGER_DARK
+    } else {
+        DANGER_LIGHT
+    }
+}
+
 fn pal_canvas(ui: &egui::Ui) -> Color32 {
     if ui.visuals().dark_mode {
         Color32::from_rgb(21, 23, 27)
@@ -3263,10 +3272,14 @@ impl SnagCraftApp {
                 }
                 ui.horizontal(|ui| {
                     // W21: live disables Copy until there is text (ocrCopyBtn).
+                    // W24: Copy is the primary action (live btn-primary).
                     if ui
                         .add_enabled(
                             !busy && !self.ocr.text.is_empty(),
-                            egui::Button::new("Copy text"),
+                            egui::Button::new(
+                                egui::RichText::new("Copy text").color(Color32::WHITE),
+                            )
+                            .fill(pal_accent(ui)),
                         )
                         .clicked()
                     {
@@ -3826,6 +3839,9 @@ pub const WIDGET_EXPANDED_SIZE: (f32, f32) = (304.0, 60.0);
 pub const WIDGET_FOLDED_SIZE: (f32, f32) = (58.0, 74.0);
 /// Live red dot on the widget.
 const WIDGET_RED: Color32 = Color32::from_rgb(214, 40, 40);
+/// W24: the live `--danger` (style.css:140/185) — destructive-action ink.
+const DANGER_LIGHT: Color32 = Color32::from_rgb(201, 64, 92);
+const DANGER_DARK: Color32 = Color32::from_rgb(255, 111, 134);
 /// Stop control fill (live widget `#e5484d`).
 const WIDGET_STOP: Color32 = Color32::from_rgb(0xe5, 0x48, 0x4d);
 const WIDGET_BG: Color32 = Color32::from_rgba_premultiplied(26, 29, 35, 242);
@@ -4213,7 +4229,10 @@ impl SnagCraftApp {
             return;
         }
         let mut action = None;
-        egui::Window::new("Unsaved changes")
+        // W24: the live guard (index.html close-guard, app.ts:1148-1166) —
+        // question title, Cancel on the left, Discard (ghost-danger) and
+        // "Save & close" (primary) grouped on the right.
+        egui::Window::new("Save changes before closing?")
             .collapsible(false)
             .resizable(false)
             .anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0))
@@ -4222,24 +4241,45 @@ impl SnagCraftApp {
                     picture_icon(ui);
                     ui.add_space(12.0);
                     ui.vertical(|ui| {
-                        ui.label(egui::RichText::new("You have unsaved annotations").strong());
+                        ui.label(egui::RichText::new("You have unsaved annotations.").strong());
                         ui.label(
                             egui::RichText::new("Closing now throws them away.")
                                 .weak()
                                 .size(11.5),
                         );
-                        ui.add_space(6.0);
-                        ui.horizontal(|ui| {
-                            if ui.button("Save").clicked() {
-                                action = Some(0u8);
-                            }
-                            if ui.button("Discard").clicked() {
-                                action = Some(1);
-                            }
-                            if ui.button("Cancel").clicked() {
-                                action = Some(2);
-                            }
-                        });
+                    });
+                });
+                ui.add_space(10.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Cancel").clicked() {
+                        action = Some(2u8);
+                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        // Primary: accent-filled, white label (live btn-primary).
+                        if ui
+                            .add(
+                                egui::Button::new(
+                                    egui::RichText::new("Save & close").color(Color32::WHITE),
+                                )
+                                .fill(pal_accent(ui)),
+                            )
+                            .clicked()
+                        {
+                            action = Some(0);
+                        }
+                        // Destructive: danger ink + border, transparent fill
+                        // (live btn-ghost-danger), set apart from Save.
+                        let danger = pal_danger(ui);
+                        if ui
+                            .add(
+                                egui::Button::new(egui::RichText::new("Discard").color(danger))
+                                    .fill(Color32::TRANSPARENT)
+                                    .stroke(Stroke::new(1.0, danger)),
+                            )
+                            .clicked()
+                        {
+                            action = Some(1);
+                        }
                     });
                 });
             });

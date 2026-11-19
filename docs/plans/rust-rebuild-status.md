@@ -1019,6 +1019,38 @@ live pass + gates (trim/relicense/cutover/external post). NO releases published.
 - Awaiting rostad unchanged: KDE live pass, trim decision, relicense, cutover.
   Every interactive flow has now been audited against the live anchors.
 
+### 2026-11-19 — wake #111: W22 Recent-rail design parity — the live film-item
+- Fresh re-check: tree clean at 8542191, suite green (522/0/11 serial). Design
+  pass on the secondary surfaces (widget, Recent rail, dialogs). Vision flags
+  triaged against code first: widget "no selected mode" FALSE (action buttons,
+  not modes), "orphan helper text" FALSE (the props rail behind the floating
+  widget), rail "no empty state / no ellipsis / no tooltip" FALSE (all present),
+  "placeholder thumbnails" FALSE (seeded test gradients). ONE real gap: the
+  rail tiles were horizontal image-and-text chips; the live design is a
+  vertical film-item (style.css:3411-3490).
+- **Fix — the live vertical film-item:** 112×74 card, 104×48 rounded thumbnail
+  on top, caption below with a format badge (ext uppercase, accent on surface,
+  radius 4) + local HH:MM time; accent border + faint accent fill on the LOADED
+  capture (new `recent_active`, the live `loadedRecentId` — set on tile open /
+  capture / save / save-as / scroll-done, cleared on new canvas); hover lift;
+  8px gaps, more rail padding. `RecentItem` gains `ts` (push = now, folder scan
+  = mtime from io::recent::RecentEntry).
+- **Latent bug found by the new video gate:** the old "▶" placeholder text has
+  NO glyph in the bundled fonts — kittest panics, native renders tofu. The old
+  tests never hit the branch (all tiles were decodable PNGs). Replaced with a
+  painter-drawn film frame + sprockets + play triangle.
+- **Gates:** 5 new (tests/w22_recent.rs): badge+time caption via a11y label,
+  push timestamp, active-on-open + clear-on-new-canvas (with w22_recent_active
+  snapshot, vision-verified accent ring), save-marks-active, video placeholder.
+  Snapshot determinism lessons: pin `ts` (minute-boundary drift) AND the status
+  text (scratch paths carry pid/nanos) — two consecutive full serial runs green
+  after pinning. w9_recent_strip re-blessed for the new layout.
+- Parent-verified: workspace **527 passed / 0 failed / 11 ignored** (two serial
+  runs), clippy/fmt clean incl. wasm target, layers legal, xtask wasm 10/10.
+- Docs: new parity row (film-item design, W22), recording-thumb row annotated,
+  summary recounted (159 rows, 1 pending = Trim).
+- Awaiting rostad unchanged: KDE live pass, trim decision, relicense, cutover.
+
 ## Appendix — measured reality
 
 | Claim | Measured | What changed |

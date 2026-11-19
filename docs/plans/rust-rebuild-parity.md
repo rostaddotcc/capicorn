@@ -94,6 +94,7 @@ Effects are applied to the **image layer at export resolution** (scene px × exp
 | **New blank canvas** (`Ctrl+N`) — 8 presets (Default 1280×800, HD, Full HD, QHD, 4K UHD, Square 1080², Story 1080×1920, Small 800×600), white or transparent, dims clamped 16–8192 | `app.ts:4939-4975` (`NEW_PRESETS` :4941-4950, `clampDim` :4952, `blankCanvasDataUrl` :4956-4969, `newCanvas` :4962) | W10 |
 | **Resize** the canvas (dialog opened from the toolbar, closes on Esc) | `openResize` `app.ts:3622`, popover `:5118-5121` | W10 |
 | **Recent strip** — newest-first, in-session cap `RECENT_LIMIT = 12`, plus a folder scan of the save (and recording) folder with thumbnails; clicking reads from disk, recordings open in the OS player | `app.ts:672` (`RECENT_LIMIT`), `refreshRecentFromFolder` `:3946-3980`, `list_folder_media` `commands.rs:386-429`, `open_path` `commands.rs:503-532` | W9 |
+| **Recent tile = live vertical film-item** — thumbnail on top, format badge + time caption below, accent ring on the loaded capture (`loadedRecentId`), hover lift; video/unreadable gets a painter-drawn film placeholder | `style.css:3411-3490` (`film-item`/`film-thumb`/`film-caption`/`film-badge`/`film-time`), `renderFilm` `app.ts:3909-3940` | W22 (was a horizontal image-and-text chip; badge/time/active all missing) |
 | **Pin** (pin-a-shot-to-screen) — *removed*, must NOT be rebuilt | `CHANGELOG.md:201` ("Removed Pin") | n/a |
 
 ---
@@ -155,7 +156,7 @@ Effects are applied to the **image layer at export resolution** (scene px × exp
 | Stop flow: "Finishing the recording…" → "Recording saved: {path}" + immediate Recent-rail pickup; an empty path reports "no file was written" | `app.ts:2497-2515` (`stopRecording`), `:5313-5321` (state mirror) | W18 |
 | Start flow: waiting status names format/region; success "Recording — click Stop when you're done."; errors classified (neutral cancel / permission-recovery hint / portal-log pointer); a capture in flight blocks a new take | `app.ts:2402-2405`, `:2439-2444`, `:2475`, `:2481-2494` | W18 |
 | HUD "Region" scope tag on region takes (absent on whole-screen) | `app.ts:2308-2310` (`paintRecording` / `recScopeEl`) | W18 |
-| Recording thumbnails for the Recent rail | `commands.rs:533-545` (`recording_thumb`) | W9 (film-icon placeholder) |
+| Recording thumbnails for the Recent rail | `commands.rs:533-545` (`recording_thumb`) | W9 (film-icon placeholder; W22 painter-drawn film frame + play triangle — the bundled fonts have no ▶ glyph) |
 | Copy diagnostics (portal + per-take `.rec.log`) to clipboard | `commands.rs:457-501`, `settings.ts` troubleshooting button `:996-1004` | W11 |
 | **Trim** a finished take | *not implemented in v1.5.3* — no trim command or UI (grep `trim` in `recording.rs`/`app.ts` is string-truncation only) | pending |
 | ffmpeg is a hard runtime dependency; absence is reported as an actionable message | `timelapse.rs:17-18` (same convention for recording), README:128 | W12 |
@@ -299,14 +300,13 @@ Sections rendered: General, Capture, Recording audio, Global hotkeys, Save locat
 
 ---
 
-## Wave coverage at W21 (2026-11-19)
+## Wave coverage at W22 (2026-11-19)
 
 The W1-era scope note that used to sit here ("not started at all: shell, recording,
 scrolling, OCR, timelapse, upload, settings, themes, shortcuts, About") is obsolete —
-W2–W5 landed most of it, and W7–W21 closed the rest. The W6b summary that used to
+W2–W5 landed most of it, and W7–W22 closed the rest. The W6b summary that used to
 sit here (45 `pending`) was stale: those rows were closed by W7–W14 but the table
-was never recounted. Current state of the checklist (recounted row-by-row at W20,
-W21 extended existing rows without adding new ones):
+was never recounted. Current state of the checklist (recounted row-by-row at W22):
 
 | Status | Rows |
 |--------|------|
@@ -325,9 +325,10 @@ W21 extended existing rows without adding new ones):
 | `W10` | 2 |
 | `W15` | 1 |
 | `W19` | 1 |
+| `W22` | 1 |
 | `pending` (Trim — rostad-gated) | 1 |
 | `n/a` | 1 |
-| **total** | **158** |
+| **total** | **159** |
 
 What the waves delivered, per `docs/plans/rust-rebuild-status.md`: 13-tool annotation
 parity with 10 object kinds and 5 shape variants (W2); tray, global hotkeys,
@@ -361,13 +362,17 @@ live OCR guards/result wording + Copy-disabled-until-text, upload moved OFF-THRE
 (the W8 tick overclaimed "Uploading…" — curl blocked the UI up to 30 s), missing
 endpoint opens Settings, "Uploaded — link copied" wording; both workers now run
 their subprocesses WITHOUT the session lock (the toolbar locks it every frame).
+**W22 rebuilt the Recent tile as the live vertical film-item (thumbnail on top,
+format badge + time caption, accent ring on the loaded capture, hover lift) — the
+rebuild had a horizontal chip with none of that — and replaced the ▶ video
+placeholder with a painter-drawn film icon (the bundled fonts have no ▶ glyph).**
 
 The single `pending` row is **Trim** — deliberately out of parity (the live v1.5.3
 has no trim) and gated on rostad's build-or-drop decision (`docs/gaps.md` A2).
 Every other row is backed by live code. The remaining open items in `docs/gaps.md`
 are rostad gates (A1–A4), web-MVP limits (C1–C3) and future platform ports (D1–D2).
 
-**Coverage:** 158 rows across 14 sections. Every TS line number came from a grep/read
+**Coverage:** 159 rows across 14 sections. Every TS line number came from a grep/read
 against commit `3cec2ee` (baseline v1.5.3) during W1; the only exceptions are the two
 `CHANGELOG.md` citations, marked as such. Rust statuses were re-audited at W6b as
-described at the top of this file, recounted at W15, and flow-audited at W18–W20.
+described at the top of this file, recounted at W15, and flow-audited at W18–W22.

@@ -888,6 +888,9 @@ pub struct OcrState {
 pub struct RecentItem {
     pub path: PathBuf,
     pub name: String,
+    /// W22: when the capture landed (in-session push = now, folder scan =
+    /// mtime) — the live tile's time caption (`clockLabel(item.ts)`).
+    pub ts: SystemTime,
     /// Decoded on first paint; `None` = not tried yet or unreadable (the tile
     /// falls back to the film placeholder).
     pub thumb: Option<egui::TextureHandle>,
@@ -989,6 +992,9 @@ pub struct SnagCraftApp {
     pub recent: Vec<RecentItem>,
     /// Strip visible — the toolbar chip (and the strip's Hide) toggle it.
     pub film_open: bool,
+    /// W22: the recent tile whose file is the open document — the live
+    /// `loadedRecentId` accent highlight (`film-item.is-active`).
+    pub recent_active: Option<PathBuf>,
     /// The startup scan of the save folder has already run.
     film_scanned: bool,
     /// Compact 3-2-1 countdown before a delayed capture starts (B4#5).
@@ -1147,6 +1153,7 @@ impl SnagCraftApp {
             ocr_available: None,
             recent: Vec::new(),
             film_open: false,
+            recent_active: None,
             film_scanned: false,
             countdown: None,
             ocr_rx: None,
@@ -1345,6 +1352,9 @@ impl SnagCraftApp {
                 if let Ok(Some(path)) = &autosaved {
                     self.push_recent(path.clone());
                 }
+                // W22: the fresh capture is the loaded recent (live
+                // loadedRecentId); an unsaved capture highlights nothing.
+                self.recent_active = autosaved.as_ref().ok().and_then(|p| p.clone());
                 self.sess().load_surface(surface);
                 self.redraw = true;
                 // A fresh capture starts a clean document.
@@ -1986,6 +1996,7 @@ impl SnagCraftApp {
             RecentItem {
                 path,
                 name,
+                ts: SystemTime::now(),
                 thumb: None,
             },
         );
@@ -2019,6 +2030,7 @@ impl SnagCraftApp {
                 self.recent.push(RecentItem {
                     path: entry.path,
                     name: entry.name,
+                    ts: entry.mtime,
                     thumb: None,
                 });
             }
@@ -2061,6 +2073,8 @@ impl SnagCraftApp {
                     self.doc_dirty = false;
                     self.redraw = true;
                     if !saved.is_empty() {
+                        // W22: the saved copy is now the open document.
+                        self.recent_active = Some(PathBuf::from(&saved));
                         self.push_recent(PathBuf::from(saved));
                     }
                     true
@@ -2117,6 +2131,7 @@ impl SnagCraftApp {
                 self.status = format!("Saved {}", path.display());
                 self.doc_dirty = false;
                 self.redraw = true;
+                self.recent_active = Some(path.clone());
                 self.push_recent(path);
                 true
             }
@@ -2457,6 +2472,7 @@ impl SnagCraftApp {
             .unwrap_or_else(|| path.to_string());
         self.status =
             format!("Scrolling capture: {width} × {height}, {frames} frames · saved {filename}");
+        self.recent_active = Some(PathBuf::from(path));
         self.push_recent(PathBuf::from(path));
         self.redraw = true;
     }
@@ -3373,6 +3389,7 @@ impl SnagCraftApp {
                 self.selected = None;
                 self.crop = None;
                 self.tex = None;
+                self.recent_active = None;
                 self.redraw = true;
                 self.new_canvas_open = false;
                 self.status =
@@ -6449,14 +6466,25 @@ fn region_picker(ui: &mut egui::Ui, app: &mut SnagCraftApp) -> bool {
 
 // ------------------------------------------------------------------- the shell
 
-/// Filename shortened for a tile label.
-fn short_name(name: &str, max_chars: usize) -> String {
-    let chars: Vec<char> = name.chars().collect();
-    if chars.len() <= max_chars {
-        return name.to_string();
+/// W22: the live tile's format badge (`renderFilm`: the extension uppercased,
+/// a generic fallback when there is none).
+fn recent_badge(path: &Path) -> String {
+    let ext = path
+        .extension()
+        .map(|e| e.to_string_lossy().to_ascii_uppercase())
+        .unwrap_or_default();
+    if ext.is_empty() {
+        "IMG".to_string()
+    } else {
+        ext
     }
-    let kept: String = chars[..max_chars].iter().collect();
-    format!("{kept}…")
+}
+
+/// W22: the live tile's time caption (`clockLabel(item.ts)`) — local HH:MM.
+fn recent_time(ts: SystemTime) -> String {
+    chrono::DateTime::<chrono::Local>::from(ts)
+        .format("%H:%M")
+        .to_string()
 }
 
 /// Decode `path` into a thumbnail texture (desktop). The web build has no file
@@ -6497,7 +6525,7 @@ fn filmstrip(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
         .frame(
             egui::Frame::new()
                 .fill(pal_surface(ui))
-                .inner_margin(egui::Margin::symmetric(8, 4))
+                .inner_margin(egui::Margin::symmetric(8, 6))
                 .stroke(Stroke::new(1.0, pal_border(ui))),
         )
         .show(ui, |ui| {
@@ -6529,8 +6557,9 @@ fn filmstrip(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
             let mut to_open: Option<PathBuf> = None;
             egui::ScrollArea::horizontal()
                 .id_salt("film-track")
-                .max_height(72.0)
+                .max_height(84.0)
                 .show(ui, |ui| {
+                    ui.spacing_mut().item_spacing.x = 8.0;
                     ui.horizontal(|ui| {
                         for index in 0..app.recent.len() {
                             if app.recent[index].thumb.is_none() {
@@ -6538,22 +6567,137 @@ fn filmstrip(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
                                 let name = app.recent[index].name.clone();
                                 app.recent[index].thumb = load_thumb(&ctx, &path, &name);
                             }
-                            let label = short_name(&app.recent[index].name, 16);
-                            let tile = match &app.recent[index].thumb {
-                                Some(texture) => egui::Button::image_and_text(
-                                    egui::Image::from_texture((
-                                        texture.id(),
-                                        egui::vec2(64.0, 40.0),
-                                    )),
-                                    egui::RichText::new(label).size(9.0),
-                                ),
-                                None => egui::Button::new(
-                                    egui::RichText::new(format!("▶ {label}")).size(10.0),
-                                ),
+                            // W22: the live vertical film-item (style.css
+                            // :3411-3490) — thumbnail on top, format badge +
+                            // time caption below, accent ring on the loaded
+                            // capture, hover lift. Replaces the horizontal
+                            // image-and-text chip.
+                            let path = app.recent[index].path.clone();
+                            let name = app.recent[index].name.clone();
+                            let ts = app.recent[index].ts;
+                            let active = app.recent_active.as_ref() == Some(&path);
+                            let (rect, resp) =
+                                ui.allocate_exact_size(vec2(112.0, 74.0), egui::Sense::click());
+                            let accent = pal_accent(ui);
+                            let fill = if active {
+                                accent.linear_multiply(0.14)
+                            } else if resp.hovered() {
+                                pal_hover(ui)
+                            } else {
+                                ui.visuals().faint_bg_color
                             };
-                            let shown = app.recent[index].path.display().to_string();
-                            if ui.add(tile).on_hover_text(shown).clicked() {
-                                to_open = Some(app.recent[index].path.clone());
+                            let border = if active || resp.hovered() {
+                                accent
+                            } else {
+                                pal_border(ui)
+                            };
+                            ui.painter().rect_filled(rect, CornerRadius::same(7), fill);
+                            ui.painter().rect_stroke(
+                                rect,
+                                CornerRadius::same(7),
+                                Stroke::new(1.0, border),
+                                StrokeKind::Inside,
+                            );
+                            let pad = 4.0;
+                            let thumb_size = vec2(112.0 - 2.0 * pad, 48.0);
+                            let thumb_rect = Rect::from_min_size(
+                                pos2(rect.left() + pad, rect.top() + pad),
+                                thumb_size,
+                            );
+                            match &app.recent[index].thumb {
+                                Some(texture) => {
+                                    ui.put(
+                                        thumb_rect,
+                                        egui::Image::from_texture((texture.id(), thumb_size))
+                                            .fit_to_exact_size(thumb_size)
+                                            .corner_radius(6),
+                                    );
+                                }
+                                None => {
+                                    // Video/unreadable: the live film placeholder.
+                                    // Painter-drawn — the bundled fonts have no
+                                    // ▶ glyph (kittest panics on missing glyphs).
+                                    let muted = pal_muted(ui);
+                                    ui.painter().rect_filled(
+                                        thumb_rect,
+                                        CornerRadius::same(6),
+                                        ui.visuals().extreme_bg_color,
+                                    );
+                                    let frame = thumb_rect.shrink(10.0);
+                                    ui.painter().rect_stroke(
+                                        frame,
+                                        CornerRadius::same(3),
+                                        Stroke::new(1.0, muted),
+                                        StrokeKind::Inside,
+                                    );
+                                    // Sprocket holes along both edges.
+                                    for i in 0..3 {
+                                        let y = frame.top()
+                                            + 3.0
+                                            + i as f32 * ((frame.height() - 9.0) / 2.0);
+                                        for x in [frame.left() + 2.0, frame.right() - 5.0] {
+                                            ui.painter().rect_filled(
+                                                Rect::from_min_size(pos2(x, y), vec2(3.0, 3.0)),
+                                                CornerRadius::same(1),
+                                                muted,
+                                            );
+                                        }
+                                    }
+                                    // Play triangle in the middle.
+                                    let c = frame.center();
+                                    ui.painter().add(egui::epaint::PathShape::convex_polygon(
+                                        vec![
+                                            pos2(c.x - 3.0, c.y - 5.0),
+                                            pos2(c.x - 3.0, c.y + 5.0),
+                                            pos2(c.x + 6.0, c.y),
+                                        ],
+                                        muted,
+                                        Stroke::NONE,
+                                    ));
+                                }
+                            }
+                            let badge = recent_badge(&path);
+                            let time = recent_time(ts);
+                            let cap_y = rect.top() + pad + 48.0 + 4.0;
+                            let galley = ui.painter().layout_no_wrap(
+                                badge.clone(),
+                                egui::FontId::proportional(9.0),
+                                accent,
+                            );
+                            let badge_rect = Rect::from_min_size(
+                                pos2(rect.left() + pad, cap_y),
+                                galley.size() + vec2(8.0, 2.0),
+                            );
+                            ui.painter().rect_filled(
+                                badge_rect,
+                                CornerRadius::same(4),
+                                pal_surface(ui),
+                            );
+                            ui.painter().galley(
+                                pos2(badge_rect.left() + 4.0, badge_rect.top() + 1.0),
+                                galley,
+                                accent,
+                            );
+                            ui.painter().text(
+                                pos2(rect.right() - pad, cap_y),
+                                egui::Align2::RIGHT_TOP,
+                                &time,
+                                egui::FontId::proportional(10.5),
+                                pal_muted(ui),
+                            );
+                            resp.widget_info(|| {
+                                egui::WidgetInfo::labeled(
+                                    egui::Role::Button,
+                                    true,
+                                    format!("{name} · {badge} · {time}"),
+                                )
+                            });
+                            let resp = resp.on_hover_text(format!(
+                                "{name} · {time} · {badge}\n{}",
+                                path.display()
+                            ));
+                            if resp.clicked() {
+                                to_open = Some(path);
                             }
                         }
                     });
@@ -6563,6 +6707,7 @@ fn filmstrip(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
                     "doc.open",
                     serde_json::json!({"path": path.to_string_lossy()}),
                 );
+                app.recent_active = Some(path.clone());
                 app.status = format!("Opened {}", path.display());
             }
         });

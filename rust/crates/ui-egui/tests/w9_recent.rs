@@ -216,6 +216,11 @@ fn recent_strip_snapshot() {
         for name in ["SnagCraft-c.png", "SnagCraft-b.png", "SnagCraft-a.png"] {
             app.push_recent(dir.join(name));
         }
+        // W22: pin the time captions so the snapshot cannot drift across a
+        // minute boundary between the bless run and the compare run.
+        for item in &mut app.recent {
+            item.ts = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
+        }
         app.film_open = true;
     }
     h.run_steps(2);

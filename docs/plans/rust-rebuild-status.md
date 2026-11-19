@@ -1406,6 +1406,34 @@ live pass + gates (trim/relicense/cutover/external post). NO releases published.
   pixels match the render — the per-pixel threshold can hide a real change.
   Probe the blessed file after any intentional color tweak.
 
+### 2026-11-19 — W31: timelapse hide-ack handshake (B6 closed) — no grab flow shows the app anymore
+- **B6 closed as designed.** The interval worker now wraps every grab in the
+  hide-ack handshake: `HideForFrame` event → UI hides main+widget and acks via
+  the new `timelapse.ack_hide` command (shared `Arc<AtomicBool>` gate created
+  by `timelapse.start`) → worker waits ≤2 s (then grabs anyway — a stuck UI
+  degrades one frame, never stalls the run) → 220 ms settle → grab →
+  `RestoreAfterFrame`. Restore is ALWAYS sent once a hide was asked (failed
+  grab, stop during wait/settle included); the UI restore is flag-guarded and
+  channel order undoes even a late hide. Done/Failed clear the gate.
+- **UI refactor:** the W29/W30 capture/pick hide/restore bodies collapsed into
+  shared `hide_app_windows`/`restore_app_windows` (live commands.rs:47-76
+  parity); each flow keeps its own flag (`capture_hidden`, `pick_hidden`,
+  `timelapse.frame_hidden`). `poll_timelapse` split into `apply_timelapse_event`
+  (pub seam) + the poll shell; restore fires on restore-event, done, failed,
+  running=false fallback AND poll error. All W29/W30 gates re-passed unchanged.
+- Registry 51→52 (`timelapse.ack_hide`, native-only): both count guards bumped
+  (automation + engine), gaps.md C1 recount 25-of-52 / native-only 27.
+- 10 new gates: 6 capture (ack consumed/late/timeout/stop, gated loop preset
+  stop + dropped receiver — none touch the portal), 1 engine (ack no-op
+  without a run), 3 UI (seam state machine incl. end-while-hidden + duplicate
+  restore, done-restore, real engine+worker e2e with the wall-time wait).
+- 574/0/11 twice serial, clippy/fmt clean both targets, wasm 10/10. No snapshot
+  drift (the hide is runtime-only). W30 CI fully green before this wave.
+- **Lesson:** a worker behind the engine boundary can still coordinate UI
+  side effects — event out, ack command back, shared atomic gate; bound the
+  ack wait so the worker never depends on the UI being alive, and always pair
+  every hide with a restore on every exit path.
+
 ## Appendix — measured reality
 
 | Claim | Measured | What changed |

@@ -236,7 +236,20 @@ request construction, response handling, error surfacing).
 - **Where logged:** status wake #7+ ("W2 gaps logged for W3/polish").
 - **Caveat:** status as of W6 is "as logged at W2"; no W6 re-verification was done.
 
-### B6 — Timelapse frames include the app's own window (W30 audit, OPEN)
+### B6 — Timelapse frames include the app's own window (W30 audit) — CLOSED W31
+
+> **W31 (2026-11-19): CLOSED.** The hide-ack handshake landed as designed:
+> `TimelapseConfig.hide_gate` (shared `Arc<AtomicBool>`) + `HideForFrame` /
+> `RestoreAfterFrame` events; the worker waits for the UI's ack (2 s budget,
+> then grabs anyway so a stuck UI degrades one frame instead of stalling),
+> settles 220 ms, grabs, restores. Engine: `timelapse.ack_hide` command
+> (registry 51→52, both count guards bumped), poll maps the new events, the
+> gate clears on done/failed. UI: shared `hide_app_windows`/`restore_app_windows`
+> helpers (the W29/W30 capture/pick flows refactored onto them), per-flow flags,
+> `apply_timelapse_event` seam; restore on restore-event AND done/failed/poll-error.
+> 6 capture-crate gates (ack consume/late/timeout/stop + gated loop stop/dropped
+> receiver), 1 engine gate (ack no-op without a run), 3 UI gates (seam state
+> machine, done-restore, real engine+worker e2e). 574/0/11 twice serial.
 
 - **What:** the interval-capture loop (`capture/src/timelapse.rs:144`) calls
   `capture_full_blocking()` directly with the editor window visible, so every
@@ -265,18 +278,19 @@ The WASM web build (`rust/apps/snagcraft-web`, trunk) is a working editor —
 browser-verified boot, full editor render, PNG export-download — but it is an MVP,
 not feature parity with the native app.
 
-### C1 — Web command surface is 25 of 51 commands
+### C1 — Web command surface is 25 of 52 commands
 
 > **W16 recount (2026-11-18):** the registry grew to 48 (W12–W14); the web
 > subset is 25 (counted from the `#[cfg(feature = "native")]` gates in
 > `registry()`). The old "21 of 41" figure was stale. **W20:** +scroll.cancel
 > (native-only) → 49 total, web subset unchanged at 25. **W25:** +capture.monitors
 > + capture.monitor (both native-only) → 51 total, web subset still 25.
+> **W31:** +timelapse.ack_hide (native-only) → 52 total, web subset still 25.
 
 - **What:** the web engine build (`--no-default-features --features web`)
-  registers 25 commands. Native-only (26): `capture.full`, `capture.monitors`,
+  registers 25 commands. Native-only (27): `capture.full`, `capture.monitors`,
   `capture.monitor`, `clipboard.copy/paste`, `diagnostics.copy`, `ocr.*` (3),
-  `record.*` (6), `scroll.*` (4), `timelapse.*` (4), `upload.open/send`,
+  `record.*` (6), `scroll.*` (4), `timelapse.*` (5), `upload.open/send`,
   `audio.sources`. `Capture`, OCR, widget and tray are hidden
   in the web UI. **W16 note:** web Copy/Paste no longer need the engine's
   `clipboard.*` commands — the UI talks to the browser Clipboard API directly.

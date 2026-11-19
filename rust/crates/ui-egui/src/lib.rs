@@ -896,6 +896,10 @@ pub struct TimelapseState {
     pub dir: Option<PathBuf>,
     /// W15: the stop-time video encode is running on its own thread.
     pub assembling: bool,
+    /// W31: the app's windows are hidden for the current frame grab (the
+    /// hide-ack handshake); the restore event — or the run's end — brings
+    /// them back.
+    pub frame_hidden: bool,
 }
 
 impl Default for TimelapseState {
@@ -909,6 +913,7 @@ impl Default for TimelapseState {
             dialog_open: false,
             dir: None,
             assembling: false,
+            frame_hidden: false,
         }
     }
 }
@@ -1549,13 +1554,7 @@ impl SnagCraftApp {
     #[cfg(feature = "native")]
     fn hide_for_capture(&mut self, ctx: &egui::Context) {
         self.capture_hidden = true;
-        self.hidden = true;
-        ctx.send_viewport_cmd(ViewportCommand::Visible(false));
-        if self.widget_shown {
-            ctx.send_viewport_cmd_to(widget_viewport_id(), ViewportCommand::Visible(false));
-        }
-        ctx.send_viewport_cmd(ViewportCommand::RequestPaintWhileHidden);
-        ctx.request_repaint_after(Duration::from_millis(250));
+        self.hide_app_windows(ctx);
     }
 
     /// Bring the windows back on EVERY capture outcome — the live
@@ -1567,12 +1566,7 @@ impl SnagCraftApp {
             return;
         }
         self.capture_hidden = false;
-        self.hidden = false;
-        ctx.send_viewport_cmd(ViewportCommand::Visible(true));
-        ctx.send_viewport_cmd(ViewportCommand::Focus);
-        if self.widget_shown && self.settings.show_widget {
-            ctx.send_viewport_cmd_to(widget_viewport_id(), ViewportCommand::Visible(true));
-        }
+        self.restore_app_windows(ctx);
     }
 
     /// Web: no windows to hide — the browser tab is the capture surface's
@@ -1581,6 +1575,36 @@ impl SnagCraftApp {
     fn hide_for_capture(&mut self, _ctx: &egui::Context) {}
     #[cfg(not(feature = "native"))]
     fn restore_after_capture(&mut self, _ctx: &egui::Context) {}
+
+    /// W31: the shared hide/restore every screen-grab flow uses (full/monitor
+    /// capture, the region-pick freeze, timelapse frames) — live
+    /// `hide_app_windows`/`restore_app_windows` (commands.rs:47-76). Each flow
+    /// keeps its own flag so a restore only fires for the hide it owns.
+    #[cfg(feature = "native")]
+    fn hide_app_windows(&mut self, ctx: &egui::Context) {
+        self.hidden = true;
+        ctx.send_viewport_cmd(ViewportCommand::Visible(false));
+        if self.widget_shown {
+            ctx.send_viewport_cmd_to(widget_viewport_id(), ViewportCommand::Visible(false));
+        }
+        ctx.send_viewport_cmd(ViewportCommand::RequestPaintWhileHidden);
+        ctx.request_repaint_after(Duration::from_millis(250));
+    }
+
+    #[cfg(feature = "native")]
+    fn restore_app_windows(&mut self, ctx: &egui::Context) {
+        self.hidden = false;
+        ctx.send_viewport_cmd(ViewportCommand::Visible(true));
+        ctx.send_viewport_cmd(ViewportCommand::Focus);
+        if self.widget_shown && self.settings.show_widget {
+            ctx.send_viewport_cmd_to(widget_viewport_id(), ViewportCommand::Visible(true));
+        }
+    }
+
+    #[cfg(not(feature = "native"))]
+    fn hide_app_windows(&mut self, _ctx: &egui::Context) {}
+    #[cfg(not(feature = "native"))]
+    fn restore_app_windows(&mut self, _ctx: &egui::Context) {}
 
     fn dispatch(&mut self, cmd: &str, params: serde_json::Value) {
         match self.exec(cmd, params) {
@@ -2643,13 +2667,7 @@ impl SnagCraftApp {
                 return;
             };
             self.pick_hidden = true;
-            self.hidden = true;
-            ctx.send_viewport_cmd(ViewportCommand::Visible(false));
-            if self.widget_shown {
-                ctx.send_viewport_cmd_to(widget_viewport_id(), ViewportCommand::Visible(false));
-            }
-            ctx.send_viewport_cmd(ViewportCommand::RequestPaintWhileHidden);
-            ctx.request_repaint_after(Duration::from_millis(250));
+            self.hide_app_windows(&ctx);
         }
     }
 
@@ -2661,13 +2679,8 @@ impl SnagCraftApp {
             return;
         }
         self.pick_hidden = false;
-        self.hidden = false;
         if let Some(ctx) = self.main_ctx.clone() {
-            ctx.send_viewport_cmd(ViewportCommand::Visible(true));
-            ctx.send_viewport_cmd(ViewportCommand::Focus);
-            if self.widget_shown && self.settings.show_widget {
-                ctx.send_viewport_cmd_to(widget_viewport_id(), ViewportCommand::Visible(true));
-            }
+            self.restore_app_windows(&ctx);
         }
     }
 
@@ -3427,52 +3440,85 @@ impl SnagCraftApp {
             Ok(v) => {
                 let events = v["events"].as_array().cloned().unwrap_or_default();
                 for event in events {
-                    match event["type"].as_str() {
-                        Some("frame") => {
-                            self.timelapse.running = true;
-                            self.timelapse.frames = self.timelapse.frames.saturating_add(1);
-                        }
-                        Some("done") => {
-                            let frames = event["frames"].as_u64().unwrap_or(0);
-                            self.timelapse.armed = false;
-                            self.timelapse.running = false;
-                            self.timelapse.frames = frames as u32;
-                            // W15: stop converts the run to MP4 (live parity).
-                            self.finish_timelapse(frames);
-                        }
-                        Some("failed") => {
-                            let msg = event["message"]
-                                .as_str()
-                                .unwrap_or("unknown error")
-                                .to_string();
-                            self.timelapse.armed = false;
-                            self.timelapse.running = false;
-                            // A failed run never costs the shots already on disk.
-                            if self.timelapse.frames > 0
-                                && let Some(dir) = &self.timelapse.dir
-                            {
-                                self.status = format!(
-                                    "Timelapse failed: {msg} — the {} shots are still in {}",
-                                    self.timelapse.frames,
-                                    dir.display()
-                                );
-                            } else {
-                                self.status = format!("Timelapse failed: {msg}");
-                            }
-                        }
-                        _ => {}
-                    }
+                    self.apply_timelapse_event(&event);
                 }
                 if !v["running"].as_bool().unwrap_or(true) && self.timelapse.armed {
                     self.timelapse.armed = false;
                     self.timelapse.running = false;
+                    self.restore_timelapse_windows();
                 }
             }
             Err(err) => {
                 self.timelapse.armed = false;
                 self.timelapse.running = false;
+                self.restore_timelapse_windows();
                 self.status = format!("Timelapse poll: {err}");
             }
+        }
+    }
+
+    /// W31: one timelapse event from the engine poll. Public so gates can
+    /// drive the hide/restore state machine without a portal run. The
+    /// hide-ack handshake: `hide_for_frame` → hide the app's windows + ack
+    /// (the worker settles, then grabs) → `restore_after_frame` brings them
+    /// back. The run's end restores too, so no outcome leaves the app hidden.
+    pub fn apply_timelapse_event(&mut self, event: &serde_json::Value) {
+        match event["type"].as_str() {
+            Some("frame") => {
+                self.timelapse.running = true;
+                self.timelapse.frames = self.timelapse.frames.saturating_add(1);
+            }
+            Some("hide_for_frame") => {
+                self.timelapse.frame_hidden = true;
+                if let Some(ctx) = self.main_ctx.clone() {
+                    self.hide_app_windows(&ctx);
+                }
+                let _ = self.exec("timelapse.ack_hide", serde_json::json!({}));
+            }
+            Some("restore_after_frame") => self.restore_timelapse_windows(),
+            Some("done") => {
+                self.restore_timelapse_windows();
+                let frames = event["frames"].as_u64().unwrap_or(0);
+                self.timelapse.armed = false;
+                self.timelapse.running = false;
+                self.timelapse.frames = frames as u32;
+                // W15: stop converts the run to MP4 (live parity).
+                self.finish_timelapse(frames);
+            }
+            Some("failed") => {
+                self.restore_timelapse_windows();
+                let msg = event["message"]
+                    .as_str()
+                    .unwrap_or("unknown error")
+                    .to_string();
+                self.timelapse.armed = false;
+                self.timelapse.running = false;
+                // A failed run never costs the shots already on disk.
+                if self.timelapse.frames > 0
+                    && let Some(dir) = &self.timelapse.dir
+                {
+                    self.status = format!(
+                        "Timelapse failed: {msg} — the {} shots are still in {}",
+                        self.timelapse.frames,
+                        dir.display()
+                    );
+                } else {
+                    self.status = format!("Timelapse failed: {msg}");
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// W31: undo the per-frame hide (flag-guarded — a restore without a hide
+    /// is a no-op, so duplicate/late events cannot show windows twice).
+    fn restore_timelapse_windows(&mut self) {
+        if !self.timelapse.frame_hidden {
+            return;
+        }
+        self.timelapse.frame_hidden = false;
+        if let Some(ctx) = self.main_ctx.clone() {
+            self.restore_app_windows(&ctx);
         }
     }
 

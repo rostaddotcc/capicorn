@@ -203,7 +203,7 @@ Effects are applied to the **image layer at export resolution** (scene px × exp
 
 | Feature | Evidence | rust |
 |---|---|---|
-| Interval loop: one PNG per tick into the save folder (live `SnagCraft-interval-*.png`; rebuild `snagcraft-timelapse-NNNNN.png` — zero-padded index = playback order) | `timelapse.rs:1-6`, `app.ts:2820-2830` | W4 |
+| Interval loop: one PNG per tick into the save folder (live `SnagCraft-interval-*.png`; rebuild `snagcraft-timelapse-NNNNN.png` — zero-padded index = playback order) | `timelapse.rs:1-6`, `app.ts:2820-2830` | W4 + W31 (each grab hides the app's own windows via the hide-ack handshake — live grabs every interval frame through `capture_screenshot`'s hide/settle/restore dance) |
 | Stop converts the run to MP4 — auto `make_timelapse` at 10 fps into the run folder (`SnagCraft-timelapse-{date}-{time}.mp4`); zero shots report "nothing was saved"; a failed render never costs the shots | `app.ts:3019-3047`, `timelapse.rs:100` | W15 |
 | `make_timelapse(dir, pattern, fps, out)` — glob resolved inside `dir` (no separators), ffmpeg `-pattern_type glob`, zero-padded numbers give playback order | `timelapse.rs:8-18`, `:100` | W7 |
 | Interval period setting (default **30 s**), select "every N s / every 5 min" | `settings.ts:69` (`DEFAULT_INTERVAL`), select `settings.ts:837-842` | W4 |

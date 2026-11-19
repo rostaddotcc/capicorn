@@ -85,6 +85,10 @@ pub struct Session {
     timelapse: Option<snagcraft_capture::timelapse::TimelapseHandle>,
     #[cfg(feature = "native")]
     timelapse_rx: Option<std::sync::mpsc::Receiver<snagcraft_capture::timelapse::TimelapseEvent>>,
+    /// W31: hide-ack flag shared with the timelapse worker — the UI sets it
+    /// (via `timelapse.ack_hide`) once the app's windows are hidden for a frame.
+    #[cfg(feature = "native")]
+    timelapse_hide_ack: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     /// Running scrolling capture (W4b). spawn_scrolling blocks through the share
     /// dialog, so it runs on a thread; the handle arrives via scroll_start_rx.
     #[cfg(feature = "native")]
@@ -142,6 +146,8 @@ impl Session {
             timelapse: None,
             #[cfg(feature = "native")]
             timelapse_rx: None,
+            #[cfg(feature = "native")]
+            timelapse_hide_ack: None,
             #[cfg(feature = "native")]
             scroll: None,
             #[cfg(feature = "native")]
@@ -770,15 +776,21 @@ fn cmd_timelapse_start(s: &mut Session, p: Value) -> Result<Value, CommandError>
     let count = p.get("count").and_then(Value::as_u64).map(|c| c as u32);
     let dir = p_str(&p, "dir")?;
     let (tx, rx) = std::sync::mpsc::channel();
+    // W31: the hide-ack gate — the worker asks the UI to hide the app's
+    // windows before each frame and waits for this flag (live parity: every
+    // interval grab goes through capture_screenshot's hide dance).
+    let gate = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let config = snagcraft_capture::timelapse::TimelapseConfig {
         period_secs: period,
         count,
         dir: std::path::PathBuf::from(dir),
+        hide_gate: Some(std::sync::Arc::clone(&gate)),
     };
     let handle = snagcraft_capture::timelapse::spawn_timelapse(config, tx)
         .map_err(|e| CommandError::Capture(e.to_string()))?;
     s.timelapse = Some(handle);
     s.timelapse_rx = Some(rx);
+    s.timelapse_hide_ack = Some(gate);
     Ok(json!({"started": true}))
 }
 
@@ -793,6 +805,19 @@ fn cmd_timelapse_stop(s: &mut Session, _p: Value) -> Result<Value, CommandError>
     }
 }
 
+/// W31: the UI has hidden the app's windows for the pending frame grab —
+/// release the worker to settle and capture. No run: a harmless no-op.
+#[cfg(feature = "native")]
+fn cmd_timelapse_ack_hide(s: &mut Session, _p: Value) -> Result<Value, CommandError> {
+    match &s.timelapse_hide_ack {
+        Some(gate) => {
+            gate.store(true, std::sync::atomic::Ordering::Relaxed);
+            Ok(json!({"acked": true}))
+        }
+        None => Ok(json!({"acked": false})),
+    }
+}
+
 #[cfg(feature = "native")]
 fn cmd_timelapse_poll(s: &mut Session, _p: Value) -> Result<Value, CommandError> {
     let mut events = Vec::new();
@@ -804,11 +829,19 @@ fn cmd_timelapse_poll(s: &mut Session, _p: Value) -> Result<Value, CommandError>
                 }
                 snagcraft_capture::timelapse::TimelapseEvent::Done { frames } => {
                     s.timelapse = None;
+                    s.timelapse_hide_ack = None;
                     json!({"type": "done", "frames": frames})
                 }
                 snagcraft_capture::timelapse::TimelapseEvent::Failed(msg) => {
                     s.timelapse = None;
+                    s.timelapse_hide_ack = None;
                     json!({"type": "failed", "message": msg})
+                }
+                snagcraft_capture::timelapse::TimelapseEvent::HideForFrame => {
+                    json!({"type": "hide_for_frame"})
+                }
+                snagcraft_capture::timelapse::TimelapseEvent::RestoreAfterFrame => {
+                    json!({"type": "restore_after_frame"})
                 }
             };
             events.push(j);
@@ -1725,6 +1758,13 @@ pub fn registry() -> Vec<CommandSpec> {
             label: "Drain timelapse events",
             params_doc: "{}",
             run: cmd_timelapse_poll,
+        },
+        #[cfg(feature = "native")]
+        CommandSpec {
+            id: "timelapse.ack_hide",
+            label: "Ack the timelapse hide-for-frame request",
+            params_doc: "{}",
+            run: cmd_timelapse_ack_hide,
         },
         #[cfg(feature = "native")]
         CommandSpec {
@@ -2867,11 +2907,11 @@ mod tests {
     }
 
     #[test]
-    fn native_registry_keeps_all_51_commands() {
+    fn native_registry_keeps_all_52_commands() {
         // Desktop contract: every command the UI, CLI and MCP know is present.
         // Bump deliberately when a wave adds a command.
         let ids: Vec<&str> = registry().iter().map(|c| c.id).collect();
-        assert_eq!(ids.len(), 51, "native registry drifted: {ids:?}");
+        assert_eq!(ids.len(), 52, "native registry drifted: {ids:?}");
         for native_only in [
             "capture.full",
             "capture.monitors",
@@ -2880,6 +2920,7 @@ mod tests {
             "scroll.poll",
             "scroll.cancel",
             "timelapse.start",
+            "timelapse.ack_hide",
             "timelapse.assemble",
             "ocr.run",
             "upload.open",
@@ -2898,6 +2939,15 @@ mod tests {
         sorted.sort_unstable();
         sorted.dedup();
         assert_eq!(ids.len(), sorted.len());
+    }
+
+    /// W31: acking without a running timelapse is a harmless no-op (the UI
+    /// may drain a stale hide event after the run already ended).
+    #[test]
+    fn timelapse_ack_hide_without_a_run_is_a_noop() {
+        let mut s = Session::new();
+        let r = s.dispatch("timelapse.ack_hide", json!({})).unwrap();
+        assert_eq!(r["acked"], false);
     }
 
     // ---- settings ----

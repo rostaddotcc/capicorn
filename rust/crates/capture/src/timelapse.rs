@@ -31,6 +31,15 @@ pub const MAX_FRAMES: u32 = 10_000;
 /// Longest single sleep slice, so [`TimelapseHandle::stop`] lands promptly.
 pub const STOP_POLL: Duration = Duration::from_millis(100);
 
+/// W31: compositor settle after the UI hides the windows, before the grab
+/// (the live `HIDE_SETTLE_MS`, commands.rs:41).
+const HIDE_SETTLE: Duration = Duration::from_millis(220);
+/// W31: how long to wait for the UI's hide ack before grabbing anyway — a
+/// stuck UI must not stall the run (the frame may then contain the app).
+const HIDE_ACK_TIMEOUT: Duration = Duration::from_secs(2);
+/// W31: ack polling slice.
+const HIDE_ACK_POLL: Duration = Duration::from_millis(20);
+
 /// File stem of a frame; the index is zero-padded to five digits so
 /// lexicographic order (what ffmpeg's `glob` pattern uses) is frame order.
 const FRAME_PREFIX: &str = "snagcraft-timelapse-";
@@ -48,6 +57,12 @@ pub struct TimelapseConfig {
     pub count: Option<u32>,
     /// Folder for the PNGs; created when missing.
     pub dir: PathBuf,
+    /// W31: hide-ack handshake with the UI. When present, the loop emits
+    /// [`TimelapseEvent::HideForFrame`] before each grab and waits for the UI
+    /// to set this flag (the app's windows are then hidden), so timelapse
+    /// frames never contain SnagCraft itself — live grabs every interval
+    /// frame through `capture_screenshot`'s hide/settle/restore dance.
+    pub hide_gate: Option<Arc<AtomicBool>>,
 }
 
 /// Progress reported to the caller's channel.
@@ -59,6 +74,10 @@ pub enum TimelapseEvent {
     Done { frames: u32 },
     /// The run stopped early; the string is user-readable.
     Failed(String),
+    /// W31: hide the app's windows, then ack via the config's `hide_gate`.
+    HideForFrame,
+    /// W31: the grab is over — bring the app's windows back.
+    RestoreAfterFrame,
 }
 
 /// Owning side of a running timelapse. Dropping it does **not** stop the run —
@@ -115,39 +134,68 @@ pub fn spawn_timelapse(
 
     let stop = Arc::new(AtomicBool::new(false));
     let flag = Arc::clone(&stop);
-
+    let gate = config.hide_gate.clone();
     std::thread::Builder::new()
         .name("snagcraft-timelapse".to_string())
-        .spawn(move || run(&dir, period, limit, &flag, &events))
+        .spawn(move || run(&dir, period, limit, &flag, &events, gate.as_ref()))
         .map_err(|err| CaptureError::Io(format!("cannot start the timelapse thread: {err}")))?;
-
     Ok(TimelapseHandle { stop })
 }
 
 /// The capture loop. Stops when `stop` is set, when the frame limit is reached,
 /// when a capture/save fails, or when the receiver is gone.
+///
+/// W31: with a `gate`, every grab is wrapped in the hide-ack handshake —
+/// `HideForFrame` → wait for the UI's ack (windows hidden) → settle → grab →
+/// `RestoreAfterFrame`. The restore is ALWAYS sent once a hide was requested
+/// (even on a late/missing ack or a failed grab): the UI's restore is
+/// flag-guarded, and the channel order guarantees a late hide is undone.
 fn run(
     dir: &Path,
     period: Duration,
     limit: Option<u32>,
     stop: &AtomicBool,
     events: &Sender<TimelapseEvent>,
+    gate: Option<&Arc<AtomicBool>>,
 ) {
     let mut frames = 0u32;
-
     loop {
         if stop.load(Ordering::Relaxed) || limit.is_some_and(|max| frames >= max) {
             break;
+        }
+
+        // Hide the app's own windows for the grab (live parity).
+        let mut asked_hide = false;
+        if let Some(gate) = gate {
+            if events.send(TimelapseEvent::HideForFrame).is_err() {
+                return;
+            }
+            asked_hide = true;
+            let acked = wait_for_hide_ack(gate, stop, HIDE_ACK_TIMEOUT);
+            if stop.load(Ordering::Relaxed) {
+                let _ = events.send(TimelapseEvent::RestoreAfterFrame);
+                break;
+            }
+            if acked && !sleep_interruptible(HIDE_SETTLE, stop) {
+                let _ = events.send(TimelapseEvent::RestoreAfterFrame);
+                break;
+            }
         }
 
         let index = frames + 1;
         let surface = match capture_full_blocking() {
             Ok(surface) => surface,
             Err(err) => {
+                if asked_hide {
+                    let _ = events.send(TimelapseEvent::RestoreAfterFrame);
+                }
                 let _ = events.send(TimelapseEvent::Failed(err.to_string()));
                 return;
             }
         };
+        if asked_hide {
+            let _ = events.send(TimelapseEvent::RestoreAfterFrame);
+        }
 
         let path = frame_path(dir, index);
         if let Err(message) = save_png(&surface, &path) {
@@ -170,6 +218,25 @@ fn run(
     }
 
     let _ = events.send(TimelapseEvent::Done { frames });
+}
+
+/// Wait until the UI acks the hide (flag set), consuming the ack for the next
+/// frame. Returns false on stop or timeout — the caller grabs anyway then, so
+/// a stuck UI degrades one frame instead of stalling the whole run.
+fn wait_for_hide_ack(gate: &AtomicBool, stop: &AtomicBool, timeout: Duration) -> bool {
+    let mut left = timeout;
+    while !left.is_zero() {
+        if gate.swap(false, Ordering::Relaxed) {
+            return true;
+        }
+        if stop.load(Ordering::Relaxed) {
+            return false;
+        }
+        let slice = left.min(HIDE_ACK_POLL);
+        std::thread::sleep(slice);
+        left = left.saturating_sub(slice);
+    }
+    gate.swap(false, Ordering::Relaxed)
 }
 
 /// Write `surface` to `path` as PNG.
@@ -306,7 +373,7 @@ mod tests {
         let dir = tmp_dir("preset-stop");
         let (tx, rx) = channel();
         let stop = AtomicBool::new(true);
-        run(&dir, Duration::from_secs(60), Some(5), &stop, &tx);
+        run(&dir, Duration::from_secs(60), Some(5), &stop, &tx, None);
         drop(tx);
 
         let events: Vec<TimelapseEvent> = rx.iter().collect();
@@ -322,10 +389,43 @@ mod tests {
         let dir = tmp_dir("limit");
         let (tx, rx) = channel();
         let stop = AtomicBool::new(false);
-        run(&dir, Duration::from_secs(60), Some(0), &stop, &tx);
+        run(&dir, Duration::from_secs(60), Some(0), &stop, &tx, None);
         drop(tx);
         let events: Vec<TimelapseEvent> = rx.iter().collect();
         assert_eq!(events, vec![TimelapseEvent::Done { frames: 0 }]);
+    }
+
+    /// W31: a preset stop beats the handshake — no hide events, no portal.
+    #[test]
+    fn gated_loop_still_honours_a_preset_stop() {
+        let dir = tmp_dir("gate-stop");
+        let (tx, rx) = channel();
+        let stop = AtomicBool::new(true);
+        let gate = Arc::new(AtomicBool::new(false));
+        run(
+            &dir,
+            Duration::from_secs(60),
+            Some(5),
+            &stop,
+            &tx,
+            Some(&gate),
+        );
+        drop(tx);
+        let events: Vec<TimelapseEvent> = rx.iter().collect();
+        assert_eq!(events, vec![TimelapseEvent::Done { frames: 0 }]);
+    }
+
+    /// W31: with nobody listening the gated loop exits at the first hide
+    /// event — it never reaches the capture portal.
+    #[test]
+    fn gated_loop_exits_when_nobody_listens() {
+        let dir = tmp_dir("gate-dropped");
+        let (tx, rx) = channel();
+        drop(rx);
+        let stop = AtomicBool::new(false);
+        let gate = Arc::new(AtomicBool::new(false));
+        run(&dir, Duration::from_secs(60), None, &stop, &tx, Some(&gate));
+        assert!(!dir.exists(), "no hide ack means no frame was taken");
     }
 
     #[test]
@@ -364,9 +464,54 @@ mod tests {
             period_secs: 5,
             count: None,
             dir: file.join("not-a-dir"),
+            hide_gate: None,
         };
         let result = spawn_timelapse(config, tx);
         let _ = std::fs::remove_file(&file);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn hide_ack_is_consumed_for_the_next_frame() {
+        let gate = AtomicBool::new(true);
+        let stop = AtomicBool::new(false);
+        assert!(wait_for_hide_ack(&gate, &stop, Duration::from_millis(50)));
+        assert!(
+            !gate.load(Ordering::Relaxed),
+            "the ack is consumed so the next frame waits for a fresh one"
+        );
+    }
+
+    #[test]
+    fn hide_ack_waits_for_a_late_ui() {
+        let gate = Arc::new(AtomicBool::new(false));
+        let stop = Arc::new(AtomicBool::new(false));
+        let g = Arc::clone(&gate);
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(40));
+            g.store(true, Ordering::Relaxed);
+        });
+        assert!(wait_for_hide_ack(&gate, &stop, Duration::from_millis(500)));
+    }
+
+    #[test]
+    fn hide_ack_times_out_without_stalling_the_run() {
+        let gate = AtomicBool::new(false);
+        let stop = AtomicBool::new(false);
+        let t0 = std::time::Instant::now();
+        assert!(!wait_for_hide_ack(&gate, &stop, Duration::from_millis(60)));
+        assert!(t0.elapsed() < Duration::from_millis(500));
+    }
+
+    #[test]
+    fn hide_ack_aborts_on_stop() {
+        let gate = AtomicBool::new(false);
+        let stop = AtomicBool::new(true);
+        let t0 = std::time::Instant::now();
+        assert!(!wait_for_hide_ack(&gate, &stop, Duration::from_secs(2)));
+        assert!(
+            t0.elapsed() < Duration::from_millis(500),
+            "stop lands promptly"
+        );
     }
 }

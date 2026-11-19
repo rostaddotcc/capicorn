@@ -1115,6 +1115,35 @@ live pass + gates (trim/relicense/cutover/external post). NO releases published.
   rust/dist/w24/, CLI smoke 49 commands. Delivered to rostad.
 - Awaiting rostad unchanged: KDE live pass, trim decision, relicense, cutover.
 
+### 2026-11-19 — STRATEGY: Tauri development cut (rostad) + issue #1 investigation
+- **rostad's decision (2026-11-19, direct message): cut Tauri app development,
+  focus the loop entirely on the Rust edition.** The root Tauri v1.5.x line
+  stays frozen as the shipping stable; release cutover remains a separate gate.
+  All future wakes work only in `rust/`.
+- **Issue #1 "Multiple monitors" investigated (rostad: "sure it's Windows"):**
+  reporter JuanJoseJimenezdeCisneros (2026-11-17) wants a monitor-selection
+  prompt on a dual-monitor setup; no OS stated, profile empty (0 repos, no
+  bio/location — no OS signal). rostad already asked the needs-info questions;
+  no reporter reply yet.
+- **Code evidence strongly supports Windows:** stable Tauri `capture_full` on
+  Windows/macOS = `xcap::Monitor::from_point(0, 0)` → ALWAYS the primary
+  monitor, silent, no picker (src-tauri/src/capture.rs:28-41); the menu's
+  "Choose screen" (`capture_monitor`) and window capture are Linux-only —
+  non-Linux builds bail "monitor/window capture is not supported on this
+  platform yet" (capture.rs:97-105). Linux Wayland HAS the portal picker, so
+  the complaint matches the Windows experience exactly (macOS shares the code
+  path but is far less likely).
+- **Online grounding:** xcap README implementation table — screen/window
+  capture + recording ✅ Windows (≥8.1); `Monitor::all()` enumerates outputs
+  with friendly_name/is_primary/geometry (docs.rs/xcap + github.com/nashaofu/xcap).
+  xcap 0.9 uses windows crate 0.62. So the gap is SnagCraft's wiring, not the
+  library — and xcap (Apache-2.0, allowlist-clean) is the natural candidate for
+  the Rust edition's D1 Windows/macOS capture backend, with an in-app monitor
+  picker where no OS picker exists.
+- Draft issue reply prepared for rostad's OK (external-post gate): honest
+  platform status + the Windows diagnosis + Rust-edition plan; no Tauri fix
+  promised (development cut).
+
 ## Appendix — measured reality
 
 | Claim | Measured | What changed |

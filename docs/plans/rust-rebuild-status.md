@@ -1268,6 +1268,22 @@ live pass + gates (trim/relicense/cutover/external post). NO releases published.
   cloud mirror, not a dpkg lock — read the apt log (Ign: lines on the dead mirror),
   then force the canonical archive mirror.
 
+### 2026-11-19 — verification wake: widget fidelity + web build health (no change)
+- Floating widget audited against the live authority (src/widget-main.ts): the Rust
+  widget is FAITHFUL — drag-from-anywhere on the pill (StartDrag, like live's
+  data-tauri-drag-region), fold `»` distinct from close `×`, Rec flips to stop-square
+  + Pause/Resume mid-take, folded tab = wordmark + live dot + expand chevron.
+  Full/Region/Rec are ACTIONS (no persistent selected state expected). The W27
+  vision flags (no drag handle / no fold / redundant record icon / no active state)
+  were all false positives from the static seeded snapshot. No fix needed.
+- Web (WASM) build re-verified end-to-end after W18–W27: `cargo xtask wasm` (10
+  crates) + `trunk build --release` green; served + browser-checked — boots to the
+  full editor (toolbar/canvas/status), Ctrl+, opens Settings, the W27 Capture delay
+  pills render on web, General shows the correct "desktop-only" note, scrollbar
+  handles overflow. The "LOADING SNAGCRAFT…" body text is a hidden placeholder, not
+  a stuck load (vision confirmed the rendered editor). Web surface healthy.
+- CI still green (runs f2f82f3 + 30cb150 success); issue #1 still awaiting reporter.
+
 ## Appendix — measured reality
 
 | Claim | Measured | What changed |

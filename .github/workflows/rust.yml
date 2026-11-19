@@ -92,4 +92,4 @@ jobs:
       - name: Build (whole app compiles for Windows)
         run: cargo build --workspace
       - name: Logic tests (UI kittest is Linux-gated; no GPU needed here)
-        run: cargo test --workspace --exclude snagcraft-ui-egui
+        run: cargo test --workspace --exclude snagcraft-ui-egui --no-fail-fast

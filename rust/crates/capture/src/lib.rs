@@ -288,6 +288,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn file_uri_becomes_a_path() {
         assert_eq!(
             file_uri_to_path("file:///tmp/Screenshot%20from%202026.png").expect("percent space"),
@@ -302,6 +303,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn file_uri_ignores_query_and_fragment() {
         assert_eq!(
             file_uri_to_path("file:///tmp/shot.png?cache=1#top").expect("query and fragment"),

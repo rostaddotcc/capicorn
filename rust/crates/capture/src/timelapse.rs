@@ -353,12 +353,20 @@ mod tests {
     #[test]
     fn spawn_rejects_an_impossible_folder() {
         let (tx, _rx) = channel();
+        // A directory nested under a regular file can never be created — on any
+        // platform (the old `/proc/...` fixture only failed on Linux).
+        let file = std::env::temp_dir().join(format!(
+            "snagcraft-tl-impossible-{}.txt",
+            std::process::id()
+        ));
+        std::fs::write(&file, b"x").expect("fixture file");
         let config = TimelapseConfig {
             period_secs: 5,
             count: None,
-            // A regular file can never be created as a directory.
-            dir: PathBuf::from("/proc/snagcraft-timelapse-not-a-dir"),
+            dir: file.join("not-a-dir"),
         };
-        assert!(spawn_timelapse(config, tx).is_err());
+        let result = spawn_timelapse(config, tx);
+        let _ = std::fs::remove_file(&file);
+        assert!(result.is_err());
     }
 }

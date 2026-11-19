@@ -22,6 +22,11 @@ jobs:
       - name: System dependencies (PipeWire bindgen, OCR/ffmpeg tests, software Vulkan for kittest)
         timeout-minutes: 10
         run: |
+          # The runner's regional cloud mirror (*.ec2/azure.archive.ubuntu.com) is
+          # intermittently unreachable and hangs apt for minutes (it keeps retrying
+          # the dead mirror for package lists). Force the canonical archive mirror.
+          sudo sed -i -E 's|https?://[a-z0-9.-]*\.(ec2|azure)\.archive\.ubuntu\.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' /etc/apt/sources.list.d/ubuntu.sources 2>/dev/null || true
+          sudo sed -i -E 's|https?://[a-z0-9.-]*\.(ec2|azure)\.archive\.ubuntu\.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' /etc/apt/sources.list 2>/dev/null || true
           sudo apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=30
           sudo apt-get install -y --no-install-recommends -o Acquire::Retries=3 -o Acquire::http::Timeout=30 libpipewire-0.3-dev libspa-0.2-dev clang tesseract-ocr ffmpeg libvulkan1 mesa-vulkan-drivers
       - uses: dtolnay/rust-toolchain@stable
@@ -52,6 +57,9 @@ jobs:
       - name: System dependencies (PipeWire bindgen)
         timeout-minutes: 10
         run: |
+          # Force the canonical archive mirror (the regional cloud mirror hangs apt).
+          sudo sed -i -E 's|https?://[a-z0-9.-]*\.(ec2|azure)\.archive\.ubuntu\.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' /etc/apt/sources.list.d/ubuntu.sources 2>/dev/null || true
+          sudo sed -i -E 's|https?://[a-z0-9.-]*\.(ec2|azure)\.archive\.ubuntu\.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' /etc/apt/sources.list 2>/dev/null || true
           sudo apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=30
           sudo apt-get install -y --no-install-recommends -o Acquire::Retries=3 -o Acquire::http::Timeout=30 libpipewire-0.3-dev libspa-0.2-dev clang
       - uses: dtolnay/rust-toolchain@stable

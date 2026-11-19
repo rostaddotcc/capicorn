@@ -1481,9 +1481,10 @@ impl SnagCraftApp {
                 let monitors: Vec<snagcraft_capture::MonitorInfo> =
                     serde_json::from_value(v["monitors"].clone()).unwrap_or_default();
                 if monitors.is_empty() {
-                    self.status =
-                        "Monitor selection uses the system picker here — start a recording or scrolling capture to choose a screen."
-                            .into();
+                    // W41: Linux has no in-app output enumeration — open the
+                    // ScreenCast system picker instead of the old dead-end
+                    // status line (this is the Tauri "capture monitor" flow).
+                    self.capture_monitor_picked();
                 } else {
                     self.monitors = monitors;
                     self.monitor_picker_open = true;
@@ -1513,6 +1514,57 @@ impl SnagCraftApp {
             let result = snagcraft_capture::capture_monitor_index(index).map_err(|e| e.to_string());
             let _ = tx.send(CaptureMsg::Done(result));
         });
+    }
+
+    /// W41: capture one user-picked WINDOW through the ScreenCast system picker
+    /// (restores the Tauri `capture_window` flow the Rust port had dropped).
+    pub fn capture_window_picked(&mut self) {
+        self.start_picked_capture(true);
+    }
+
+    /// W41: capture one user-picked MONITOR through the ScreenCast system picker
+    /// (restores Tauri `capture_monitor`; replaces the W25 Linux dead-end).
+    pub fn capture_monitor_picked(&mut self) {
+        self.start_picked_capture(false);
+    }
+
+    /// The shared off-thread pipeline for a still window/monitor grab: hide the
+    /// app's windows, settle, open the OS picker, grab one frame, restore. The
+    /// picker is the portal's own dialog, so hiding the app first keeps it out
+    /// of the shot (and out of the window list) exactly like Tauri.
+    fn start_picked_capture(&mut self, window: bool) {
+        #[cfg(not(feature = "native"))]
+        {
+            let _ = window;
+            self.status =
+                "Screen capture is desktop-only — drop an image file here to annotate it.".into();
+        }
+        #[cfg(feature = "native")]
+        {
+            if self.capture_rx.is_some() || !self.capture_enabled {
+                return;
+            }
+            let (tx, rx) = mpsc::channel();
+            self.capture_rx = Some(rx);
+            self.last_capture = Some(CaptureKind::Full);
+            self.status = if window {
+                "Pick a window to capture…".into()
+            } else {
+                "Pick a screen to capture…".into()
+            };
+            self.redraw = true;
+            std::thread::spawn(move || {
+                let _ = tx.send(CaptureMsg::HideForGrab);
+                std::thread::sleep(CAPTURE_HIDE_SETTLE);
+                let result = if window {
+                    snagcraft_capture::capture_window_blocking()
+                } else {
+                    snagcraft_capture::capture_monitor_blocking()
+                }
+                .map_err(|e| e.to_string());
+                let _ = tx.send(CaptureMsg::Done(result));
+            });
+        }
     }
 
     fn poll_capture(&mut self, ctx: &egui::Context) {
@@ -7146,8 +7198,18 @@ fn capture_menu(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
                 app.capture_region();
                 ui.close();
             }
+            // W41: pick one window through the ScreenCast system picker
+            // (restored Tauri capture_window flow).
+            if ui
+                .add_enabled(!capturing, egui::Button::new("Window…"))
+                .on_hover_text("Capture one specific window")
+                .clicked()
+            {
+                app.capture_window_picked();
+                ui.close();
+            }
             // W25: pick one monitor — in-app picker where no OS picker exists
-            // (Windows/macOS); on Linux the system portal picker is used.
+            // (Windows/macOS); on Linux the ScreenCast system picker is used (W41).
             if ui
                 .add_enabled(!capturing, egui::Button::new("Choose screen…"))
                 .on_hover_text("Capture one specific monitor")

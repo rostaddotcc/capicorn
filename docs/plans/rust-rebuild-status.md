@@ -1688,6 +1688,49 @@ live pass + gates (trim/relicense/cutover/external post). NO releases published.
   The autonomous quality-check is complete; the loop is stopped. If capture
   still fails on his Plasma box, he can reply or restart the loop.
 
+### 2026-11-19 — W41: THE capture regression — the system window/screen picker was never ported
+- **rostad replied: "capture fungerar ej längre alls" + "jag får ingen window
+  picker, screen picker som jag fick i tauri".** His diagnostics: CachyOS
+  (Arch, fresh Plasma — NOT the ≤6.7 I assumed in W29), no portal log, an old
+  Tauri-era recording log. The missing-picker symptom redirected the root cause.
+- **Real root cause (not the W29 portal backend):** Tauri had THREE capture
+  modes — `capture_full` (Screenshot, no picker), `capture_window` and
+  `capture_monitor` (both via the **ScreenCast** portal's system picker,
+  `portal_capture::grab(SourceKind)`). The Rust port only ported `capture_full`.
+  Window capture was absent entirely; W25's "Choose screen…" on Linux was a
+  dead-end status line ("start a recording…") because `list_monitors()` returns
+  empty on Linux. **The picker rostad relied on simply did not exist in Rust.**
+  W29's KDE-bug fix was real but addressed a different symptom; on his fresh
+  Plasma the non-interactive Screenshot works, so the failure he saw was the
+  missing window/monitor picker, not the portal.
+- **Fix — reuse, don't re-port:** the scrolling-capture source already has the
+  whole proven ScreenCast→PipeWire path (`open_portal`, the stride-aware RGBA
+  conversion, the `!Send` capture thread, the graceful teardown, portal logging).
+  Parameterized `open_portal(sources)` / `session(..., sources)` /
+  `open_blocking_kind(sources)` (scrolling still passes MONITOR|WINDOW) and added
+  `grab_one_blocking(sources)`: open the picker, read `Source::newest()` (already
+  an `Arc<Surface>`), shut down. Public `capture_window_blocking` (WINDOW) /
+  `capture_monitor_blocking` (MONITOR) in the capture crate; non-Linux returns an
+  honest Unsupported (the xcap in-app picker covers those).
+- **UI:** new "Window…" Capture-menu entry → `capture_window_picked`; "Choose
+  screen…" on Linux now → `capture_monitor_picked` (the dead-end is gone). Both
+  use the shared hide/settle/restore off-thread pipeline (`start_picked_capture`),
+  so the app stays out of its own shot and out of the window list (Tauri parity).
+- **Diagnostics:** the Screenshot path now logs to `~/.cache/snagcraft-portal.log`
+  (`portal_log`: request/interactive flag, response ok/fail, timeout) — before,
+  only the ScreenCast paths logged, so "Copy diagnostics" was blind to still
+  capture. The ScreenCast still-grab logs via the scrolling `log()`.
+- 4 new gates (w41_picked_capture: window/monitor arming + picker status, Linux
+  Choose-screen dispatch, in-flight guard) + the W25 dead-end test updated to the
+  new picker behavior + w4_capture_menu/w4_timelapse_dialog re-blessed (the new
+  Window… row; vision-confirmed clean). 600/0/11 twice serial, clippy/fmt clean
+  (native+wasm), wasm 10/10.
+- **Lesson:** when a user says a feature "doesn't work anymore" vs the old
+  edition, DIFF THE FEATURE SET first — a whole capture mode can be silently
+  unported. The W29 root cause was plausible but wrong for his actual symptom;
+  the missing-picker clue ("ingen picker som i tauri") was the decisive evidence.
+  Reuse the proven PipeWire machinery rather than re-porting fiddly Tauri code.
+
 ## Appendix — measured reality
 
 | Claim | Measured | What changed |

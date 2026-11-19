@@ -35,6 +35,33 @@ pub const PORTAL_TIMEOUT: Duration = Duration::from_secs(15);
 /// give them the same time as the ScreenCast picker (`scrolling/source.rs`).
 pub const PORTAL_INTERACTIVE_TIMEOUT: Duration = Duration::from_secs(120);
 
+/// W41: append a timestamped line to the shared portal log so "Copy diagnostics"
+/// covers still Screenshot capture too (the ScreenCast paths already log).
+/// Best-effort: a log write must never be the reason a capture fails.
+#[cfg(target_os = "linux")]
+fn portal_log(message: &str) {
+    use std::io::Write;
+    let path = std::env::var_os("XDG_CACHE_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache")))
+        .unwrap_or_else(std::env::temp_dir)
+        .join("snagcraft-portal.log");
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0);
+        let _ = writeln!(file, "[{stamp}] screenshot: {message}");
+    }
+}
+
 /// Anything that can go wrong trying to obtain a screen image.
 #[derive(Debug, Error)]
 pub enum CaptureError {
@@ -97,13 +124,30 @@ async fn portal_screenshot(interactive: bool) -> Result<Surface, CaptureError> {
     } else {
         PORTAL_TIMEOUT
     };
+    portal_log(&format!("request sent (interactive={interactive})"));
     let request = Screenshot::request().interactive(interactive).send();
-    let response = tokio::time::timeout(budget, request)
-        .await
-        .map_err(|_| CaptureError::Timeout)?
-        .map_err(map_ashpd_error)?;
+    let response = match tokio::time::timeout(budget, request).await {
+        Err(_) => {
+            portal_log(&format!("timed out after {}s", budget.as_secs()));
+            return Err(CaptureError::Timeout);
+        }
+        Ok(Err(err)) => {
+            let mapped = map_ashpd_error(err);
+            portal_log(&format!("request failed: {mapped}"));
+            return Err(mapped);
+        }
+        Ok(Ok(response)) => response,
+    };
 
-    let shot = response.response().map_err(map_ashpd_error)?;
+    let shot = match response.response() {
+        Err(err) => {
+            let mapped = map_ashpd_error(err);
+            portal_log(&format!("response failed: {mapped}"));
+            return Err(mapped);
+        }
+        Ok(shot) => shot,
+    };
+    portal_log("response ok");
 
     // ashpd 0.14 models the reply URI as an opaque string: no `to_file_path`.
     let uri = shot.uri().as_str();
@@ -145,6 +189,40 @@ fn capture_full_native() -> Result<Surface, CaptureError> {
     }
     tracing::debug!(width = w, height = h, "xcap delivered a screen image");
     Ok(surface)
+}
+
+/// W41: grab one still frame of a user-picked WINDOW through the ScreenCast
+/// portal's system picker (the Screenshot portal can only grab whole screens).
+/// Restores the Tauri `capture_window` flow. Blocking: call from a dedicated
+/// thread — the share dialog alone can take up to two minutes.
+#[cfg(target_os = "linux")]
+pub fn capture_window_blocking() -> Result<Surface, CaptureError> {
+    use ashpd::desktop::screencast::SourceType;
+    scrolling::grab_one_blocking(SourceType::WINDOW)
+}
+
+/// W41: grab one still frame of a user-picked MONITOR through the ScreenCast
+/// portal's system picker. Restores the Tauri `capture_monitor` flow.
+#[cfg(target_os = "linux")]
+pub fn capture_monitor_blocking() -> Result<Surface, CaptureError> {
+    use ashpd::desktop::screencast::SourceType;
+    scrolling::grab_one_blocking(SourceType::MONITOR)
+}
+
+/// Non-Linux: the in-app monitor picker (xcap) covers these; the ScreenCast
+/// system picker is a Wayland/portal path.
+#[cfg(not(target_os = "linux"))]
+pub fn capture_window_blocking() -> Result<Surface, CaptureError> {
+    Err(CaptureError::Unsupported(
+        "window capture uses the in-app picker on this platform".into(),
+    ))
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn capture_monitor_blocking() -> Result<Surface, CaptureError> {
+    Err(CaptureError::Unsupported(
+        "monitor capture uses the in-app picker on this platform".into(),
+    ))
 }
 
 /// Blocking wrapper for callers without an async runtime (CLI, egui event loop).

@@ -30,6 +30,9 @@ pub mod stitch;
 #[cfg(target_os = "linux")]
 mod source;
 
+#[cfg(target_os = "linux")]
+pub(crate) use source::grab_one_blocking;
+
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};

@@ -49,6 +49,8 @@ use spa::param::video::{VideoFormat, VideoInfoRaw};
 use spa::pod::{ChoiceValue, Pod, Property, Value};
 use spa::utils::{Choice, ChoiceEnum, ChoiceFlags, Id};
 
+use ashpd::desktop::screencast::SourceType;
+
 use crate::CaptureError;
 
 /// Pure D-Bus round-trips: a wedged portal must fail readably, not hang.
@@ -268,8 +270,8 @@ struct PortalCapture {
 ///
 /// The portal offers no rectangle source: the region the user selected is cropped
 /// in-app from this monitor/window stream.
-async fn open_portal() -> Result<PortalCapture, CaptureError> {
-    use ashpd::desktop::screencast::{CursorMode, Screencast, SelectSourcesOptions, SourceType};
+async fn open_portal(sources: SourceType) -> Result<PortalCapture, CaptureError> {
+    use ashpd::desktop::screencast::{CursorMode, Screencast, SelectSourcesOptions};
     use ashpd::desktop::{PersistMode, Session};
 
     let proxy = portal_call(PORTAL_CALL_TIMEOUT, "ScreenCast portal", Screencast::new()).await?;
@@ -288,7 +290,7 @@ async fn open_portal() -> Result<PortalCapture, CaptureError> {
         proxy.select_sources(
             &session,
             SelectSourcesOptions::default()
-                .set_sources(SourceType::MONITOR | SourceType::WINDOW)
+                .set_sources(sources)
                 // HIDDEN, not EMBEDDED: a cursor baked into every frame would be
                 // stitched into the tall image once per scroll step.
                 .set_cursor_mode(CursorMode::HIDDEN)
@@ -674,6 +676,7 @@ fn session(
     stop: Arc<AtomicBool>,
     ready: mpsc::SyncSender<Result<(), String>>,
     size_tx: mpsc::SyncSender<(i32, i32)>,
+    sources: SourceType,
 ) {
     let runtime = match tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -689,7 +692,7 @@ fn session(
     };
 
     runtime.block_on(async move {
-        let portal = match open_portal().await {
+        let portal = match open_portal(sources).await {
             Ok(portal) => portal,
             Err(err) => {
                 let _ = ready.try_send(Err(err.to_string()));
@@ -752,6 +755,13 @@ fn session(
 /// that never delivers a frame all come back as a real [`CaptureError`] instead of
 /// an empty capture.
 pub(crate) fn open_blocking() -> Result<Source, CaptureError> {
+    open_blocking_kind(SourceType::MONITOR | SourceType::WINDOW)
+}
+
+/// W41: open the cast offering only the given source kind(s). The scrolling
+/// capture offers MONITOR|WINDOW; a still window/monitor grab offers just one
+/// so the OS picker lists exactly what the user asked for (Tauri parity).
+pub(crate) fn open_blocking_kind(sources: SourceType) -> Result<Source, CaptureError> {
     let latest: Latest = Arc::new(Mutex::new(None));
     let stop = Arc::new(AtomicBool::new(false));
     let (ready_tx, ready_rx) = mpsc::sync_channel(1);
@@ -762,7 +772,7 @@ pub(crate) fn open_blocking() -> Result<Source, CaptureError> {
         let stop = Arc::clone(&stop);
         std::thread::Builder::new()
             .name("snagcraft-scrolling-session".to_string())
-            .spawn(move || session(latest, stop, ready_tx, size_tx))
+            .spawn(move || session(latest, stop, ready_tx, size_tx, sources))
             .map_err(|err| {
                 CaptureError::Io(format!("cannot start the scrolling session thread: {err}"))
             })?
@@ -799,4 +809,37 @@ pub(crate) fn open_blocking() -> Result<Source, CaptureError> {
         join: Some(thread),
         size,
     })
+}
+
+/// W41: grab exactly ONE still frame from a user-picked window or monitor.
+///
+/// Reuses the scrolling cast machinery end to end: the OS picker (SelectSources
+/// then Start), the PipeWire thread, the stride-aware RGBA conversion and the
+/// graceful teardown. `open_blocking_kind` already waits for the first real
+/// frame, so `newest()` is populated; the `Source` is shut down (PipeWire thread
+/// joined, then the portal `Session` dropped) before the frame is handed back.
+/// This restores the Tauri `portal_capture::grab` path on the Rust port — the
+/// system window/screen picker the Screenshot portal cannot offer.
+pub(crate) fn grab_one_blocking(sources: SourceType) -> Result<Surface, CaptureError> {
+    let mut source = open_blocking_kind(sources)?;
+    // The ready signal fires on the first published frame; poll briefly in case
+    // the slot is read a hair before the publish lands.
+    let mut frame = None;
+    for _ in 0..50 {
+        if let Some(found) = source.newest() {
+            frame = Some(found);
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let frame = frame
+        .ok_or_else(|| CaptureError::Portal("the screen cast produced no frame".to_string()))?;
+    let surface = (*frame).clone();
+    source.shutdown();
+    log(&format!(
+        "still grab: captured {}x{}",
+        surface.width(),
+        surface.height()
+    ));
+    Ok(surface)
 }

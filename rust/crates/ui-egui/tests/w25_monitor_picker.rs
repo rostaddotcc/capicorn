@@ -118,10 +118,12 @@ fn esc_and_cancel_close_the_picker() {
 }
 
 #[test]
-fn empty_monitor_list_falls_back_to_the_system_picker_note() {
+fn empty_monitor_list_opens_the_system_picker_capture() {
     let dir = scratch("empty");
     let mut h = harness(&dir);
     // On Linux capture.monitors is genuinely empty (the portal is the picker).
+    // W41: this now OPENS the ScreenCast system-picker capture instead of the
+    // old dead-end "start a recording" status note.
     h.state_mut().open_monitor_picker();
     h.run_steps(1);
     assert!(
@@ -129,8 +131,12 @@ fn empty_monitor_list_falls_back_to_the_system_picker_note() {
         "no in-app picker without monitors"
     );
     assert!(
-        h.state().status.contains("system picker"),
-        "the fallback explains the system picker: {}",
+        h.state().capture_in_flight(),
+        "the system-picker capture was armed"
+    );
+    assert!(
+        h.state().status.contains("Pick a screen"),
+        "the picker status replaces the dead-end note: {}",
         h.state().status
     );
     let _ = std::fs::remove_dir_all(&dir);

@@ -1070,6 +1070,10 @@ pub struct SnagCraftApp {
     timelapse_assemble_rx: Option<mpsc::Receiver<Result<TimelapseVideo, String>>>,
     pick: Option<RegionPick>,
     pick_rx: Option<mpsc::Receiver<Result<Surface, String>>>,
+    /// The region pick hid the app's windows for the freeze grab; the landing
+    /// result must restore them (live grabs via `capture_screenshot`, which
+    /// hides them — the freeze must not show SnagCraft itself).
+    pub pick_hidden: bool,
     /// Web open path: in-flight browser file read (`w`, `h`) or its error.
     #[cfg(not(feature = "native"))]
     drop_rx: Option<mpsc::Receiver<Result<(u32, u32), String>>>,
@@ -1237,6 +1241,7 @@ impl SnagCraftApp {
             timelapse_assemble_rx: None,
             pick: None,
             pick_rx: None,
+            pick_hidden: false,
             #[cfg(not(feature = "native"))]
             drop_rx: None,
             #[cfg(not(feature = "native"))]
@@ -2564,7 +2569,12 @@ impl SnagCraftApp {
             let (tx, rx) = mpsc::channel();
             self.pick_rx = Some(rx);
             self.status = format!("Capturing the screen for the {} region…", purpose.verb());
+            // W30: hide the app's own windows for the freeze grab — live's
+            // runRegionCapture/runScrollingCapture grab through
+            // capture_screenshot, which hides them (app.ts:2548, 2732).
+            self.hide_for_pick();
             std::thread::spawn(move || {
+                std::thread::sleep(CAPTURE_HIDE_SETTLE);
                 let _ =
                     tx.send(snagcraft_capture::capture_full_blocking().map_err(|e| e.to_string()));
             });
@@ -2600,6 +2610,7 @@ impl SnagCraftApp {
         match rx.try_recv() {
             Ok(Ok(surface)) => {
                 self.pick_rx = None;
+                self.restore_after_pick();
                 if let Some(pick) = &mut self.pick {
                     pick.surface = Some(surface);
                 }
@@ -2607,16 +2618,77 @@ impl SnagCraftApp {
             }
             Ok(Err(err)) => {
                 self.pick_rx = None;
+                self.restore_after_pick();
                 self.pick = None;
                 self.status = format!("Region pick failed: {err}");
             }
             Err(mpsc::TryRecvError::Empty) => {}
             Err(mpsc::TryRecvError::Disconnected) => {
                 self.pick_rx = None;
+                self.restore_after_pick();
                 self.pick = None;
                 self.status = "Region capture thread ended unexpectedly.".into();
             }
         }
+    }
+
+    /// Hide the app's windows for the freeze grab (live `hide_app_windows`).
+    /// The picker overlay itself paints in the main window, so the hide lasts
+    /// only until the freeze lands — [`Self::restore_after_pick`] brings the
+    /// windows back for the drag. Public as a gate seam.
+    pub fn hide_for_pick(&mut self) {
+        #[cfg(feature = "native")]
+        {
+            let Some(ctx) = self.main_ctx.clone() else {
+                return;
+            };
+            self.pick_hidden = true;
+            self.hidden = true;
+            ctx.send_viewport_cmd(ViewportCommand::Visible(false));
+            if self.widget_shown {
+                ctx.send_viewport_cmd_to(widget_viewport_id(), ViewportCommand::Visible(false));
+            }
+            ctx.send_viewport_cmd(ViewportCommand::RequestPaintWhileHidden);
+            ctx.request_repaint_after(Duration::from_millis(250));
+        }
+    }
+
+    /// Bring the windows back once the freeze lands (or the grab fails) —
+    /// the user needs the main window to drag the region on the overlay.
+    #[cfg(feature = "native")]
+    fn restore_after_pick(&mut self) {
+        if !self.pick_hidden {
+            return;
+        }
+        self.pick_hidden = false;
+        self.hidden = false;
+        if let Some(ctx) = self.main_ctx.clone() {
+            ctx.send_viewport_cmd(ViewportCommand::Visible(true));
+            ctx.send_viewport_cmd(ViewportCommand::Focus);
+            if self.widget_shown && self.settings.show_widget {
+                ctx.send_viewport_cmd_to(widget_viewport_id(), ViewportCommand::Visible(true));
+            }
+        }
+    }
+
+    #[cfg(not(feature = "native"))]
+    fn restore_after_pick(&mut self) {}
+
+    /// Test seam: arm the pick channel without a portal thread, so gates can
+    /// land a freeze (or a failure) directly onto the hidden-path pump.
+    pub fn seed_pick_channel(
+        &mut self,
+        purpose: PickPurpose,
+    ) -> mpsc::Sender<Result<Surface, String>> {
+        let (tx, rx) = mpsc::channel();
+        self.pick = Some(RegionPick::new(purpose));
+        self.pick_rx = Some(rx);
+        tx
+    }
+
+    /// Test seam: has the frozen screen landed on the picker?
+    pub fn pick_has_surface(&self) -> bool {
+        self.pick.as_ref().is_some_and(|p| p.surface.is_some())
     }
 
     /// Enter on the picker: hand the rect to the engine. A too-small frame
@@ -5942,13 +6014,21 @@ fn hint(ui: &mut egui::Ui, text: &str) {
 
 fn palette(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
     let accent = pal_accent(ui);
-    let border = pal_border(ui);
+    // W30: unselected swatches need a ring that reads against the rail in
+    // BOTH themes — the panel hairline vanishes (dark's black swatch and
+    // light's white swatch both sat at ~1.5:1). These rings measure ≥3:1
+    // against the rail surface AND against the extreme fill they outline.
+    let idle_ring = if ui.visuals().dark_mode {
+        Color32::from_rgb(110, 117, 128)
+    } else {
+        Color32::from_rgb(135, 141, 150)
+    };
     for (name, rgb) in PALETTE {
         let color = Color32::from_rgb(rgb[0], rgb[1], rgb[2]);
         let selected = app.color.to_array()[..3] == rgb;
         let (rect, resp) = ui.allocate_exact_size(vec2(20.0, 20.0), Sense::click());
         ui.painter().rect_filled(rect, CornerRadius::same(5), color);
-        let ring = if selected { accent } else { border };
+        let ring = if selected { accent } else { idle_ring };
         ui.painter().rect_stroke(
             rect,
             CornerRadius::same(5),

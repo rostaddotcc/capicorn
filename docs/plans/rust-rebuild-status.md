@@ -1367,6 +1367,45 @@ live pass + gates (trim/relicense/cutover/external post). NO releases published.
   just re-test the app. And vision brightness flags on magnified checkers need
   a pixel probe (old-vs-new mean vs surrounding) before any "fix".
 
+### 2026-11-19 — W30: region-pick freeze self-inclusion fixed, swatch rings readable, timelapse gap logged
+- **Region-pick freeze showed SnagCraft itself.** `start_region_pick`
+  (record/scroll region selection) grabbed the screen with the app's windows
+  visible — live grabs through `capture_screenshot`, which hides them
+  (app.ts:2548/2732). Now the same W29 dance, UI-local: hide at pick start →
+  220 ms settle → grab → restore when the freeze lands (success, error AND
+  disconnect), because the picker overlay paints in the main window and the
+  user needs it back for the drag. `poll_pick` already rode `poll_media` in
+  both pumps, so the hidden path worked with no new wiring. 3 gates
+  (w30_pick_hide): real-thread e2e, logic-path freeze landing, logic-path
+  failure. Existing w4/w20 pick gates untouched (seed path).
+- **Timelapse has the same self-inclusion but needs a wave** (gaps.md B6):
+  the interval loop lives in the capture crate behind the engine session, so
+  per-frame hide/restore must cross the engine boundary as a hide-ack
+  handshake (HideForFrame event → UI hides + acks → settle → grab → restore).
+  Logged with the design, not patched half-way.
+- **Swatch rings were invisible at the extremes** (vision audit, confirmed by
+  WCAG math): dark's black swatch ring 1.43:1, light's white swatch ring
+  1.47:1 — both panel-hairline colors. New theme-aware idle rings: dark
+  (110,117,128) = 3.26:1 vs rail / 4.52:1 vs black fill; light (135,141,150)
+  = 3.34:1 vs rail. 2 pixel gates (w30_swatch_ring) locate the black swatch
+  by EXACT fill match (the dark panel is only a few RGB units away — a loose
+  threshold merges them) and probe the ring pixel; both fail on the old code.
+- **Snapshot trap found:** kittest's default per-pixel `threshold = 0.6`
+  silently absorbs small color changes — the ring tweak produced a 700 px
+  raw diff that counted as 0 failing pixels, so UPDATE_SNAPSHOTS never
+  re-blessed and the blessed files kept the OLD rings while tests passed.
+  Force `threshold = 0.0` + `max_failed_pixels = 0` temporarily to re-bless
+  intentional palette changes, then restore the caret-noise budget. Verify
+  re-bless by pixel-probing the blessed file, not by "tests green".
+- Vision triage: settings "clipped Export section" = scroll-fold artifact
+  (scrollbar thumb pixel-confirmed present); filmstrip "no active ring" =
+  seeding artifact (loaded doc is not a recent file); dark helper-text
+  contrast flag = false (measured 5.83:1).
+- 564/0/11 twice serial, clippy/fmt clean both targets, wasm 10/10.
+- **Lesson:** "tests green + UPDATE_SNAPSHOTS" does NOT mean the blessed
+  pixels match the render — the per-pixel threshold can hide a real change.
+  Probe the blessed file after any intentional color tweak.
+
 ## Appendix — measured reality
 
 | Claim | Measured | What changed |

@@ -236,6 +236,27 @@ request construction, response handling, error surfacing).
 - **Where logged:** status wake #7+ ("W2 gaps logged for W3/polish").
 - **Caveat:** status as of W6 is "as logged at W2"; no W6 re-verification was done.
 
+### B6 — Timelapse frames include the app's own window (W30 audit, OPEN)
+
+- **What:** the interval-capture loop (`capture/src/timelapse.rs:144`) calls
+  `capture_full_blocking()` directly with the editor window visible, so every
+  timelapse frame contains SnagCraft itself unless the user hides it manually.
+  Live grabs each interval frame through `capture_screenshot`, which runs the
+  hide/settle/restore dance (`commands.rs:79-96`) — the app is never in its own
+  timelapse.
+- **Why not fixed in W30:** the hide must be coordinated per frame across the
+  engine boundary — the timelapse worker lives in the capture crate behind the
+  engine session (`timelapse_rx`), while viewport hiding is UI-layer. Needs a
+  hide-ack handshake: worker emits `HideForFrame` → UI hides + acks (shared
+  flag or return channel) → worker settles 220 ms → grab → `RestoreAfterFrame`
+  → UI restores. New event variants + an ack path through `timelapse.poll` (or
+  a shared `Arc<AtomicBool>` in `TimelapseConfig`), plus hidden-path pumping
+  (the W28/W29 lesson: `logic` must drain it). Wave-sized, not a quick patch.
+- **Related, fixed in W30:** the region-pick freeze (`start_region_pick`) had
+  the same self-inclusion and now hides/restores around the grab (UI-local,
+  no engine crossing). Full/monitor capture got the dance in W29.
+- **Where logged:** status log W30 (2026-11-19).
+
 ---
 
 ## (c) W5 web MVP limits

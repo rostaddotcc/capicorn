@@ -131,14 +131,14 @@ pub(crate) fn tokens_equal(a: &str, b: &str) -> bool {
     diff == 0
 }
 
-/// Write `token` to `path` with unix mode `0600`, creating parent directories.
+/// Write `token` to `path`, creating parent directories.
 ///
-/// Reuse-safe: an existing file is truncated and has its mode forced back to
-/// `0600`, so a token file that drifted to `0644` is repaired rather than trusted.
+/// Unix: mode `0600`, reuse-safe (an existing file is truncated and its mode
+/// forced back to `0600`, so a token file that drifted to `0644` is repaired
+/// rather than trusted). Windows: no Unix mode bits exist — the token lives
+/// under the user's local app data, whose default ACL already scopes it to the
+/// current user (W25).
 pub fn write_token_file(path: &Path, token: &str) -> Result<(), AutomationError> {
-    use std::io::Write as _;
-    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
-
     if !is_valid_token(token) {
         return Err(AutomationError::Auth(format!(
             "refusing to write a token that is not {TOKEN_HEX_LEN} hex chars"
@@ -150,6 +150,13 @@ pub fn write_token_file(path: &Path, token: &str) -> Result<(), AutomationError>
         std::fs::create_dir_all(parent)
             .map_err(|e| AutomationError::Io(format!("create {}: {e}", parent.display())))?;
     }
+    write_token_platform(path, token)
+}
+
+#[cfg(unix)]
+fn write_token_platform(path: &Path, token: &str) -> Result<(), AutomationError> {
+    use std::io::Write as _;
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
     let mut file = std::fs::OpenOptions::new()
         .write(true)
         .create(true)
@@ -164,6 +171,22 @@ pub fn write_token_file(path: &Path, token: &str) -> Result<(), AutomationError>
     // `.mode()` only applies when the file is created; repair a reused file too.
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
         .map_err(|e| AutomationError::Io(format!("chmod {}: {e}", path.display())))?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn write_token_platform(path: &Path, token: &str) -> Result<(), AutomationError> {
+    use std::io::Write as _;
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(path)
+        .map_err(|e| AutomationError::Io(format!("open {}: {e}", path.display())))?;
+    file.write_all(token.as_bytes())
+        .and_then(|()| file.write_all(b"\n"))
+        .and_then(|()| file.sync_all())
+        .map_err(|e| AutomationError::Io(format!("write {}: {e}", path.display())))?;
     Ok(())
 }
 

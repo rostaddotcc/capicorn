@@ -1142,7 +1142,27 @@ live pass + gates (trim/relicense/cutover/external post). NO releases published.
   picker where no OS picker exists.
 - Draft issue reply prepared for rostad's OK (external-post gate): honest
   platform status + the Windows diagnosis + Rust-edition plan; no Tauri fix
-  promised (development cut).
+  promised (development cut). **rostad: do NOT post — wait for the reporter's
+  reply. And: Windows capture IS the next big wave (W25+).**
+
+### 2026-11-19 — W25a: Windows-capture wave opened — feasibility probe PASSED
+- Plan: `docs/plans/2026-11-19-w25-windows-capture.md` (W25a–e).
+- **Probe (pn53, cross-compile only):** `rustup target add x86_64-pc-windows-msvc`;
+  `cargo check -p snagcraft-capture / -p snagcraft-platform / -p snagcraft
+  --target x86_64-pc-windows-msvc` → **the WHOLE egui app compiles for Windows.**
+  xcap 0.9 + windows crate 0.62 compile; tray-icon is cross-platform; ashpd/
+  hotkeys are cfg(linux). The app shell was already Windows-ready — the gap for
+  issue #1 is monitor CHOICE, not a from-scratch port.
+- **Only blocker found + fixed (W25a):** `automation::write_token_file` used
+  Unix-only `std::os::unix::fs` + `Permissions::from_mode(0o600)`. Split
+  cfg(unix) (keeps 0600, reuse-safe) / cfg(not(unix)) (writes without mode bits;
+  token lives in user-scoped app data). Linux behavior unchanged.
+- Parent-verified: Linux workspace **537 passed / 0 failed / 11 ignored** (serial,
+  no regression), automation clippy clean, Windows `cargo check` Finished.
+- **Honest limit:** pn53 can COMPILE for Windows and run headless logic tests but
+  cannot RUN Windows capture. Real multi-monitor proof needs a Windows host
+  (rostad or CI windows-latest). Next: W25b monitor enumeration + per-monitor
+  capture, W25c engine commands, W25d in-app picker, W25e CI.
 
 ## Appendix — measured reality
 

@@ -41,6 +41,10 @@ fn main() -> eframe::Result<()> {
         )
         .init();
 
+    // W43: capture the D-Bus session environment + portal reachability into the
+    // portal log at startup, so a wrong/unreachable bus is diagnosable.
+    snagcraft_capture::diagnose_portal_at_startup();
+
     let argv: Vec<String> = std::env::args().skip(1).collect();
 
     // Single instance first: a second launch only forwards its argv and exits.

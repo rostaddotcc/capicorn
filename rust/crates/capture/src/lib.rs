@@ -35,6 +35,58 @@ pub const PORTAL_TIMEOUT: Duration = Duration::from_secs(15);
 /// give them the same time as the ScreenCast picker (`scrolling/source.rs`).
 pub const PORTAL_INTERACTIVE_TIMEOUT: Duration = Duration::from_secs(120);
 
+/// W43: startup diagnostic — log the D-Bus session environment and probe the
+/// portal connection so a wrong/unreachable bus is visible in the portal log.
+/// The env is logged synchronously; the connection probe runs off-thread.
+#[cfg(target_os = "linux")]
+pub fn diagnose_portal_at_startup() {
+    let dbus = std::env::var("DBUS_SESSION_BUS_ADDRESS").unwrap_or_else(|_| "<unset>".into());
+    let xrd = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "<unset>".into());
+    let st = std::env::var("XDG_SESSION_TYPE").unwrap_or_else(|_| "<unset>".into());
+    portal_log(&format!("STARTUP ENV DBUS_SESSION_BUS_ADDRESS={dbus}"));
+    portal_log(&format!("STARTUP ENV XDG_RUNTIME_DIR={xrd} XDG_SESSION_TYPE={st}"));
+    std::thread::spawn(|| {
+        let runtime = match tokio::runtime::Builder::new_multi_thread().enable_all().build() {
+            Ok(rt) => rt,
+            Err(err) => {
+                portal_log(&format!("STARTUP PROBE runtime error: {err}"));
+                return;
+            }
+        };
+        runtime.block_on(async {
+            use ashpd::desktop::screencast::Screencast;
+            use ashpd::zbus::Connection;
+            let conn = match tokio::time::timeout(Duration::from_secs(8), Connection::session()).await {
+                Ok(Ok(c)) => c,
+                Ok(Err(e)) => { portal_log(&format!("STARTUP PROBE session() ERR: {e}")); return; }
+                Err(_) => { portal_log("STARTUP PROBE session() TIMEOUT 8s"); return; }
+            };
+            let uniq = conn.unique_name().map(|n| n.to_string()).unwrap_or_else(|| "<none>".into());
+            portal_log(&format!("STARTUP PROBE connected unique_name={uniq}"));
+            // 1) transport: Peer.Ping (answered by the portal's D-Bus library)
+            let ping = tokio::time::timeout(Duration::from_secs(6), conn.call_method(
+                Some("org.freedesktop.portal.Desktop"), "/org/freedesktop/portal/desktop",
+                Some("org.freedesktop.DBus.Peer"), "Ping", &())).await;
+            portal_log(&format!("STARTUP PROBE Peer.Ping: {}", match ping {
+                Ok(Ok(_)) => "OK".to_string(), Ok(Err(e)) => format!("ERR {e}"), Err(_) => "TIMEOUT".to_string() }));
+            // 2) the call ashpd makes first: Properties.Get version
+            let get = tokio::time::timeout(Duration::from_secs(6), conn.call_method(
+                Some("org.freedesktop.portal.Desktop"), "/org/freedesktop/portal/desktop",
+                Some("org.freedesktop.DBus.Properties"), "Get",
+                &("org.freedesktop.portal.ScreenCast", "version"))).await;
+            portal_log(&format!("STARTUP PROBE Properties.Get(version): {}", match get {
+                Ok(Ok(_)) => "OK".to_string(), Ok(Err(e)) => format!("ERR {e}"), Err(_) => "TIMEOUT".to_string() }));
+            // 3) full ashpd proxy build
+            let sc = tokio::time::timeout(Duration::from_secs(8), Screencast::new()).await;
+            portal_log(&format!("STARTUP PROBE Screencast::new(): {}", match sc {
+                Ok(Ok(_)) => "OK".to_string(), Ok(Err(e)) => format!("ERR {e}"), Err(_) => "TIMEOUT".to_string() }));
+        });
+    });
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn diagnose_portal_at_startup() {}
+
 /// W41: append a timestamped line to the shared portal log so "Copy diagnostics"
 /// covers still Screenshot capture too (the ScreenCast paths already log).
 /// Best-effort: a log write must never be the reason a capture fails.
@@ -520,6 +572,189 @@ mod tests {
             map_ashpd_error(ashpd::Error::Response(ResponseError::Other)),
             CaptureError::Portal(_)
         ));
+    }
+
+    /// W43: raw Properties.Get via call_method (bypasses Proxy cache) vs the
+    /// Proxy.get_property path — isolates whether the portal's Get reply or the
+    /// zbus Proxy property mechanism is the problem.
+    #[tokio::test(flavor = "multi_thread")]
+    #[ignore = "needs a live bus"]
+    async fn probe_raw_properties_get() {
+        let conn = ashpd::zbus::Connection::session().await.unwrap();
+        let raw = tokio::time::timeout(
+            Duration::from_secs(6),
+            conn.call_method(
+                Some("org.freedesktop.portal.Desktop"),
+                "/org/freedesktop/portal/desktop",
+                Some("org.freedesktop.DBus.Properties"),
+                "Get",
+                &("org.freedesktop.portal.ScreenCast", "version"),
+            ),
+        )
+        .await;
+        match &raw {
+            Ok(Ok(reply)) => eprintln!("raw Properties.Get OK body={:?}", reply.body().deserialize::<ashpd::zbus::zvariant::Value>()),
+            Ok(Err(e)) => eprintln!("raw Properties.Get ERR {e}"),
+            Err(_) => eprintln!("raw Properties.Get TIMEOUT"),
+        }
+        // GetAll for comparison
+        let getall = tokio::time::timeout(
+            Duration::from_secs(6),
+            conn.call_method(
+                Some("org.freedesktop.portal.Desktop"),
+                "/org/freedesktop/portal/desktop",
+                Some("org.freedesktop.DBus.Properties"),
+                "GetAll",
+                &("org.freedesktop.portal.ScreenCast",),
+            ),
+        )
+        .await;
+        eprintln!("raw Properties.GetAll: {:?}", getall.map(|r| r.map(|_| "OK").map_err(|e| e.to_string())));
+    }
+
+    /// W43: does zbus get ANY method reply on this host? Ping the portal peer
+    /// and call org.freedesktop.DBus.ListNames — isolates zbus transport vs the
+    /// portal property path.
+    #[tokio::test(flavor = "multi_thread")]
+    #[ignore = "needs a live bus"]
+    async fn probe_zbus_basic_reply() {
+        let conn = ashpd::zbus::Connection::session().await.unwrap();
+        let ping = tokio::time::timeout(
+            Duration::from_secs(6),
+            conn.call_method(
+                Some("org.freedesktop.portal.Desktop"),
+                "/org/freedesktop/portal/desktop",
+                Some("org.freedesktop.DBus.Peer"),
+                "Ping",
+                &(),
+            ),
+        )
+        .await;
+        eprintln!("portal Peer.Ping: {:?}", ping.map(|r| r.map(|_| "OK").map_err(|e| e.to_string())));
+        let names = tokio::time::timeout(
+            Duration::from_secs(6),
+            conn.call_method(
+                Some("org.freedesktop.DBus"),
+                "/org/freedesktop/DBus",
+                Some("org.freedesktop.DBus"),
+                "ListNames",
+                &(),
+            ),
+        )
+        .await;
+        eprintln!("DBus.ListNames: {:?}", names.map(|r| r.map(|_| "OK").map_err(|e| e.to_string())));
+    }
+
+    /// W43: same probe but on the test harness's own multi-thread tokio runtime
+    /// (a persistent runtime, like Tauri's) — no spawned thread, no fresh runtime.
+    #[tokio::test(flavor = "multi_thread")]
+    #[ignore = "needs a live portal"]
+    async fn probe_screencast_harness_runtime() {
+        let r = tokio::time::timeout(
+            Duration::from_secs(10),
+            ashpd::desktop::screencast::Screencast::new(),
+        )
+        .await;
+        let msg = match r {
+            Ok(Ok(_)) => "OK".to_string(),
+            Ok(Err(e)) => format!("ERR {e}"),
+            Err(_) => "TIMEOUT".to_string(),
+        };
+        eprintln!("harness-runtime Screencast::new() probe: {msg}");
+    }
+
+    /// W43: isolate WHERE zbus hangs — connection handshake vs property reply.
+    #[test]
+    #[ignore = "needs a live portal"]
+    fn probe_zbus_connection_stages() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            let msg = rt.block_on(async {
+                let conn = match tokio::time::timeout(
+                    Duration::from_secs(8),
+                    ashpd::zbus::Connection::session(),
+                )
+                .await
+                {
+                    Ok(Ok(c)) => c,
+                    Ok(Err(e)) => return format!("session() ERR {e}"),
+                    Err(_) => return "session() TIMEOUT".to_string(),
+                };
+                let uniq = conn
+                    .unique_name()
+                    .map(|n| n.to_string())
+                    .unwrap_or_else(|| "<none>".into());
+                // Now a raw property Get on the portal ScreenCast interface.
+                let proxy = match tokio::time::timeout(
+                    Duration::from_secs(8),
+                    ashpd::zbus::Proxy::new(
+                        &conn,
+                        "org.freedesktop.portal.Desktop",
+                        "/org/freedesktop/portal/desktop",
+                        "org.freedesktop.portal.ScreenCast",
+                    ),
+                )
+                .await
+                {
+                    Ok(Ok(p)) => p,
+                    Ok(Err(e)) => return format!("connected uniq={uniq}; Proxy::new ERR {e}"),
+                    Err(_) => return format!("connected uniq={uniq}; Proxy::new TIMEOUT"),
+                };
+                match tokio::time::timeout(
+                    Duration::from_secs(8),
+                    proxy.get_property::<u32>("version"),
+                )
+                .await
+                {
+                    Ok(Ok(v)) => format!("connected uniq={uniq}; version={v} OK"),
+                    Ok(Err(e)) => format!("connected uniq={uniq}; get_property ERR {e}"),
+                    Err(_) => format!("connected uniq={uniq}; get_property TIMEOUT"),
+                }
+            });
+            let _ = tx.send(msg);
+        });
+        let result = rx
+            .recv_timeout(Duration::from_secs(30))
+            .unwrap_or_else(|_| "RECV_TIMEOUT".into());
+        eprintln!("zbus stages probe: {result}");
+    }
+
+    /// W43: minimal reproduction of the app's portal probe — a fresh
+    /// multi-thread runtime in a spawned thread, block_on Screencast::new().
+    /// On a healthy portal (busctl version-Get answers instantly) this must
+    /// return OK; a TIMEOUT here is the app's zbus connection bug, local.
+    #[test]
+    #[ignore = "needs a live portal; run on an unlocked session"]
+    fn probe_screencast_fresh_runtime() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            let r = rt.block_on(async {
+                tokio::time::timeout(
+                    Duration::from_secs(10),
+                    ashpd::desktop::screencast::Screencast::new(),
+                )
+                .await
+            });
+            let msg = match r {
+                Ok(Ok(_)) => "OK".to_string(),
+                Ok(Err(e)) => format!("ERR {e}"),
+                Err(_) => "TIMEOUT".to_string(),
+            };
+            let _ = tx.send(msg);
+        });
+        let result = rx
+            .recv_timeout(Duration::from_secs(15))
+            .unwrap_or_else(|_| "RECV_TIMEOUT".into());
+        eprintln!("fresh-runtime Screencast::new() probe: {result}");
+        assert_eq!(result, "OK", "the portal proxy must build on a healthy bus");
     }
 
     /// Live portal round trip. Ignored by default: it needs an unlocked,

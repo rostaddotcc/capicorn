@@ -10,6 +10,7 @@ publish = false
 [dependencies]
 snagcraft-ui-egui = { path = "../../crates/ui-egui" }
 snagcraft-automation = { path = "../../crates/automation" }
+snagcraft-capture = { path = "../../crates/capture" }
 snagcraft-engine = { path = "../../crates/engine" }
 snagcraft-platform = { path = "../../crates/platform" }
 snagcraft-io = { path = "../../crates/io" }

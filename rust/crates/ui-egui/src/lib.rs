@@ -3773,11 +3773,18 @@ impl SnagCraftApp {
                     ui.add_space(6.0);
                 }
                 ui.add_space(2.0);
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button("Cancel").clicked() {
-                        cancel = true;
-                    }
-                });
+                // Fixed-height footer row: a bare `with_layout(right_to_left)`
+                // expands to the window's full available height and stretched
+                // the dialog to ~2× its content. allocate_ui_with_layout pins it.
+                ui.allocate_ui_with_layout(
+                    vec2(ui.available_width(), 24.0),
+                    egui::Layout::right_to_left(egui::Align::Center),
+                    |ui| {
+                        if ui.button("Cancel").clicked() {
+                            cancel = true;
+                        }
+                    },
+                );
             });
         if let Some(index) = pick {
             self.capture_monitor(index);
@@ -3901,21 +3908,29 @@ impl SnagCraftApp {
                     );
                 });
                 ui.add_space(8.0);
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    // W23: Create is the primary action (live btn-primary).
-                    if ui
-                        .add(
-                            egui::Button::new(egui::RichText::new("Create").color(Color32::WHITE))
+                // Fixed-height footer (same stretch fix as the monitor picker):
+                // a bare with_layout(right_to_left) expands to the window height.
+                ui.allocate_ui_with_layout(
+                    vec2(ui.available_width(), 28.0),
+                    egui::Layout::right_to_left(egui::Align::Center),
+                    |ui| {
+                        // W23: Create is the primary action (live btn-primary).
+                        if ui
+                            .add(
+                                egui::Button::new(
+                                    egui::RichText::new("Create").color(Color32::WHITE),
+                                )
                                 .fill(pal_accent(ui)),
-                        )
-                        .clicked()
-                    {
-                        create = Some((self.new_canvas_w, self.new_canvas_h));
-                    }
-                    if ui.button("Cancel").clicked() {
-                        cancel = true;
-                    }
-                });
+                            )
+                            .clicked()
+                        {
+                            create = Some((self.new_canvas_w, self.new_canvas_h));
+                        }
+                        if ui.button("Cancel").clicked() {
+                            cancel = true;
+                        }
+                    },
+                );
             });
         if let Some((w, h)) = create {
             let bg = self.new_canvas_bg.clone();

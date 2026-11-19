@@ -141,6 +141,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn xdg_config_home_wins_over_home() {
         assert_eq!(
             resolve_config_home(Some(OsStr::new("/tmp/xdg")), Some(OsStr::new("/home/u")))

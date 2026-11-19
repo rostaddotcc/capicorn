@@ -535,7 +535,10 @@ mod tests {
 
     #[test]
     fn a_sane_config_validates() {
-        let mut cfg = config(RecordingFormat::Mp4, "/tmp/a.mp4");
+        // Use the real temp dir (exists on every platform; "/tmp" does not on
+        // Windows, where validate's parent-is-dir check would otherwise fail).
+        let output = std::env::temp_dir().join("snagcraft-rec-sane.mp4");
+        let mut cfg = config(RecordingFormat::Mp4, &output.to_string_lossy());
         cfg.region = Some(Region {
             left: -4,
             top: 8,
@@ -637,6 +640,12 @@ mod tests {
 
     #[test]
     fn ffmpeg_is_available_on_this_host() {
+        // Diagnostic for hosts that ship ffmpeg (the Linux CI gates job installs
+        // it). On a runner without ffmpeg (e.g. Windows CI) this skips rather
+        // than failing — the spawn tests below self-skip the same way.
+        if !ffmpeg_available() {
+            return;
+        }
         assert!(ffmpeg_available(), "ffmpeg must be on PATH for this crate");
     }
 

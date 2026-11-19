@@ -2446,7 +2446,10 @@ mod tests {
     fn ocr_and_upload_commands() {
         let mut s = Session::new();
         let a = s.dispatch("ocr.available", json!({})).unwrap();
-        assert_eq!(a["available"], true, "tesseract installed on this host");
+        // Availability is host-dependent (tesseract is installed on the Linux CI
+        // gates host, not on the Windows runner) — assert a well-formed answer,
+        // not a specific value. The upload scheme guards below are the point.
+        assert!(a["available"].is_boolean(), "ocr.available answers a bool");
         let l = s.dispatch("ocr.languages", json!({})).unwrap();
         assert!(l["languages"].as_array().is_some());
         // scheme guard: file:// must be rejected before any spawn

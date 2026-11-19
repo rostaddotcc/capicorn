@@ -978,6 +978,44 @@ live pass + gates (trim/relicense/cutover/external post). NO releases published.
   trim decision, relicense, cutover. Next wakes: rostad feedback, or deeper
   polish (web C1 surface, OCR/upload flow re-audit, design).
 
+### 2026-11-19 — wake #110: W21 OCR + upload re-audit — the 30-second freeze
+- Fresh re-check: tree clean at 4aa9070, suite green (512/0/11 serial). With
+  the five headline flows audited, re-audited the two remaining interactive
+  flows: OCR and upload. Both had real gaps behind their W7/W8 ticks.
+- **The big one — upload froze the editor**: `upload_image_now` dispatched
+  `upload.send` synchronously on the UI thread; curl can block up to 30 s
+  (UPLOAD_WAIT). The W8 parity row even cited "Uploading…" — a status the
+  rebuild never showed. **Fix:** off-thread worker (W15 pattern): render +
+  encode under a BRIEF session lock, then curl WITHOUT the lock; "Uploading…"
+  status; `poll_upload` in poll_media (runs hidden too); one upload at a time.
+- **Same latent bug in OCR**: the W7 worker held the session lock across the
+  whole tesseract subprocess — and the toolbar locks the session EVERY frame
+  (can_undo/can_redo), so the editor froze during extraction too. Now: render
+  under a brief lock, tesseract without it.
+- **OCR parity**: "Capture something first." guard (app.ts:4151-4154); previous
+  result cleared on a new run; empty extraction → "No text found in this
+  capture — try another language."; success → "Found N characters — Copy puts
+  them on the clipboard."; error → "OCR failed: …"; Copy text button disabled
+  until there is text (live ocrCopyBtn).
+- **Upload parity**: missing endpoint now OPENS Settings (live panel?.open());
+  success → "Uploaded — link copied: {link}" (live wording); empty link stays
+  a failure; worker errors reported.
+- **Gates:** 10 new (tests/w21_ocr_upload.rs) incl. a REAL off-thread upload
+  round trip against a mock HTTP server (POST + snagcraft.png field verified,
+  link-copy wording asserted). Harness lesson: mock servers answer in WALL
+  time (read-timeout probe) — kittest steps advance no wall clock, so worker
+  wait loops need a real sleep slice. w7/w8 tests updated to the async flow +
+  live wording; w7_ocr_language_picker re-blessed (diff = Copy button state
+  only, vision-verified).
+- Parent-verified: workspace **522 passed / 0 failed / 11 ignored** (serial),
+  clippy/fmt clean incl. wasm target, layers legal, xtask wasm 10/10. No new
+  engine commands (registry stays 49 — the UI calls io::ocr/io::upload
+  directly, the engine commands remain for CLI/MCP).
+- Docs: parity OCR rows → W7/W4 + W21, upload flow row → W8 + W21 (overclaim
+  noted), summary prose updated (158 rows unchanged, 1 pending = Trim).
+- Awaiting rostad unchanged: KDE live pass, trim decision, relicense, cutover.
+  Every interactive flow has now been audited against the live anchors.
+
 ## Appendix — measured reality
 
 | Claim | Measured | What changed |

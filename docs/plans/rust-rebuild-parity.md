@@ -184,10 +184,10 @@ Effects are applied to the **image layer at export resolution** (scene px × exp
 
 | Feature | Evidence | rust |
 |---|---|---|
-| Extract text from the current capture; language `eng` \| `swe`, stored in `snagcraft:ocr-lang` | `app.ts:671-676` (`OCR_LANG_KEY`, `OCR_LANGS`), toolbar chip `:906` | W7 |
+| Extract text from the current capture; language `eng` \| `swe`, stored in `snagcraft:ocr-lang`; "Capture something first" guard; empty result suggests another language, success points at Copy | `app.ts:671-676` (`OCR_LANG_KEY`, `OCR_LANGS`), toolbar chip `:906`, `runOcr` `:4149-4179` | W7 + W21 (guard + live result wording W21; the worker also runs tesseract WITHOUT the session lock now) |
 | Modal: language select, "Extract text", busy "Reading…", read-only textarea, live status | `app.ts:1265-1287` (lang `:1278`, run `:1283`, busy `:1284`, textarea `:1286`) | W7 |
 | Backend: `ocr_image(dataUrl, lang?)`, `ocr_available()`, `ocr_languages()` | `ocr.rs:183-206`; `sanitize_lang` `:49`, `clean_output` `:72` | W4 |
-| Copy the recognised text to the clipboard | `app.ts:4181` (`copyOcrText`), `copy_text` `commands.rs:431-435` | W4 |
+| Copy the recognised text to the clipboard — disabled until there is text | `app.ts:4181` (`copyOcrText`, `ocrCopyBtn.disabled` `:4162`), `copy_text` `commands.rs:431-435` | W4 + W21 (disabled-until-text affordance W21) |
 
 ---
 
@@ -214,7 +214,7 @@ Effects are applied to the **image layer at export resolution** (scene px × exp
 | Provider-agnostic: POST the flattened PNG to a user-configured endpoint, copy back whatever link the server returns; ships no credentials, no hardcoded service | `upload.rs:1-17` (`upload_image` `:17`) | W8 |
 | Transport is `curl` (no bundled TLS stack) | `upload.rs:8-9` | W8 |
 | File → **Upload…** menu item | `app.ts:797`, dispatch `:4572-4573` | W8 |
-| Flow: refuse without an image, require an endpoint ("Set an upload endpoint in Settings → Export first"), "Uploading…", then copy the link and say so | `app.ts:4499-4523` (`:4501`, `:4504-4506`, `:4511`, `:4518-4520`) | W8 |
+| Flow: refuse without an image, require an endpoint ("Set an upload endpoint in Settings → Export first" + open the panel), "Uploading…", then copy the link and say so — off-thread, the editor never blocks on curl | `app.ts:4499-4523` (`:4501`, `:4504-4506`, `:4511`, `:4518-4520`) | W8 + W21 (the W8 tick overclaimed "Uploading…": the rebuild blocked the UI on curl up to 30 s until W21 moved it off-thread with a brief render lock) |
 | `open_url` for the returned link | `upload.rs:89` | W4 |
 
 ---
@@ -299,26 +299,27 @@ Sections rendered: General, Capture, Recording audio, Global hotkeys, Save locat
 
 ---
 
-## Wave coverage at W20 (2026-11-18)
+## Wave coverage at W21 (2026-11-19)
 
 The W1-era scope note that used to sit here ("not started at all: shell, recording,
 scrolling, OCR, timelapse, upload, settings, themes, shortcuts, About") is obsolete —
-W2–W5 landed most of it, and W7–W20 closed the rest. The W6b summary that used to
+W2–W5 landed most of it, and W7–W21 closed the rest. The W6b summary that used to
 sit here (45 `pending`) was stale: those rows were closed by W7–W14 but the table
-was never recounted. Current state of the checklist (recounted row-by-row at W20):
+was never recounted. Current state of the checklist (recounted row-by-row at W20,
+W21 extended existing rows without adding new ones):
 
 | Status | Rows |
 |--------|------|
 | `W2` (incl. 3 `W2 + W14`) | 33 |
-| `W4` (incl. `W4 + W13`, `W4 + W18`, `W4 + W20`) | 33 |
+| `W4` (incl. `W4 + W13`, `W4 + W18`, `W4 + W20`, `W4 + W21`) | 33 |
 | `W3` | 30 |
 | `W11` | 14 |
 | `W12` (incl. `W12 + W19`) | 13 |
-| `W8` | 7 |
+| `W8` (incl. `W8 + W21`) | 7 |
 | `W0 spike` | 5 |
 | `W9` | 5 |
 | `W18` | 4 |
-| `W7` | 3 |
+| `W7` (incl. `W7 + W21`) | 3 |
 | `W20` | 3 |
 | `W1` | 2 |
 | `W10` | 2 |
@@ -355,7 +356,11 @@ line the W12 tick had overclaimed (vision caught it). **W20 audited the last
 headline flow, scrolling capture: Cancel/discard (HUD button + Esc + engine
 scroll.cancel, including cancels during the portal wait), the live done summary
 + Recent pickup + pattern filename, and scrollErrorText classification — the W4
-commands row had overclaimed scrolling_cancel.**
+commands row had overclaimed scrolling_cancel.** W21 re-audited OCR + upload:
+live OCR guards/result wording + Copy-disabled-until-text, upload moved OFF-THREAD
+(the W8 tick overclaimed "Uploading…" — curl blocked the UI up to 30 s), missing
+endpoint opens Settings, "Uploaded — link copied" wording; both workers now run
+their subprocesses WITHOUT the session lock (the toolbar locks it every frame).
 
 The single `pending` row is **Trim** — deliberately out of parity (the live v1.5.3
 has no trim) and gated on rostad's build-or-drop decision (`docs/gaps.md` A2).

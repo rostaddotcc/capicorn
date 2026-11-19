@@ -161,8 +161,10 @@ fn ocr_runs_off_thread_and_polls_the_result() {
         "the busy flag must clear once the worker answers"
     );
     assert!(
-        h.state().status.contains("OCR"),
-        "the result or its error must be reported: {}",
+        h.state().status.contains("Found")
+            || h.state().status.contains("No text found")
+            || h.state().status.contains("OCR failed"),
+        "the result or its error must be reported (W21 live wording): {}",
         h.state().status
     );
 }

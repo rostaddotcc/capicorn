@@ -995,6 +995,9 @@ pub struct SnagCraftApp {
     pub countdown: Option<Countdown>,
     /// Off-thread `ocr.run`: the worker sends the extracted text (or its error).
     ocr_rx: Option<mpsc::Receiver<Result<String, String>>>,
+    /// W21: off-thread upload — the worker sends the returned link (or error).
+    /// `Some` = an upload is in flight (one at a time).
+    upload_rx: Option<mpsc::Receiver<Result<String, String>>>,
     /// W15: stop-time timelapse encode worker result (native only; the web
     /// build has no ffmpeg and never arms a timelapse).
     timelapse_assemble_rx: Option<mpsc::Receiver<Result<TimelapseVideo, String>>>,
@@ -1147,6 +1150,7 @@ impl SnagCraftApp {
             film_scanned: false,
             countdown: None,
             ocr_rx: None,
+            upload_rx: None,
             timelapse_assemble_rx: None,
             pick: None,
             pick_rx: None,
@@ -2680,26 +2684,34 @@ impl SnagCraftApp {
         if self.ocr.busy {
             return; // one extraction at a time
         }
+        // W21: the live guard (app.ts:4151-4154).
+        if self.sess().doc().is_none() {
+            self.status = "Capture something first.".into();
+            return;
+        }
         let lang = self.selected_ocr_lang();
         self.ocr.open = true;
         self.ocr.busy = true;
+        self.ocr.text.clear(); // live clears the previous result on a new run
         self.status = format!("Reading text ({lang})…");
         self.redraw = true;
         let session = Arc::clone(&self.session);
         let (tx, rx) = mpsc::channel();
-        let params = serde_json::json!({ "lang": lang });
         let spawned = std::thread::Builder::new()
             .name("snagcraft-ocr".to_string())
             .spawn(move || {
-                let outcome = {
-                    let mut guard = session
+                // W21: render under a BRIEF lock, then run tesseract without
+                // it — the toolbar locks the session every frame, so holding
+                // the lock across the subprocess would freeze the editor.
+                let rendered = {
+                    let guard = session
                         .lock()
                         .unwrap_or_else(|poisoned| poisoned.into_inner());
-                    guard
-                        .dispatch("ocr.run", params)
-                        .map(|v| v["text"].as_str().unwrap_or_default().to_string())
-                        .map_err(|err| err.to_string())
+                    guard.render().map_err(|e| e.to_string())
                 };
+                let outcome = rendered.and_then(|img| {
+                    snagcraft_io::ocr::run_ocr(&img, &lang).map_err(|e| e.to_string())
+                });
                 let _ = tx.send(outcome);
             });
         if let Err(err) = spawned {
@@ -2720,31 +2732,38 @@ impl SnagCraftApp {
         let outcome = rx.try_recv();
         let pending = matches!(outcome, Err(std::sync::mpsc::TryRecvError::Empty));
         match outcome {
-            Ok(Ok(text)) => {
-                self.ocr.text = text;
-                self.ocr.busy = false;
-                self.ocr.open = true;
-                self.ocr_rx = None;
-                self.status = format!(
-                    "OCR extracted {} characters.",
-                    self.ocr.text.chars().count()
-                );
-            }
-            Ok(Err(err)) => {
-                self.ocr.busy = false;
-                self.ocr_rx = None;
-                self.status = format!("OCR: {err}");
-            }
+            Ok(outcome) => self.ocr_finished(outcome),
             Err(std::sync::mpsc::TryRecvError::Empty) => {}
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                self.ocr.busy = false;
-                self.ocr_rx = None;
-                self.status = "OCR: the worker stopped without a result.".into();
+                self.ocr_finished(Err("the worker stopped without a result".into()));
             }
         }
         if !pending {
             self.redraw = true;
         }
+    }
+
+    /// W21: an OCR result — the live wording (app.ts:4163-4175): an empty
+    /// extraction suggests another language, a non-empty one points at Copy.
+    pub fn ocr_finished(&mut self, outcome: Result<String, String>) {
+        self.ocr.busy = false;
+        self.ocr_rx = None;
+        match outcome {
+            Ok(text) => {
+                self.ocr.text = text;
+                self.ocr.open = true;
+                if self.ocr.text.is_empty() {
+                    self.status = "No text found in this capture — try another language.".into();
+                } else {
+                    self.status = format!(
+                        "Found {} characters — Copy puts them on the clipboard.",
+                        self.ocr.text.chars().count()
+                    );
+                }
+            }
+            Err(err) => self.status = format!("OCR failed: {err}"),
+        }
+        self.redraw = true;
     }
 
     /// Cached `ocr.available` (probing spawns tesseract, so once per session).
@@ -2780,14 +2799,19 @@ impl SnagCraftApp {
         }
     }
 
-    /// `upload.send`: POST the current image to the configured endpoint and copy
-    /// the link it replies with (File → Upload…).
+    /// W21: POST the current image to the configured endpoint off-thread and
+    /// copy the link it replies with (File → Upload…). The render happens under
+    /// a brief session lock; curl runs WITHOUT the lock so the editor stays
+    /// responsive through the up-to-30 s upload window (live awaits async).
     ///
     /// The endpoint is the user's own `settings.upload_url`; nothing is posted
     /// anywhere until they press the item. Native only: the web build has no
     /// curl and no file system to stage from.
     #[cfg(feature = "native")]
     pub fn upload_image_now(&mut self) {
+        if self.upload_rx.is_some() {
+            return; // one upload at a time
+        }
         if self.sess().doc().is_none() {
             self.status = "Nothing to upload — capture or open an image first.".into();
             return;
@@ -2795,22 +2819,78 @@ impl SnagCraftApp {
         let Some(endpoint) = self.upload_target() else {
             self.status =
                 format!("Set an upload URL in Settings — Export (e.g. {UPLOAD_URL_DEFAULT}).");
+            // W21: the live app opens the settings panel here (app.ts:4507).
+            self.settings_open = true;
             return;
         };
-        match self.exec("upload.send", serde_json::json!({ "endpoint": endpoint })) {
-            Ok(v) => {
-                let link = v["link"].as_str().unwrap_or_default().trim().to_string();
+        self.status = "Uploading…".into();
+        self.redraw = true;
+        let session = Arc::clone(&self.session);
+        let (tx, rx) = mpsc::channel();
+        let spawned = std::thread::Builder::new()
+            .name("snagcraft-upload".to_string())
+            .spawn(move || {
+                // Render + encode under a BRIEF lock, then run curl without it
+                // — the toolbar locks the session every frame, so a locked
+                // subprocess would freeze the whole editor.
+                let png = {
+                    let guard = session
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner());
+                    guard
+                        .render_watermarked(None)
+                        .map_err(|e| e.to_string())
+                        .and_then(|img| {
+                            snagcraft_io::encode(&img, snagcraft_io::ImageFormat::Png, 100)
+                                .map_err(|e| e.to_string())
+                        })
+                };
+                let outcome = png.and_then(|bytes| {
+                    snagcraft_io::upload::upload_image(&endpoint, &bytes).map_err(|e| e.to_string())
+                });
+                let _ = tx.send(outcome);
+            });
+        match spawned {
+            Ok(_) => self.upload_rx = Some(rx),
+            Err(err) => {
+                self.status = format!("Upload failed: cannot start the worker ({err})");
+            }
+        }
+    }
+
+    /// W21: collect the upload worker's result (poll_media, runs hidden too).
+    fn poll_upload(&mut self) {
+        let Some(rx) = self.upload_rx.as_ref() else {
+            return;
+        };
+        match rx.try_recv() {
+            Ok(outcome) => self.upload_finished(outcome),
+            Err(mpsc::TryRecvError::Empty) => {}
+            Err(mpsc::TryRecvError::Disconnected) => {
+                self.upload_finished(Err("the worker stopped without a result".into()));
+            }
+        }
+    }
+
+    /// W21: an upload result — the live wording (app.ts:4512-4521): the link
+    /// is copied and the status says so; an empty link is a failure.
+    pub fn upload_finished(&mut self, outcome: Result<String, String>) {
+        self.upload_rx = None;
+        match outcome {
+            Ok(link) => {
+                let link = link.trim().to_string();
                 if link.is_empty() {
                     self.status = "Upload failed: the endpoint returned no link.".into();
-                    return;
+                } else {
+                    if let Some(ctx) = &self.main_ctx {
+                        ctx.copy_text(link.clone());
+                    }
+                    self.status = format!("Uploaded — link copied: {link}");
                 }
-                if let Some(ctx) = &self.main_ctx {
-                    ctx.copy_text(link.clone());
-                }
-                self.status = format!("Uploaded: {link}");
             }
             Err(err) => self.status = format!("Upload failed: {err}"),
         }
+        self.redraw = true;
     }
 
     /// Show the compact countdown at `seconds` without starting a grab
@@ -2856,6 +2936,7 @@ impl SnagCraftApp {
     fn poll_media(&mut self) {
         self.poll_ocr();
         self.poll_pick();
+        self.poll_upload();
         self.poll_timelapse_assemble();
         if self.rec.armed {
             self.poll_record();
@@ -3136,8 +3217,12 @@ impl SnagCraftApp {
                     );
                 }
                 ui.horizontal(|ui| {
+                    // W21: live disables Copy until there is text (ocrCopyBtn).
                     if ui
-                        .add_enabled(!busy, egui::Button::new("Copy text"))
+                        .add_enabled(
+                            !busy && !self.ocr.text.is_empty(),
+                            egui::Button::new("Copy text"),
+                        )
                         .clicked()
                     {
                         copy = true;

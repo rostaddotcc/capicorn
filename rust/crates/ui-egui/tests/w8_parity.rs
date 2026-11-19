@@ -192,9 +192,18 @@ fn upload_menu_posts_the_image_and_copies_the_link() {
     h.get_by_label("Upload…").click();
     h.run_steps(2);
 
+    // W21: the upload runs off-thread — wait for the worker in wall time
+    // (the mock answers on a read-timeout probe, kittest steps alone don't).
+    for _ in 0..600 {
+        if !h.state().status.starts_with("Uploading") {
+            break;
+        }
+        h.run_steps(5);
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
     assert_eq!(
         h.state().status,
-        "Uploaded: https://example.com/i/abc.png",
+        "Uploaded — link copied: https://example.com/i/abc.png",
         "the returned link must become the status"
     );
     let request = server.join().expect("mock endpoint thread");
@@ -227,6 +236,14 @@ fn upload_menu_reports_an_endpoint_without_a_link() {
     h.get_by_label("Upload…").click();
     h.run_steps(2);
 
+    // W21: off-thread upload — wait for the worker in wall time.
+    for _ in 0..600 {
+        if !h.state().status.starts_with("Uploading") {
+            break;
+        }
+        h.run_steps(5);
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
     assert!(
         h.state().status.contains("Upload failed") && h.state().status.contains("no link"),
         "a linkless reply must error: {}",

@@ -4272,6 +4272,7 @@ dependencies = [
  "ashpd",
  "image",
  "pipewire",
+ "serde",
  "snagcraft-geom",
  "snagcraft-raster",
  "thiserror 2.0.21",

@@ -1190,6 +1190,10 @@ live pass + gates (trim/relicense/cutover/external post). NO releases published.
   multi-monitor GRAB needs a Windows run (rostad/CI). W25e (CI windows-latest) next.
 - Minor cosmetic note: the picker dialog has extra vertical whitespace below the
   last card (egui window sizing) — polish follow-up, not a defect.
+- Fresh W25 artifacts from committed f352897 (+lockfile 3180fbc): release binary
+  rebuilt, AppImage 14.01 MB launch-tested (exit 124, benign locked-GNOME noise
+  only) in rust/dist/w25/, CLI smoke 51 commands incl. capture.monitors +
+  capture.monitor. Delivered to rostad.
 
 ## Appendix — measured reality
 

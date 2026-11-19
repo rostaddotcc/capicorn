@@ -318,10 +318,17 @@ fn region_pick_drag_then_enter_dispatches_the_scroll_capture() {
     h.key_press(egui::Key::Enter);
     h.run_steps(2);
     assert_eq!(h.state().region_pick(), None, "Enter closes the picker");
+    // Enter must DISPATCH scroll.start. Proof is environment-robust: locally the
+    // portal hangs (armed stays true); on a CI runner with no desktop portal the
+    // grab fails fast with the screen-sharing message — which equally proves the
+    // dispatch ran. Accept armed, the armed/waiting status, or the portal error.
+    let status = h.state().status.clone();
     assert!(
-        h.state().scroll.armed || h.state().status.contains("Scrolling capture"),
-        "Enter must dispatch scroll.start: {}",
-        h.state().status
+        h.state().scroll.armed
+            || status.contains("Scrolling capture")
+            || status.contains("system picker")
+            || status.contains("Screen sharing"),
+        "Enter must dispatch scroll.start: {status}",
     );
 }
 

@@ -1049,6 +1049,9 @@ live pass + gates (trim/relicense/cutover/external post). NO releases published.
   runs), clippy/fmt clean incl. wasm target, layers legal, xtask wasm 10/10.
 - Docs: new parity row (film-item design, W22), recording-thumb row annotated,
   summary recounted (159 rows, 1 pending = Trim).
+- Fresh W22 artifacts from committed f16fc87: release binary rebuilt, AppImage
+  13.98 MB launch-tested (exit 124, benign locked-GNOME noise only) in
+  rust/dist/w22/, CLI smoke 49 commands. Delivered to rostad.
 - Awaiting rostad unchanged: KDE live pass, trim decision, relicense, cutover.
 
 ## Appendix — measured reality

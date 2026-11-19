@@ -1110,6 +1110,9 @@ live pass + gates (trim/relicense/cutover/external post). NO releases published.
   clippy/fmt clean incl. wasm target, layers legal, xtask wasm 10/10.
 - Docs: new close-guard-design parity row (W24), OCR-copy row → W4+W21+W24,
   summary recounted (160 rows, 1 pending = Trim).
+- Fresh W24 artifacts from committed 2ac40a7: release binary rebuilt, AppImage
+  13.99 MB launch-tested (exit 124, benign locked-GNOME noise only) in
+  rust/dist/w24/, CLI smoke 49 commands. Delivered to rostad.
 - Awaiting rostad unchanged: KDE live pass, trim decision, relicense, cutover.
 
 ## Appendix — measured reality

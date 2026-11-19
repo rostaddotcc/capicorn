@@ -970,8 +970,9 @@ live pass + gates (trim/relicense/cutover/external post). NO releases published.
   snapshot drift (the scroll HUD test is label-based).
 - Docs: parity §7 commands row split (W4 + W20), three new W20 rows, summary
   recounted (158 rows, 1 pending = Trim); README 49/25; gaps.md C1 25/49.
-- Fresh W20 artifacts from the committed state: release binary + AppImage
-  launch-tested (below). Delivered to rostad.
+- Fresh W20 artifacts from committed 01958c3: release binary rebuilt, AppImage
+  13.97 MB launch-tested (exit 124, benign locked-GNOME noise only) in
+  rust/dist/w20/, CLI smoke 49 commands incl. scroll.cancel. Delivered to rostad.
 - **All five headline flows now flow-audited** (capture/crop W2-era, recording
   W18, timelapse W15, save W19, scrolling W20). Awaiting rostad: KDE live pass,
   trim decision, relicense, cutover. Next wakes: rostad feedback, or deeper

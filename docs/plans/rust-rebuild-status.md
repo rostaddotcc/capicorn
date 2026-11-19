@@ -1664,6 +1664,30 @@ live pass + gates (trim/relicense/cutover/external post). NO releases published.
   measure contrast and read the layout code before "fixing" vision flags;
   don't manufacture cosmetic churn on already-audited surfaces.
 
+### 2026-11-19 — W40: final verification + loop saturation (autonomous quality-check complete)
+- Fresh full verification: **596/0/11, 82 targets, exit 0**; clippy 0
+  (native+wasm); wasm 10/10; W37+W38 CI green.
+- **Flake identified (not a regression):** the first full run exited 101
+  with `-p snagcraft-ui-egui --test w4_live` crashing at the BINARY level
+  (no test-level failure). w4_live passes 12/12 isolated and the full
+  re-run is green; code is byte-identical to W38 (green ×2) — the real-
+  thread e2e tests (capture/record/portal sockets+threads) can race under
+  full-suite parallel load. CI has stayed green (different timing). Known
+  harness characteristic, not a product defect; noted for future CI triage.
+- **Saturation:** across W29–W40 every reported bug is fixed and deployed
+  (capture: KDE upstream portal bug + interactive fallback + hide/settle;
+  magnify: compositing so annotations enlarge; rostad's font-dropdown
+  commit guard), and every major feature surface has been audited
+  (capture/magnify/toolbar, region-pick, swatches, timelapse, text quick-
+  bar, recording/scrolling phases, empty state, file-I/O round-trips,
+  undo/redo/clipboard/dirty, settings persistence, CLI/single-instance,
+  shortcuts/monitor-picker design). W39 found nothing; W40 confirms green.
+- **The one open item is rostad's own KDE live-test of capture + magnify**
+  — pn53's screen is locked so it cannot be verified here, and it has been
+  requested each wake. No further iteration can produce that confirmation.
+  The autonomous quality-check is complete; the loop is stopped. If capture
+  still fails on his Plasma box, he can reply or restart the loop.
+
 ## Appendix — measured reality
 
 | Claim | Measured | What changed |

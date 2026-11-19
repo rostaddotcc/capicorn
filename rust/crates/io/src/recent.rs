@@ -90,10 +90,59 @@ pub fn is_recent_image(path: &Path) -> bool {
 pub fn thumbnail(path: &Path, max_edge: u32) -> Option<Surface> {
     let max_edge = max_edge.clamp(1, MAX_THUMB_EDGE);
     let meta = std::fs::metadata(path).ok()?;
-    if !meta.is_file() || meta.len() > crate::MAX_INPUT_BYTES as u64 {
+    if !meta.is_file() {
+        return None;
+    }
+    // W28: video containers the image decoder can't read get a first-frame
+    // ffmpeg thumbnail (live `recording_thumb`). GIF stays on the image path —
+    // the decoder reads its first frame directly. No image byte cap on video:
+    // ffmpeg streams the file, it never loads it whole.
+    if is_video_container(path) {
+        return video_thumbnail(path, max_edge);
+    }
+    if meta.len() > crate::MAX_INPUT_BYTES as u64 {
         return None;
     }
     let img = crate::open(path).ok()?;
+    Some(downscale(&img, max_edge))
+}
+
+/// Video containers needing ffmpeg for a thumbnail (live `MEDIA_VIDEO_EXTS`
+/// minus gif, which the image decoder handles). Lowercase compare.
+const VIDEO_THUMB_EXTS: [&str; 4] = ["mp4", "webm", "mov", "mkv"];
+
+/// Whether a recent file is a video container that needs the off-thread ffmpeg
+/// thumbnail path (the UI uses this to route around the synchronous image load).
+pub fn is_video_container(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .map(|e| VIDEO_THUMB_EXTS.contains(&e.to_ascii_lowercase().as_str()))
+        .unwrap_or(false)
+}
+
+/// W28: first-frame thumbnail for a video recording — the live `recording_thumb`
+/// recipe (`src-tauri/src/commands.rs:534`): ffmpeg pipes a scaled PNG of frame 1
+/// (`-frames:v 1 -vf scale=W:-2`), decoded + downscaled here. Returns `None` when
+/// ffmpeg is absent or can't read the file (the tile falls back to the film
+/// placeholder). Slow (subprocess) — the caller runs it off the UI thread.
+pub fn video_thumbnail(path: &Path, max_edge: u32) -> Option<Surface> {
+    let max_edge = max_edge.clamp(1, MAX_THUMB_EDGE);
+    if !path.is_file() {
+        return None;
+    }
+    let out = std::process::Command::new("ffmpeg")
+        .args(["-hide_banner", "-loglevel", "error", "-y", "-i"])
+        .arg(path)
+        .args(["-frames:v", "1", "-vf"])
+        .arg(format!("scale={max_edge}:-2"))
+        .args(["-f", "image2pipe", "-vcodec", "png", "-"])
+        .stdin(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    if !out.status.success() || out.stdout.is_empty() {
+        return None;
+    }
+    let img = crate::decode(&out.stdout).ok()?;
     Some(downscale(&img, max_edge))
 }
 
@@ -308,5 +357,79 @@ mod tests {
             Some(ImageFormat::Png)
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// W28: video containers route to the ffmpeg path; images (incl. gif, whose
+    /// first frame the image decoder reads) stay on the synchronous path.
+    #[test]
+    fn is_video_container_routes_by_extension() {
+        for ext in ["mp4", "webm", "mov", "mkv", "MP4", "WebM"] {
+            assert!(
+                is_video_container(Path::new(&format!("clip.{ext}"))),
+                "{ext} is a video container"
+            );
+        }
+        for ext in ["png", "jpg", "jpeg", "webp", "gif", "bmp", "txt", ""] {
+            assert!(
+                !is_video_container(Path::new(&format!("shot.{ext}"))),
+                "{ext} is not a video container"
+            );
+        }
+    }
+
+    fn ffmpeg_present() -> bool {
+        std::process::Command::new("ffmpeg")
+            .arg("-version")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
+
+    /// W28: a real first-frame thumbnail from a synthetic clip (the live
+    /// `recording_thumb` recipe). Self-skips where ffmpeg is absent (e.g. the
+    /// Windows CI runner) — the extraction is only meaningful with the binary.
+    #[test]
+    fn video_thumbnail_extracts_a_first_frame() {
+        if !ffmpeg_present() {
+            return;
+        }
+        let dir = tmp_dir("vidthumb");
+        let clip = dir.join("clip.mp4");
+        // A 1-second solid-colour test clip, 64x48, 10 fps.
+        let made = std::process::Command::new("ffmpeg")
+            .args([
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+            ])
+            .arg("testsrc=size=64x48:rate=10:duration=1")
+            .args(["-c:v", "libx264", "-pix_fmt", "yuv420p"])
+            .arg(&clip)
+            .stdin(std::process::Stdio::null())
+            .status()
+            .expect("spawn ffmpeg fixture");
+        assert!(made.success(), "fixture clip must encode");
+
+        let thumb = video_thumbnail(&clip, 64).expect("a first frame");
+        assert!(thumb.width() > 0 && thumb.height() > 0);
+        assert!(thumb.width() <= 64, "scaled to the thumb edge");
+        // The public dispatcher routes the mp4 through the same path.
+        let via_dispatch = thumbnail(&clip, 64).expect("thumbnail dispatches video");
+        assert!(via_dispatch.width() > 0);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// W28: an unreadable / absent video yields None (the tile keeps its film
+    /// placeholder), never a panic.
+    #[test]
+    fn video_thumbnail_of_a_missing_file_is_none() {
+        assert!(video_thumbnail(Path::new("/no/such/clip.mp4"), 64).is_none());
     }
 }

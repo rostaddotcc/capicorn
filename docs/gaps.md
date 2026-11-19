@@ -92,6 +92,17 @@ verified, WASM web app browser-verified (status log, W5 wake #50).
 
 ### B2 — Recent-media rail (missing entirely, video thumbnails included)
 
+> **W22 + W28 update (2026-11-19): CLOSED.** W22 built the Recent rail as the live
+> vertical film-strip (`filmstrip`, `RecentItem`): newest-first scan of the save
+> folder (cap `RECENT_LIMIT`), image thumbnails decoded lazily, format badge + time
+> caption, accent ring on the loaded capture (`recent_active`), hover lift. W28
+> added the **video first-frame thumbnail** (live `recording_thumb`,
+> `commands.rs:534`): `io::recent::video_thumbnail` shells ffmpeg for frame 1
+> (`-frames:v 1 -vf scale=W:-2` → PNG), routed off the UI thread by a persistent
+> worker (`request_video_thumb`/`poll_video_thumbs`), limited to the newest 8 videos
+> (live `MEDIA_VIDEO_THUMBS`); GIF stays on the image decoder. kittest gates: a real
+> synthetic clip gains a first-frame texture; images still load synchronously.
+
 - **What:** the rebuild has no recent-captures strip. The live app has a newest-first
   rail (cap 12) that scans the save/recording folders, shows image thumbnails, and
   opens recordings in the OS player; it also renders a recording thumbnail
@@ -104,6 +115,11 @@ verified, WASM web app browser-verified (status log, W5 wake #50).
   the Recent rail" — both still `pending`.
 
 ### B3 — Copy-diagnostics button
+
+> **W11 update (2026-11-19): CLOSED.** Settings → Troubleshooting → "Copy
+> diagnostics" (`copy_diagnostics`, engine `diagnostics_report`) copies a
+> versions/backend/portal/OCR status blob to the clipboard for bug reports;
+> kittest gate `copy_diagnostics_reports_a_status`.
 
 - **What:** there is no one-click "copy diagnostics" action (versions, backend
   availability, portal/tray/OCR status) for bug reports.

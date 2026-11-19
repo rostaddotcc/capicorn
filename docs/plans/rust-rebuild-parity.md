@@ -162,7 +162,7 @@ Effects are applied to the **image layer at export resolution** (scene px × exp
 | Stop flow: "Finishing the recording…" → "Recording saved: {path}" + immediate Recent-rail pickup; an empty path reports "no file was written" | `app.ts:2497-2515` (`stopRecording`), `:5313-5321` (state mirror) | W18 |
 | Start flow: waiting status names format/region; success "Recording — click Stop when you're done."; errors classified (neutral cancel / permission-recovery hint / portal-log pointer); a capture in flight blocks a new take | `app.ts:2402-2405`, `:2439-2444`, `:2475`, `:2481-2494` | W18 |
 | HUD "Region" scope tag on region takes (absent on whole-screen) | `app.ts:2308-2310` (`paintRecording` / `recScopeEl`) | W18 |
-| Recording thumbnails for the Recent rail | `commands.rs:533-545` (`recording_thumb`) | W9 (film-icon placeholder; W22 painter-drawn film frame + play triangle — the bundled fonts have no ▶ glyph) |
+| Recording thumbnails for the Recent rail | `commands.rs:533-545` (`recording_thumb`) | W9 + W28 (real first-frame ffmpeg thumbnail off-thread, newest 8 videos = live `MEDIA_VIDEO_THUMBS`; unreadable/absent ffmpeg keeps the W22 painter-drawn film placeholder) |
 | Copy diagnostics (portal + per-take `.rec.log`) to clipboard | `commands.rs:457-501`, `settings.ts` troubleshooting button `:996-1004` | W11 |
 | **Trim** a finished take | *not implemented in v1.5.3* — no trim command or UI (grep `trim` in `recording.rs`/`app.ts` is string-truncation only) | pending |
 | ffmpeg is a hard runtime dependency; absence is reported as an actionable message | `timelapse.rs:17-18` (same convention for recording), README:128 | W12 |

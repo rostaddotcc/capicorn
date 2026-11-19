@@ -1059,6 +1059,15 @@ pub struct SnagCraftApp {
     /// W16: in-flight browser clipboard op (ClipboardItem write/read).
     #[cfg(not(feature = "native"))]
     web_clipboard_rx: Option<mpsc::Receiver<Result<WebClipboard, String>>>,
+    /// W28: off-thread video-thumbnail extraction for the Recent rail (ffmpeg
+    /// first frame, live `recording_thumb`). The worker decodes to a Surface;
+    /// the UI thread loads the texture. `pending` guards one request per file.
+    #[cfg(feature = "native")]
+    video_thumb_tx: Option<mpsc::Sender<(PathBuf, String)>>,
+    #[cfg(feature = "native")]
+    video_thumb_rx: Option<mpsc::Receiver<(PathBuf, Option<Surface>)>>,
+    #[cfg(feature = "native")]
+    video_thumb_pending: std::collections::HashSet<PathBuf>,
 }
 
 /// W16: the outcome of an async browser clipboard operation.
@@ -1214,6 +1223,12 @@ impl SnagCraftApp {
             drop_rx: None,
             #[cfg(not(feature = "native"))]
             web_clipboard_rx: None,
+            #[cfg(feature = "native")]
+            video_thumb_tx: None,
+            #[cfg(feature = "native")]
+            video_thumb_rx: None,
+            #[cfg(feature = "native")]
+            video_thumb_pending: std::collections::HashSet::new(),
         }
     }
 
@@ -2102,6 +2117,70 @@ impl SnagCraftApp {
     /// Number of recents the chip's count badge shows.
     pub fn recent_count(&self) -> usize {
         self.recent.len()
+    }
+
+    /// W28: request an off-thread first-frame thumbnail for a video recent item
+    /// (live `recording_thumb`). Lazily spawns one persistent worker; `pending`
+    /// guards a single in-flight request per file. Images stay on the fast
+    /// synchronous `load_thumb` path — only video containers come here.
+    #[cfg(feature = "native")]
+    pub fn request_video_thumb(&mut self, path: PathBuf, name: String) {
+        if self.video_thumb_pending.contains(&path) {
+            return;
+        }
+        if self.video_thumb_tx.is_none() {
+            let (tx, rx) = mpsc::channel::<(PathBuf, String)>();
+            let (out_tx, out_rx) = mpsc::channel::<(PathBuf, Option<Surface>)>();
+            self.video_thumb_tx = Some(tx);
+            self.video_thumb_rx = Some(out_rx);
+            std::thread::spawn(move || {
+                while let Ok((p, _name)) = rx.recv() {
+                    let surf = snagcraft_io::recent::video_thumbnail(&p, 64);
+                    if out_tx.send((p, surf)).is_err() {
+                        break;
+                    }
+                }
+            });
+        }
+        self.video_thumb_pending.insert(path.clone());
+        if let Some(tx) = &self.video_thumb_tx {
+            let _ = tx.send((path, name));
+        }
+    }
+
+    /// W28: drain finished video thumbnails, load their textures and set the
+    /// recent tiles. A `None` surface (ffmpeg absent/unreadable) leaves the film
+    /// placeholder. Called from the frame loop alongside the other workers.
+    #[cfg(feature = "native")]
+    pub fn poll_video_thumbs(&mut self, ctx: &egui::Context) {
+        let mut done = Vec::new();
+        if let Some(rx) = &self.video_thumb_rx {
+            while let Ok(item) = rx.try_recv() {
+                done.push(item);
+            }
+        }
+        for (path, surf) in done {
+            self.video_thumb_pending.remove(&path);
+            if let Some(surf) = surf {
+                let color = egui::ColorImage::from_rgba_unmultiplied(
+                    [surf.width() as usize, surf.height() as usize],
+                    surf.as_raw(),
+                );
+                let name = path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_default();
+                let tex = ctx.load_texture(
+                    format!("recent-{name}"),
+                    color,
+                    egui::TextureOptions::LINEAR,
+                );
+                if let Some(item) = self.recent.iter_mut().find(|r| r.path == path) {
+                    item.thumb = Some(tex);
+                }
+            }
+            self.redraw = true;
+        }
     }
 
     /// Merge the save folder's images into the strip, once per session. The
@@ -4395,6 +4474,9 @@ impl SnagCraftApp {
         // The live layer keeps running while hidden: a recording start/stop or
         // a scrolling capture must land even with no main window painting.
         self.poll_media();
+        // W28: land finished off-thread video thumbnails onto the Recent tiles.
+        #[cfg(feature = "native")]
+        self.poll_video_thumbs(ctx);
         if self.recording()
             || self.scroll.armed
             || self.timelapse.armed
@@ -6944,11 +7026,34 @@ fn filmstrip(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
                 .show(ui, |ui| {
                     ui.spacing_mut().item_spacing.x = 8.0;
                     ui.horizontal(|ui| {
+                        // W28: live MEDIA_VIDEO_THUMBS — only the newest 8 video
+                        // items get an ffmpeg thumbnail; the rest keep the film
+                        // placeholder. Count videos by position (newest first).
+                        let mut video_seen = 0usize;
                         for index in 0..app.recent.len() {
+                            let item_path = app.recent[index].path.clone();
+                            #[cfg(feature = "native")]
+                            let is_video = snagcraft_io::recent::is_video_container(&item_path);
+                            #[cfg(not(feature = "native"))]
+                            let is_video = false;
+                            if is_video {
+                                video_seen += 1;
+                            }
                             if app.recent[index].thumb.is_none() {
                                 let path = app.recent[index].path.clone();
                                 let name = app.recent[index].name.clone();
-                                app.recent[index].thumb = load_thumb(&ctx, &path, &name);
+                                #[cfg(feature = "native")]
+                                if is_video {
+                                    if video_seen <= 8 {
+                                        app.request_video_thumb(path, name);
+                                    }
+                                } else {
+                                    app.recent[index].thumb = load_thumb(&ctx, &path, &name);
+                                }
+                                #[cfg(not(feature = "native"))]
+                                {
+                                    app.recent[index].thumb = load_thumb(&ctx, &path, &name);
+                                }
                             }
                             // W22: the live vertical film-item (style.css
                             // :3411-3490) — thumbnail on top, format badge +
@@ -7108,6 +7213,9 @@ pub fn app_ui(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
     app.poll_web_clipboard();
     app.poll_capture();
     app.poll_media();
+    // W28: land finished off-thread video thumbnails onto the Recent tiles.
+    #[cfg(feature = "native")]
+    app.poll_video_thumbs(&ctx);
     app.scan_recent_folder();
     if app.recording()
         || app.scroll.armed

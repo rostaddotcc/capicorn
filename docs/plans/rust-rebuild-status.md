@@ -1561,6 +1561,27 @@ live pass + gates (trim/relicense/cutover/external post). NO releases published.
   the armed/active phase split; timelapse needs no picker phase (its handle
   exists at dispatch, Stop works immediately).
 
+### 2026-11-19 — W36: empty-state card at live parity + OCR/export sanity walk
+- **Design gap found:** the no-document canvas was a bare top-left label
+  ("No document — Capture or Open to begin."); live shows a centered card
+  (style.css:652-730, app.ts `#empty`): 44×44 bordered icon mark, "No
+  capture yet" title, the PrintScreen guidance with kbd chips, and the
+  auto-save note. Implemented in egui: painter viewfinder mark, LayoutJob
+  guidance with monospace key sections on faint backing (kbd-chip look),
+  centered column, theme-aware; web variant says drop-a-file/Open instead
+  of PrintScreen (desktop-only hotkeys).
+- **U+2192 (→) is ALSO missing from the bundled fonts** (kittest panicked;
+  the app would tofu) — the note uses ASCII "Settings > General". Added to
+  the missing-glyph list alongside ⚙/▶/📋/U+2212.
+- OCR/export sanity walk: `doc.export` renders watermarked + saves with
+  format/quality (W4 payload gate), OCR lang/available/languages + the W21
+  off-thread worker all sound — no new gaps.
+- 2 new gates (w36_empty_state light+dark snapshots, vision-verified:
+  centered, readable, chips distinct, no tofu/clipping in either theme).
+  591/0/11 (three runs incl. post-refactor), clippy/fmt clean both targets
+  (web-only bindings moved into the native cfg block), wasm 10/10.
+- W35 CI fully green; the apt-mirrors.txt fix run (8fac16d) in progress.
+
 ## Appendix — measured reality
 
 | Claim | Measured | What changed |

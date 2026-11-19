@@ -7864,7 +7864,7 @@ pub fn app_ui(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
             }
             let avail = ui.available_rect_before_wrap();
             let Some((iw, ih)) = app.sess().doc().map(|d| (d.size.w, d.size.h)) else {
-                ui.label("No document — Capture or Open to begin.");
+                empty_state(ui, avail);
                 return;
             };
             if iw == 0 || ih == 0 {
@@ -8735,6 +8735,94 @@ pub fn app_ui(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
     }
+}
+
+/// W36: the live empty-state card (style.css:652-730, app.ts `#empty`) —
+/// icon mark, "No capture yet", the PrintScreen guidance with key chips and
+/// the auto-save note, centered on the canvas instead of a bare label.
+fn empty_state(ui: &mut egui::Ui, avail: Rect) {
+    let fg = pal_fg(ui);
+    let muted = pal_muted(ui);
+    let border = pal_border(ui);
+    let surface = pal_surface(ui);
+    let col = Rect::from_center_size(avail.center(), vec2(340.0, 200.0));
+    ui.scope_builder(egui::UiBuilder::new().max_rect(col), |ui| {
+        ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
+            ui.spacing_mut().item_spacing = vec2(0.0, 2.0);
+            // Icon mark: 44×44 bordered rounded square, viewfinder glyph.
+            let (mark, _) = ui.allocate_exact_size(vec2(44.0, 44.0), Sense::hover());
+            ui.painter()
+                .rect_filled(mark, CornerRadius::same(8), surface);
+            ui.painter().rect_stroke(
+                mark,
+                CornerRadius::same(8),
+                Stroke::new(1.0, border),
+                StrokeKind::Inside,
+            );
+            let inner = mark.shrink(11.0);
+            ui.painter().rect_stroke(
+                inner,
+                CornerRadius::same(3),
+                Stroke::new(1.6, muted),
+                StrokeKind::Inside,
+            );
+            ui.painter().circle_filled(inner.center(), 3.0, muted);
+            ui.add_space(8.0);
+            ui.label(
+                egui::RichText::new("No capture yet")
+                    .size(14.5)
+                    .strong()
+                    .color(fg),
+            );
+            // Guidance with kbd-style key chips (monospace + faint backing).
+            let body = egui::TextFormat {
+                font_id: egui::FontId::proportional(12.5),
+                color: muted,
+                ..Default::default()
+            };
+            let mut job = egui::text::LayoutJob::default();
+            #[cfg(feature = "native")]
+            {
+                let chip_bg = ui.visuals().faint_bg_color;
+                let key = egui::TextFormat {
+                    font_id: egui::FontId::monospace(11.5),
+                    color: fg,
+                    background: chip_bg,
+                    ..Default::default()
+                };
+                let strong = egui::TextFormat {
+                    font_id: egui::FontId::proportional(12.5),
+                    color: fg,
+                    ..Default::default()
+                };
+                job.append("Press ", 0.0, body.clone());
+                job.append("PrintScreen", 0.0, key.clone());
+                job.append(" for the full screen, ", 0.0, body.clone());
+                job.append("Shift+PrintScreen", 0.0, key.clone());
+                job.append(" for a region — or pick a mode from ", 0.0, body.clone());
+                job.append("Capture", 0.0, strong);
+                job.append(".", 0.0, body.clone());
+            }
+            #[cfg(not(feature = "native"))]
+            {
+                job.append(
+                    "Drop an image file here to annotate it — or press Open.",
+                    0.0,
+                    body.clone(),
+                );
+            }
+            job.wrap.max_width = 300.0;
+            job.halign = egui::Align::Center;
+            ui.add(egui::Label::new(job).selectable(false));
+            ui.add_space(8.0);
+            #[cfg(feature = "native")]
+            // ASCII ">": the bundled fonts lack U+2192 (kittest panics).
+            let note = "Captures are saved to your save folder automatically — switch that off in Settings > General.";
+            #[cfg(not(feature = "native"))]
+            let note = "Use Save to download an edited copy.";
+            ui.label(egui::RichText::new(note).size(11.5).color(muted));
+        });
+    });
 }
 
 /// Darken `full` everywhere except `hole` (spotlight/crop previews).

@@ -228,7 +228,9 @@ pub fn capture_monitor_blocking() -> Result<Surface, CaptureError> {
 /// Blocking wrapper for callers without an async runtime (CLI, egui event loop).
 #[cfg(target_os = "linux")]
 pub fn capture_full_blocking() -> Result<Surface, CaptureError> {
-    let runtime = tokio::runtime::Builder::new_current_thread()
+    // W42: multi-thread so the interactive-fallback picker wait keeps zbus
+    // polled (current-thread can stall the socket task; see recording/session.rs).
+    let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .map_err(|err| CaptureError::Io(format!("cannot start a tokio runtime: {err}")))?;

@@ -678,7 +678,9 @@ fn session(
     size_tx: mpsc::SyncSender<(i32, i32)>,
     sources: SourceType,
 ) {
-    let runtime = match tokio::runtime::Builder::new_current_thread()
+    // W42: multi-thread (see recording/session.rs) — keep zbus polled through
+    // the picker wait so the KDE share dialog is not dismissed.
+    let runtime = match tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
     {

@@ -1731,6 +1731,42 @@ live pass + gates (trim/relicense/cutover/external post). NO releases published.
   the missing-picker clue ("ingen picker som i tauri") was the decisive evidence.
   Reuse the proven PipeWire machinery rather than re-porting fiddly Tauri code.
 
+### 2026-11-19 — W42: KDE picker never appears — portal runtimes switched to multi-thread (candidate fix)
+- **rostad live-verified on KDE (CachyOS), post-reboot:** Tauri capture/recording
+  WORK, Rust does NOT — same healthy portal. So it is a real Rust app bug, not
+  the environment (corrects the W41 "wedged portal" diagnosis for his box).
+  Symptom: the app waits at "choose a screen…" but the OS ScreenCast picker
+  dialog never appears (or flashes and vanishes).
+- **Research (not blind):** ashpd docs + dir_picker#33 + Auto-Clicker#78 document
+  that the KDE Wayland picker is sensitive to parent_window placement and to the
+  D-Bus connection staying polled; rustdesk#14839 reports the exact "picker
+  flashes then dismisses itself" symptom when the portal client stalls. zbus
+  docs warn about runtime/threading deadlocks. The decisive Tauri-vs-Rust
+  difference: **Tauri runs ashpd in a persistent MULTI-THREAD tokio runtime; the
+  Rust port deliberately used CURRENT-THREAD** (recording/session.rs,
+  scrolling/source.rs, capture_full_blocking). A current-thread runtime can
+  starve zbus's socket task during the long picker wait → the portal sees the
+  client stall and dismisses the share dialog.
+- **Fix (candidate):** switched all three portal runtimes to
+  `Builder::new_multi_thread()` — matching the working Tauri edition and ashpd's
+  own examples. Verified the multi-thread connection still reaches the portal
+  on pn53 (request sent; headless grab times out as expected — pn53 has 0
+  monitors, confirmed via Mutter DisplayConfig + all DRM disconnected, so it
+  cannot be a live capture test bed).
+- Also: pn53 was unlocked without a password (lock-enabled=false + gdm autologin
+  restart) and vkms loaded — but headless means no live capture there. Revert
+  lock/vkms when done.
+- Re-blessed w27_settings_capture: the only diff was the scrollbar thumb
+  (overlay-scrollbar fade timing), content pixel-identical — pre-existing,
+  unrelated to W42 (confirmed by stashing the runtime change).
+- 600/0/11, clippy clean. **Live KDE verification of the picker still needed**
+  (rostad). If the picker still fails, the post-reboot portal log
+  (~/.cache/snagcraft-portal.log) pinpoints whether Start is reached.
+- **Lesson:** "works in Tauri, not in Rust" with identical ashpd calls → diff the
+  RUNTIME and connection lifecycle, not just the portal calls. Research working
+  examples + upstream symptom reports before guessing; current-thread tokio +
+  zbus long picker waits are a known fragile combo.
+
 ## Appendix — measured reality
 
 | Claim | Measured | What changed |

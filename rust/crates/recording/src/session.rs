@@ -50,10 +50,12 @@ fn drive(
     stop: &Arc<AtomicBool>,
     paused: &Arc<AtomicBool>,
 ) -> Result<(), RecordingError> {
-    // Deliberately not multi-thread: zbus only needs *some* runtime to spawn its
-    // socket task on, and `drive_async` stays inside `block_on` until the take
-    // ends, so that task keeps running.
-    let runtime = tokio::runtime::Builder::new_current_thread()
+    // W42: multi-thread, matching the working Tauri edition and ashpd's own
+    // examples. A current-thread runtime can starve zbus's socket task during
+    // the long picker wait, so the portal sees the client stall and dismisses
+    // the KDE share dialog (the "picker flashes then vanishes" symptom). Worker
+    // threads keep the connection polled no matter what the main task awaits.
+    let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .map_err(|error| RecordingError::Io(format!("cannot start the tokio runtime: {error}")))?;

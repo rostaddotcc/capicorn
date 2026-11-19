@@ -2840,7 +2840,7 @@ impl SnagCraftApp {
                     total_height: 0,
                     output: Some(path.display().to_string()),
                 };
-                self.status = "Scrolling capture — scroll slowly, Enter or Stop ends it.".into();
+                self.status = "Starting scrolling capture — choose a screen or window…".into();
                 self.redraw = true;
             }
             Err(err) => self.status = scroll_error_status(&err),
@@ -2849,6 +2849,14 @@ impl SnagCraftApp {
 
     /// Enter / Stop: stitch what was captured and open it in the editor.
     pub fn stop_scrolling(&mut self) {
+        // W35: during the starting phase the OS picker owns the capture —
+        // there is nothing to stitch yet (Cancel works via the engine's
+        // pending-cancel; Stop would finalise nothing).
+        if self.scroll.armed && !self.scroll.active {
+            self.status =
+                "The scrolling capture hasn't started — answer or cancel the system picker.".into();
+            return;
+        }
         match self.exec("scroll.stop", serde_json::json!({})) {
             Ok(_) => self.status = "Finishing the scrolling capture…".into(),
             Err(err) => self.status = format!("Scroll stop: {err}"),
@@ -6967,15 +6975,26 @@ fn media_hud(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
                     );
                 }
                 if scrolling {
-                    ui.label(
-                        hud_text(format!(
-                            "Scroll slowly — captured {} px, {} frames. Enter or Stop to finish.",
-                            app.scroll.total_height, app.scroll.index
-                        ))
-                        .color(pal_fg(ui)),
-                    );
-                    if ui.button("Stop scroll").clicked() {
-                        app.stop_scrolling();
+                    // W35: the starting phase (portal picker open) captures
+                    // nothing yet — no "scroll slowly" guidance, no Stop
+                    // (nothing to stitch). Cancel works even now: the engine
+                    // remembers it and applies it when the handle lands.
+                    if app.scroll.active {
+                        ui.label(
+                            hud_text(format!(
+                                "Scroll slowly — captured {} px, {} frames. Enter or Stop to finish.",
+                                app.scroll.total_height, app.scroll.index
+                            ))
+                            .color(pal_fg(ui)),
+                        );
+                        if ui.button("Stop scroll").clicked() {
+                            app.stop_scrolling();
+                        }
+                    } else {
+                        ui.label(
+                            hud_text("Starting scrolling capture — answer the system picker…")
+                                .color(pal_fg(ui)),
+                        );
                     }
                     // W20: the live card's Cancel — discard, write nothing.
                     if ui

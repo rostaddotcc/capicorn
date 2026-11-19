@@ -185,6 +185,7 @@ Effects are applied to the **image layer at export resolution** (scene px × exp
 | Sub-modules: frame alignment, stitch accumulation, source/cast, capture | `scrolling/align.rs`, `scrolling/stitcher.rs`, `scrolling/source.rs`, `scrolling/cap.rs` (`stitcher.rs:183`) | W4 |
 | UI: freeze, select the region, then hand the wheel back to the user; Capture → Scrolling mode | `app.ts:2719`, mode `app.ts:36` | W4 |
 | Cancel discards the partial scroll — HUD Cancel button + Esc, nothing written; a cancel during the portal wait applies when the handle lands | `app.ts:2757-2763` (`scrolling_cancel`) | W20 |
+| **Starting phase owns no Stop** — while the portal picker is open nothing is captured: the HUD says "Starting scrolling capture — answer the system picker…", no "scroll slowly" guidance, no Stop (nothing to stitch); Cancel stays (pending-cancel). The scroll guidance + Stop appear on the `started` event | live `runScrollingCapture` awaits the picker inside `scrolling_start` before the "running" status (`app.ts:2732-2752`) | W35 (same phase split as W34 recording; `stop_scrolling` during starting explains the picker; engine seam `seed_scroll_starting`) |
 | Done summary "Scrolling capture: W × H, N frames · saved {filename}" + immediate Recent pickup; the result is saved under the normal capture filename pattern (deduped) | `app.ts:2770-2786` (`writeImage` + `addRecent`) | W20 |
 | Error classification: locked-screen, 40 000 px height-cap and screen-sharing-refusal recovery hints | `app.ts:2586-2599` (`scrollErrorText`) | W20 |
 

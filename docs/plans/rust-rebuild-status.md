@@ -1537,6 +1537,30 @@ live pass + gates (trim/relicense/cutover/external post). NO releases published.
   where controls lie; and kittest state injection must satisfy the poll
   loops' consistency checks (engine + UI sides), not just the draw flags.
 
+### 2026-11-19 — W35: scrolling flow walked — same starting-phase split as W34
+- **Walked region-pick→start→HUD→stop/cancel→done→Recent against the live
+  anchors** (app.ts:2719-2815, scrolling/): the stitch/align pipeline, the
+  40 000 px height-cap wording, the done summary + Recent pickup, and the
+  W20 pending-cancel (a Cancel during the portal wait applies when the
+  handle lands) are all sound.
+- **Same bug class as W34, fixed the same way:** the HUD said "Scroll
+  slowly — captured 0 px, 0 frames" and offered **Stop scroll** while the
+  picker was still open (nothing captured, nothing to stitch; `scroll.stop`
+  returns stopped:false but the UI claimed "Finishing…"). Now the starting
+  phase says "Starting scrolling capture — answer the system picker…" with
+  **Cancel only** (Cancel genuinely works via the engine's pending-cancel);
+  the scroll guidance + Stop appear on the `started` event. `start_scrolling`
+  status now names the picker phase; `stop_scrolling` during starting
+  explains it instead of claiming "Finishing…".
+- Engine seam `seed_scroll_starting` (same idiom as W34's record seam) so
+  gates hold the armed state past poll_scroll's running-fallback.
+- 4 new gates (w35_scroll_start): starting HUD (Cancel not Stop, no scroll
+  guidance), honest stop, cancel clears, active scroll keeps Stop. w20
+  re-passes. 589/0/11 twice serial, clippy/fmt clean both targets, wasm 10/10.
+- All three media flows (record W34, scroll W35, timelapse W31) now respect
+  the armed/active phase split; timelapse needs no picker phase (its handle
+  exists at dispatch, Stop works immediately).
+
 ## Appendix — measured reality
 
 | Claim | Measured | What changed |

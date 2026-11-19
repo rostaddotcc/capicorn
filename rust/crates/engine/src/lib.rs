@@ -227,6 +227,16 @@ impl Session {
         std::mem::forget(tx);
     }
 
+    /// Test seam: the scrolling-capture picker phase, same idiom as
+    /// [`Self::seed_record_starting`] — `scroll.poll` reports `running` so
+    /// the UI's armed state survives the poll's consistency fallback.
+    #[cfg(feature = "native")]
+    pub fn seed_scroll_starting(&mut self) {
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.scroll_start_rx = Some(rx);
+        std::mem::forget(tx);
+    }
+
     pub fn dispatch(&mut self, id: &str, params: Value) -> Result<Value, CommandError> {
         let spec = registry().into_iter().find(|c| c.id == id);
         let result = match spec {

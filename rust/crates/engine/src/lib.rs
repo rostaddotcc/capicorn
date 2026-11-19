@@ -97,6 +97,10 @@ pub struct Session {
             Result<snagcraft_capture::scrolling::ScrollHandle, snagcraft_capture::CaptureError>,
         >,
     >,
+    /// W20: a cancel arrived while the portal was still opening — apply it the
+    /// moment the handle lands (the live card can cancel during the cast too).
+    #[cfg(feature = "native")]
+    scroll_cancel_pending: bool,
     /// Running recording (W4a). spawn_recording blocks through the share dialog,
     /// so it runs on a thread; the handle arrives via record_start_rx.
     #[cfg(feature = "native")]
@@ -144,6 +148,8 @@ impl Session {
             scroll_rx: None,
             #[cfg(feature = "native")]
             scroll_start_rx: None,
+            #[cfg(feature = "native")]
+            scroll_cancel_pending: false,
             #[cfg(feature = "native")]
             record: None,
             #[cfg(feature = "native")]
@@ -1022,15 +1028,43 @@ fn cmd_scroll_stop(s: &mut Session, _p: Value) -> Result<Value, CommandError> {
     }
 }
 
+/// W20: `scroll.cancel` — discard the partial scroll (the live card's Cancel,
+/// `scrolling_cancel`). While the portal is still opening there is no handle
+/// yet; the cancel is remembered and applied the moment one lands.
+#[cfg(feature = "native")]
+fn cmd_scroll_cancel(s: &mut Session, _p: Value) -> Result<Value, CommandError> {
+    match s.scroll.take() {
+        Some(h) => {
+            h.cancel(); // discards: no stitch, no file, then Cancelled
+            Ok(json!({"cancelled": true}))
+        }
+        None => {
+            let starting = s.scroll_start_rx.is_some();
+            if starting {
+                s.scroll_cancel_pending = true;
+            }
+            Ok(json!({"cancelled": starting, "starting": starting}))
+        }
+    }
+}
+
 #[cfg(feature = "native")]
 fn cmd_scroll_poll(s: &mut Session, _p: Value) -> Result<Value, CommandError> {
     let mut events = Vec::new();
     if let Some(hrx) = &s.scroll_start_rx {
         match hrx.try_recv() {
             Ok(Ok(handle)) => {
-                s.scroll = Some(handle);
                 s.scroll_start_rx = None;
-                events.push(json!({"type": "started"}));
+                // W20: a cancel that arrived during the portal wait applies now.
+                if s.scroll_cancel_pending {
+                    s.scroll_cancel_pending = false;
+                    s.scroll_rx = None;
+                    handle.cancel();
+                    events.push(json!({"type": "cancelled"}));
+                } else {
+                    s.scroll = Some(handle);
+                    events.push(json!({"type": "started"}));
+                }
             }
             Ok(Err(e)) => {
                 s.scroll_start_rx = None;
@@ -1067,6 +1101,10 @@ fn cmd_scroll_poll(s: &mut Session, _p: Value) -> Result<Value, CommandError> {
                 snagcraft_capture::scrolling::ScrollEvent::Stopped => {
                     s.scroll = None;
                     json!({"type": "stopped"})
+                }
+                snagcraft_capture::scrolling::ScrollEvent::Cancelled => {
+                    s.scroll = None;
+                    json!({"type": "cancelled"})
                 }
             };
             events.push(j);
@@ -1710,6 +1748,13 @@ pub fn registry() -> Vec<CommandSpec> {
             label: "Stop scrolling capture (stitch + save)",
             params_doc: "{}",
             run: cmd_scroll_stop,
+        },
+        #[cfg(feature = "native")]
+        CommandSpec {
+            id: "scroll.cancel",
+            label: "Cancel scrolling capture (discard)",
+            params_doc: "{}",
+            run: cmd_scroll_cancel,
         },
         #[cfg(feature = "native")]
         CommandSpec {
@@ -2667,6 +2712,30 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 
+    /// W20: `scroll.cancel` is a graceful no-op with no run, and remembers the
+    /// cancel while the portal is still opening (applied when the handle lands).
+    #[test]
+    fn scroll_cancel_headless() {
+        let mut s = Session::new();
+        let r = s.dispatch("scroll.cancel", json!({})).unwrap();
+        assert_eq!(r["cancelled"], false);
+        assert_eq!(r["starting"], false);
+
+        let dir = std::env::temp_dir().join("snagcraft-scroll-cancel-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let out = dir.join("scroll.png");
+        s.dispatch(
+            "scroll.start",
+            json!({"region": {"x": 0.0, "y": 0.0, "w": 200.0, "h": 200.0}, "output": out.to_str().unwrap()}),
+        )
+        .unwrap();
+        // Handle not arrived yet (portal wait): the cancel is pending.
+        let r = s.dispatch("scroll.cancel", json!({})).unwrap();
+        assert_eq!(r["cancelled"], true);
+        assert_eq!(r["starting"], true);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
     #[test]
     fn record_commands_headless() {
         let mut s = Session::new();
@@ -2718,15 +2787,16 @@ mod tests {
     }
 
     #[test]
-    fn native_registry_keeps_all_48_commands() {
+    fn native_registry_keeps_all_49_commands() {
         // Desktop contract: every command the UI, CLI and MCP know is present.
         // Bump deliberately when a wave adds a command.
         let ids: Vec<&str> = registry().iter().map(|c| c.id).collect();
-        assert_eq!(ids.len(), 48, "native registry drifted: {ids:?}");
+        assert_eq!(ids.len(), 49, "native registry drifted: {ids:?}");
         for native_only in [
             "capture.full",
             "record.start",
             "scroll.poll",
+            "scroll.cancel",
             "timelapse.start",
             "timelapse.assemble",
             "ocr.run",

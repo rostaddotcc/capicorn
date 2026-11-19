@@ -167,13 +167,16 @@ Effects are applied to the **image layer at export resolution** (scene px × exp
 | Feature | Evidence | rust |
 |---|---|---|
 | Manual-scroll stitching: select region once, cast the monitor, grab the newest frame, align to the last accepted one, append only new rows → one tall PNG. No synthetic input. | `scrolling/mod.rs:1-8` | W4 |
-| Commands `scrolling_start(region)`, `scrolling_done() → {dataUrl,width,height}`, `scrolling_cancel()`, `set_click_through(ignore)` | `scrolling/mod.rs:9-14` | W4 |
+| Commands `scrolling_start(region)`, `scrolling_done() → {dataUrl,width,height}`, `scrolling_cancel()`, `set_click_through(ignore)` | `scrolling/mod.rs:9-14` | W4 + W20 (start/stop/poll W4; `scroll.cancel` discard W20 — the W4 tick overclaimed scrolling_cancel) |
 | `scrolling-status {frames,height,confidence,warning,finished}` events; `finished` fires exactly once | `scrolling/mod.rs:16-21` | W4 |
 | Stop rules: 2.5 s idle after scrolling starts, two identical consecutive frames, **40 000 px** height cap, or explicit Done | `scrolling/mod.rs:26-27` | W4 |
 | Region is in **physical (stream) px**, not CSS px | `scrolling/mod.rs:23-24` | W4 |
 | Teardown order: stitcher thread → PipeWire thread → drop portal `Session` | `scrolling/mod.rs:28-30` | W4 |
 | Sub-modules: frame alignment, stitch accumulation, source/cast, capture | `scrolling/align.rs`, `scrolling/stitcher.rs`, `scrolling/source.rs`, `scrolling/cap.rs` (`stitcher.rs:183`) | W4 |
 | UI: freeze, select the region, then hand the wheel back to the user; Capture → Scrolling mode | `app.ts:2719`, mode `app.ts:36` | W4 |
+| Cancel discards the partial scroll — HUD Cancel button + Esc, nothing written; a cancel during the portal wait applies when the handle lands | `app.ts:2757-2763` (`scrolling_cancel`) | W20 |
+| Done summary "Scrolling capture: W × H, N frames · saved {filename}" + immediate Recent pickup; the result is saved under the normal capture filename pattern (deduped) | `app.ts:2770-2786` (`writeImage` + `addRecent`) | W20 |
+| Error classification: locked-screen, 40 000 px height-cap and screen-sharing-refusal recovery hints | `app.ts:2586-2599` (`scrollErrorText`) | W20 |
 
 ---
 
@@ -296,18 +299,18 @@ Sections rendered: General, Capture, Recording audio, Global hotkeys, Save locat
 
 ---
 
-## Wave coverage at W19 (2026-11-18)
+## Wave coverage at W20 (2026-11-18)
 
 The W1-era scope note that used to sit here ("not started at all: shell, recording,
 scrolling, OCR, timelapse, upload, settings, themes, shortcuts, About") is obsolete —
-W2–W5 landed most of it, and W7–W19 closed the rest. The W6b summary that used to
+W2–W5 landed most of it, and W7–W20 closed the rest. The W6b summary that used to
 sit here (45 `pending`) was stale: those rows were closed by W7–W14 but the table
-was never recounted. Current state of the checklist (recounted row-by-row at W19):
+was never recounted. Current state of the checklist (recounted row-by-row at W20):
 
 | Status | Rows |
 |--------|------|
 | `W2` (incl. 3 `W2 + W14`) | 33 |
-| `W4` (incl. `W4 + W13`, `W4 + W18`) | 33 |
+| `W4` (incl. `W4 + W13`, `W4 + W18`, `W4 + W20`) | 33 |
 | `W3` | 30 |
 | `W11` | 14 |
 | `W12` (incl. `W12 + W19`) | 13 |
@@ -316,13 +319,14 @@ was never recounted. Current state of the checklist (recounted row-by-row at W19
 | `W9` | 5 |
 | `W18` | 4 |
 | `W7` | 3 |
+| `W20` | 3 |
 | `W1` | 2 |
 | `W10` | 2 |
 | `W15` | 1 |
 | `W19` | 1 |
 | `pending` (Trim — rostad-gated) | 1 |
 | `n/a` | 1 |
-| **total** | **155** |
+| **total** | **158** |
 
 What the waves delivered, per `docs/plans/rust-rebuild-status.md`: 13-tool annotation
 parity with 10 object kinds and 5 shape variants (W2); tray, global hotkeys,
@@ -347,14 +351,18 @@ save/export flow: full live `saveEdited` semantics (guards, `-edited` copy, "Sav
 copy" wording, save point, Recent pickup), Save As cancel report, auto-save
 outcomes all visible (the failure was swallowed), toolbar/close-guard Save parity,
 the editable save kept as an explicit File-menu addition, and the About license
-line the W12 tick had overclaimed (vision caught it).
+line the W12 tick had overclaimed (vision caught it). **W20 audited the last
+headline flow, scrolling capture: Cancel/discard (HUD button + Esc + engine
+scroll.cancel, including cancels during the portal wait), the live done summary
++ Recent pickup + pattern filename, and scrollErrorText classification — the W4
+commands row had overclaimed scrolling_cancel.**
 
 The single `pending` row is **Trim** — deliberately out of parity (the live v1.5.3
 has no trim) and gated on rostad's build-or-drop decision (`docs/gaps.md` A2).
 Every other row is backed by live code. The remaining open items in `docs/gaps.md`
 are rostad gates (A1–A4), web-MVP limits (C1–C3) and future platform ports (D1–D2).
 
-**Coverage:** 155 rows across 14 sections. Every TS line number came from a grep/read
+**Coverage:** 158 rows across 14 sections. Every TS line number came from a grep/read
 against commit `3cec2ee` (baseline v1.5.3) during W1; the only exceptions are the two
 `CHANGELOG.md` citations, marked as such. Rust statuses were re-audited at W6b as
-described at the top of this file, recounted at W15, and flow-audited at W18.
+described at the top of this file, recounted at W15, and flow-audited at W18–W20.

@@ -939,6 +939,44 @@ live pass + gates (trim/relicense/cutover/external post). NO releases published.
 - Awaiting rostad unchanged: KDE live pass, trim decision, relicense, cutover.
   Next wake: scrolling-capture flow audit (the last unaudited headline flow).
 
+### 2026-11-18 — wake #109: W20 scrolling-capture audit — the last headline flow
+- Fresh re-check: tree clean at 8da31f6, suite green (504/0/11 serial). Walked
+  the scrolling flow against the live anchors (`runScrollingCapture`,
+  app.ts:2723-2810). The W4 commands row cited `scrolling_cancel` — the rebuild
+  had no cancel at all (Stop always stitched + saved).
+- **Fixes (all live-anchored):**
+  1. **Cancel/discard**: capture crate `ScrollHandle::cancel` (second atomic
+     flag; the run tears down and emits `ScrollEvent::Cancelled` without
+     writing), engine `scroll.cancel` command (registry 48→49; a cancel during
+     the portal wait is remembered and applied the moment the handle lands),
+     UI HUD Cancel button + Esc shortcut + "Scrolling capture cancelled"
+     status (app.ts:2757-2763). Enter/Esc predicates now match the HUD
+     (armed || active).
+  2. **Done summary + Recent pickup**: `scroll_done` reports the live
+     "Scrolling capture: W × H, N frames · saved {filename}" (frames floor 1),
+     opens the stitched image and pushes it to Recent (app.ts:2770-2786).
+  3. **Filename parity**: the result is saved under the normal capture
+     pattern (build_filename_now + dedup), not `snagcraft-scroll-{epoch}`.
+  4. **Error classification**: `scroll_error_status` ports `scrollErrorText`
+     (app.ts:2586-2599) — locked-screen / 40 000 px height-cap / sharing-
+     refusal recovery hints, applied to start errors and failed events.
+- **Gates:** 6 UI gates (tests/w20_scroll.rs: summary+Recent+doc-open, empty
+  path, frames floor, error classes ×4, cancel clears flags, HUD Stop+Cancel
+  and Esc-discard via real key events), 1 engine gate (scroll.cancel headless:
+  no-run no-op + pending-cancel during portal wait), 1 capture gate (cancel
+  sets both flags). Automation guard 48→49 + engine registry test renamed.
+- Parent-verified: workspace **512 passed / 0 failed / 11 ignored** (serial),
+  clippy/fmt clean incl. wasm target, layers legal, xtask wasm 10/10, NO
+  snapshot drift (the scroll HUD test is label-based).
+- Docs: parity §7 commands row split (W4 + W20), three new W20 rows, summary
+  recounted (158 rows, 1 pending = Trim); README 49/25; gaps.md C1 25/49.
+- Fresh W20 artifacts from the committed state: release binary + AppImage
+  launch-tested (below). Delivered to rostad.
+- **All five headline flows now flow-audited** (capture/crop W2-era, recording
+  W18, timelapse W15, save W19, scrolling W20). Awaiting rostad: KDE live pass,
+  trim decision, relicense, cutover. Next wakes: rostad feedback, or deeper
+  polish (web C1 surface, OCR/upload flow re-audit, design).
+
 ## Appendix — measured reality
 
 | Claim | Measured | What changed |

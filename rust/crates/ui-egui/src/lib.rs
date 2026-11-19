@@ -751,6 +751,47 @@ impl Default for RecordState {
     }
 }
 
+/// W20: classify a scrolling-capture failure exactly like the live
+/// `scrollErrorText` (app.ts:2586-2599): locked screen, the 40 000 px height
+/// cap, and screen-sharing refusals each get their own recovery hint.
+pub fn scroll_error_status(err: &str) -> String {
+    let raw = err.trim();
+    let lower = raw.to_ascii_lowercase();
+    if lower.contains("lock") {
+        return "The screen is locked — unlock it, then start the scrolling capture again.".into();
+    }
+    if [
+        "height",
+        "too tall",
+        "too high",
+        "maximum",
+        "max_height",
+        "cap",
+    ]
+    .iter()
+    .any(|key| lower.contains(key))
+    {
+        return "That would pass the 40 000 px height limit. Select a shorter region, or capture the page in two passes."
+            .into();
+    }
+    if [
+        "portal",
+        "permission",
+        "denied",
+        "refus",
+        "share",
+        "screencast",
+        "pipewire",
+    ]
+    .iter()
+    .any(|key| lower.contains(key))
+    {
+        return "Screen sharing wasn't allowed. Approve the system prompt (or pick this window) and try again."
+            .into();
+    }
+    format!("Scrolling capture failed: {raw}")
+}
+
 /// W18: the live recording filename — `SnagCraft-{date}-{time}.{format}`
 /// (`recordingFilename`, app.ts:2368-2369), tokens expanded at start time.
 pub fn recording_filename(dir: &Path, ext: &str) -> PathBuf {
@@ -2343,7 +2384,14 @@ impl SnagCraftApp {
             return;
         }
         let dir = self.ensure_save_dir();
-        let path = dir.join(format!("snagcraft-scroll-{}.png", epoch_secs()));
+        // W20: the live scrolling result is saved under the normal capture
+        // filename pattern (writeImage, app.ts:2776), not an epoch name.
+        let name = snagcraft_io::files::build_filename_now(
+            &self.settings.filename_pattern,
+            snagcraft_io::ImageFormat::Png,
+        );
+        let stem = name.strip_suffix(".png").unwrap_or(&name);
+        let path = dedup_path(&dir, stem, "png");
         let params = serde_json::json!({
             "region": rect_json(region),
             "output": path.to_string_lossy(),
@@ -2360,7 +2408,7 @@ impl SnagCraftApp {
                 self.status = "Scrolling capture — scroll slowly, Enter or Stop ends it.".into();
                 self.redraw = true;
             }
-            Err(err) => self.status = format!("Scrolling capture: {err}"),
+            Err(err) => self.status = scroll_error_status(&err),
         }
     }
 
@@ -2370,6 +2418,43 @@ impl SnagCraftApp {
             Ok(_) => self.status = "Finishing the scrolling capture…".into(),
             Err(err) => self.status = format!("Scroll stop: {err}"),
         }
+    }
+
+    /// W20: Cancel — discard the partial scroll, write nothing (the live
+    /// card's Cancel button, `scrolling_cancel`, app.ts:2757-2763).
+    pub fn cancel_scrolling(&mut self) {
+        match self.exec("scroll.cancel", serde_json::json!({})) {
+            Ok(_) => {
+                self.scroll.armed = false;
+                self.scroll.active = false;
+                self.status = "Scrolling capture cancelled".into();
+                self.redraw = true;
+            }
+            Err(err) => self.status = format!("Scroll cancel: {err}"),
+        }
+    }
+
+    /// W20: a finished scroll — open it, pick it up in Recent, and report the
+    /// live summary ("Scrolling capture: W × H, N frames · saved {filename}",
+    /// app.ts:2780-2786). The engine already wrote the file before `done`.
+    pub fn scroll_done(&mut self, path: &str, width: u32, height: u32) {
+        self.scroll.armed = false;
+        self.scroll.active = false;
+        if path.is_empty() {
+            self.status = "Scrolling capture finished with no image.".into();
+            return;
+        }
+        let frames = self.scroll.index.max(1);
+        self.dispatch("doc.open", serde_json::json!({"path": path}));
+        self.selected = None;
+        let filename = std::path::Path::new(path)
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| path.to_string());
+        self.status =
+            format!("Scrolling capture: {width} × {height}, {frames} frames · saved {filename}");
+        self.push_recent(PathBuf::from(path));
+        self.redraw = true;
     }
 
     // ---- timelapse ----------------------------------------------------------
@@ -2877,15 +2962,9 @@ impl SnagCraftApp {
                         }
                         Some("done") => {
                             let path = event["path"].as_str().unwrap_or_default().to_string();
-                            self.scroll.armed = false;
-                            self.scroll.active = false;
-                            if path.is_empty() {
-                                self.status = "Scrolling capture finished with no image.".into();
-                            } else {
-                                self.dispatch("doc.open", serde_json::json!({"path": path}));
-                                self.status = format!("Scrolling capture saved: {path}");
-                                self.selected = None;
-                            }
+                            let width = event["width"].as_u64().unwrap_or(0) as u32;
+                            let height = event["height"].as_u64().unwrap_or(0) as u32;
+                            self.scroll_done(&path, width, height);
                         }
                         Some("failed") => {
                             let msg = event["message"]
@@ -2894,12 +2973,17 @@ impl SnagCraftApp {
                                 .to_string();
                             self.scroll.armed = false;
                             self.scroll.active = false;
-                            self.status = format!("Scrolling capture failed: {msg}");
+                            self.status = scroll_error_status(&msg);
                         }
                         Some("stopped") => {
                             self.scroll.armed = false;
                             self.scroll.active = false;
                             self.status = "Scrolling capture stopped.".into();
+                        }
+                        Some("cancelled") => {
+                            self.scroll.armed = false;
+                            self.scroll.active = false;
+                            self.status = "Scrolling capture cancelled".into();
                         }
                         _ => {}
                     }
@@ -5677,8 +5761,13 @@ fn handle_keys(ctx: &egui::Context, app: &mut SnagCraftApp) {
             }
         }
         // Enter finishes a scrolling capture (Enter is otherwise unclaimed).
-        if app.scroll.armed && i.consume_key(Modifiers::NONE, Key::Enter) {
+        // Same predicate as the HUD: armed (starting) or active (frames rolling).
+        if (app.scroll.armed || app.scroll.active) && i.consume_key(Modifiers::NONE, Key::Enter) {
             app.stop_scrolling();
+        }
+        // W20: Esc discards a running scroll — the live card's Cancel.
+        if (app.scroll.armed || app.scroll.active) && i.consume_key(Modifiers::NONE, Key::Escape) {
+            app.cancel_scrolling();
         }
         if i.consume_key(Modifiers::CTRL, Key::Z) {
             if i.modifiers.shift {
@@ -5917,6 +6006,14 @@ fn media_hud(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
                     );
                     if ui.button("Stop scroll").clicked() {
                         app.stop_scrolling();
+                    }
+                    // W20: the live card's Cancel — discard, write nothing.
+                    if ui
+                        .button("Cancel")
+                        .on_hover_text("Discard this scrolling capture")
+                        .clicked()
+                    {
+                        app.cancel_scrolling();
                     }
                 }
                 if timelapsing {

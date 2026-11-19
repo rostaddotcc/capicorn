@@ -90,8 +90,8 @@ impl ScrollConfig {
 }
 
 /// Progress and terminal states. Every `spawn_scrolling` call ends with exactly
-/// one of [`ScrollEvent::Done`], [`ScrollEvent::Failed`] or
-/// [`ScrollEvent::Stopped`], after which the channel is closed.
+/// one of [`ScrollEvent::Done`], [`ScrollEvent::Failed`], [`ScrollEvent::Stopped`]
+/// or [`ScrollEvent::Cancelled`], after which the channel is closed.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ScrollEvent {
     /// A frame contributed rows. `index` counts accepted frames, `total_height`
@@ -107,6 +107,9 @@ pub enum ScrollEvent {
     Failed(String),
     /// The capture was stopped before it captured anything.
     Stopped,
+    /// W20: the user cancelled — the partial scroll is discarded, nothing is
+    /// written (the live card's Cancel button, `scrolling_cancel`).
+    Cancelled,
 }
 
 /// A running capture. Dropping it stops nothing on its own — call [`stop`] so the
@@ -115,6 +118,8 @@ pub enum ScrollEvent {
 /// [`stop`]: ScrollHandle::stop
 pub struct ScrollHandle {
     stop: Arc<AtomicBool>,
+    /// W20: discard the partial scroll instead of stitching + saving it.
+    cancel: Arc<AtomicBool>,
     join: Mutex<Option<JoinHandle<()>>>,
 }
 
@@ -133,6 +138,13 @@ impl ScrollHandle {
         if let Some(handle) = handle {
             let _ = handle.join();
         }
+    }
+
+    /// W20: stop AND discard — the partial scroll is not stitched or saved.
+    /// Ends with [`ScrollEvent::Cancelled`] (the live card's Cancel button).
+    pub fn cancel(&self) {
+        self.cancel.store(true, Ordering::SeqCst);
+        self.stop();
     }
 }
 
@@ -233,16 +245,19 @@ mod linux {
         let out = config.output.clone();
         let stop = Arc::new(AtomicBool::new(false));
         let thread_stop = Arc::clone(&stop);
+        let cancel = Arc::new(AtomicBool::new(false));
+        let thread_cancel = Arc::clone(&cancel);
 
         let thread = std::thread::Builder::new()
             .name("snagcraft-scrolling-stitch".to_string())
-            .spawn(move || run(source, region, cap, out, thread_stop, events))
+            .spawn(move || run(source, region, cap, out, thread_stop, thread_cancel, events))
             .map_err(|err| {
                 CaptureError::Io(format!("cannot start the scrolling stitch thread: {err}"))
             })?;
 
         Ok(ScrollHandle {
             stop,
+            cancel,
             join: Mutex::new(Some(thread)),
         })
     }
@@ -254,6 +269,7 @@ mod linux {
         cap: u32,
         out: PathBuf,
         stop: Arc<AtomicBool>,
+        cancel: Arc<AtomicBool>,
         events: mpsc::Sender<ScrollEvent>,
     ) {
         let outcome = capture_loop(&source, region, cap, &stop, &events);
@@ -262,6 +278,12 @@ mod linux {
         // the portal session — dropping the session earlier would end the cast
         // under the capture thread.
         source.shutdown();
+
+        // W20: a cancelled run discards the partial scroll — nothing is written.
+        if cancel.load(Ordering::SeqCst) {
+            let _ = events.send(ScrollEvent::Cancelled);
+            return;
+        }
 
         match outcome {
             Ok(surface) if surface.width() > 0 && surface.height() > 0 => {
@@ -504,6 +526,7 @@ mod tests {
         });
         let handle = ScrollHandle {
             stop,
+            cancel: Arc::new(AtomicBool::new(false)),
             join: Mutex::new(Some(thread)),
         };
         handle.stop();
@@ -513,6 +536,26 @@ mod tests {
         }
         // A second stop finds no thread and must not hang or panic.
         handle.stop();
+    }
+
+    /// W20: cancel sets both flags so the loop exits promptly and discards.
+    #[test]
+    fn cancel_marks_the_handle_for_discard() {
+        let stop = Arc::new(AtomicBool::new(false));
+        let cancel = Arc::new(AtomicBool::new(false));
+        let handle = ScrollHandle {
+            stop: Arc::clone(&stop),
+            cancel: Arc::clone(&cancel),
+            join: Mutex::new(None),
+        };
+        assert!(!stop.load(Ordering::SeqCst));
+        assert!(!cancel.load(Ordering::SeqCst));
+        handle.cancel();
+        assert!(
+            stop.load(Ordering::SeqCst),
+            "cancel must also stop the loop"
+        );
+        assert!(cancel.load(Ordering::SeqCst), "cancel must mark discard");
     }
 
     #[test]

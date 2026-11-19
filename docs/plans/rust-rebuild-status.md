@@ -1013,6 +1013,9 @@ live pass + gates (trim/relicense/cutover/external post). NO releases published.
   directly, the engine commands remain for CLI/MCP).
 - Docs: parity OCR rows → W7/W4 + W21, upload flow row → W8 + W21 (overclaim
   noted), summary prose updated (158 rows unchanged, 1 pending = Trim).
+- Fresh W21 artifacts from committed 5806e0e: release binary rebuilt, AppImage
+  13.96 MB launch-tested (exit 124, benign locked-GNOME noise only) in
+  rust/dist/w21/, CLI smoke 49 commands. Delivered to rostad.
 - Awaiting rostad unchanged: KDE live pass, trim decision, relicense, cutover.
   Every interactive flow has now been audited against the live anchors.
 

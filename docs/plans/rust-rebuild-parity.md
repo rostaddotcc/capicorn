@@ -210,7 +210,7 @@ Effects are applied to the **image layer at export resolution** (scene px × exp
 | **`Ctrl+.`** stops a running interval capture (same as Stop) | `app.ts:5181-5188` | W8 |
 | One live loop guarded by an `IntervalRun` record with a zero-padded `seq` counter | `app.ts:2820-2830` | W4 |
 | **Countdown HUD** — the shell shrinks the window to a 280×228 HUD and hides `#app` (`set_hud_mode`), timer parented to `<body>` so it stays visible; older backends fall back to a full-window overlay | `app.ts:1951-1984` (`set_hud_mode(true,280,228)` `:1983`) | W8 |
-| Capture delay pills (0 s … 60 s, `DEFAULT_TIMER = 0`) | `settings.ts:64`, `settings.ts:830-836`, `settings.ts:219-227` | W4 |
+| Capture delay pills (`TIMER_CHOICES [0,3,5,10]` → Off / 3 s / 5 s / 10 s, `DEFAULT_TIMER = 0`) | `settings.ts:64`, `settings.ts:830-836`, `settings.ts:219-227` | W4 + W27 (uniform segmented pills + a separate Capture section; the rebuild had a continuous slider merged into General until W27) |
 
 ---
 
@@ -236,7 +236,7 @@ Sections rendered: General, Capture, Recording audio, Global hotkeys, Save locat
 | Start at login (hidden if unsupported) | off | `settings.ts:804-806` | W3 |
 | Show floating widget | — | `settings.ts:813-816` | W3 |
 | Auto-save captures | **on** | `settings.ts:820-823`, `AUTOSAVE_KEY` `:50`, default `:237` | W3 setting / W4 behavior |
-| Capture delay (seconds pills) | 0 | `settings.ts:830-836`, `:64` | W3 |
+| Capture delay (seconds pills) | 0 | `settings.ts:830-836`, `:64` | W3 + W27 (Off/3/5/10 uniform pills in a dedicated Capture section) |
 | Interval capture period | 30 s | `settings.ts:837-842`, `:69` | W11 |
 | Microphone source | None | `settings.ts:855-863` | W11 |
 | System audio (output monitor) | off | `settings.ts:866-870` | W11 |

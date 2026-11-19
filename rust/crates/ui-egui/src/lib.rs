@@ -4761,17 +4761,54 @@ fn settings_ui(
     acts.changed |= ui
         .checkbox(&mut next.autosave_captures, "Auto-save captures")
         .changed();
+
+    // W27: the live app splits General (the switches above) from Capture (delay
+    // + interval), and offers the delay as a TIMER_CHOICES pill radio group
+    // [Off, 3 s, 5 s, 10 s] — not a continuous slider. Match both.
+    ui.separator();
+    section(ui, "Capture");
+    ui.label(
+        egui::RichText::new("Wait before grabbing the screen, so you can set the shot up first.")
+            .weak()
+            .size(11.0),
+    );
     ui.horizontal(|ui| {
         ui.label("Capture delay");
-        acts.changed |= ui
-            .add(
-                egui::Slider::new(&mut next.capture_delay_secs, 0..=10)
-                    .suffix(" s")
-                    .integer()
-                    .trailing_fill(true),
-            )
-            .on_hover_text("Wait this long before grabbing the screen")
-            .changed();
+        // Uniform segmented pills (live `pills` radiogroup): every choice gets a
+        // neutral container, the selected one the accent fill — selectable_value
+        // alone leaves the unselected options as bare text.
+        for secs in [0u32, 3, 5, 10] {
+            let selected = next.capture_delay_secs == secs;
+            let label = if secs == 0 {
+                "Off".to_string()
+            } else {
+                format!("{secs} s")
+            };
+            let text_color = if selected { Color32::WHITE } else { pal_fg(ui) };
+            let fill = if selected {
+                pal_accent(ui)
+            } else {
+                ui.visuals().faint_bg_color
+            };
+            let border = if selected {
+                pal_accent(ui)
+            } else {
+                pal_border(ui)
+            };
+            let resp = ui
+                .add(
+                    egui::Button::new(egui::RichText::new(label).size(11.5).color(text_color))
+                        .fill(fill)
+                        .stroke(Stroke::new(1.0, border))
+                        .corner_radius(CornerRadius::same(6))
+                        .min_size(vec2(36.0, 22.0)),
+                )
+                .on_hover_text("Wait this long before grabbing the screen");
+            if resp.clicked() {
+                next.capture_delay_secs = secs;
+                acts.changed = true;
+            }
+        }
     });
 
     ui.horizontal(|ui| {

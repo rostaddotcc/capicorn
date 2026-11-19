@@ -1284,6 +1284,29 @@ live pass + gates (trim/relicense/cutover/external post). NO releases published.
   a stuck load (vision confirmed the rendered editor). Web surface healthy.
 - CI still green (runs f2f82f3 + 30cb150 success); issue #1 still awaiting reporter.
 
+### 2026-11-19 — W28: real video first-frame thumbnails in the Recent rail
+- Closed the last B2 sub-gap (gaps.md B2/B3 were stale — the rail was built W22,
+  copy-diagnostics W11; marked both CLOSED). The remaining real gap: video tiles
+  showed a film placeholder, not a frame (live `recording_thumb`).
+- `io::recent::video_thumbnail`: ffmpeg frame 1 (`-frames:v 1 -vf scale=W:-2` →
+  PNG, the live commands.rs:534 recipe), dispatched from `thumbnail()` for
+  mp4/webm/mov/mkv (gif stays on the image decoder, which reads its first frame).
+  No image byte cap on video (ffmpeg streams it).
+- UI: video tiles route to a persistent off-thread worker (`request_video_thumb`
+  spawns once, `poll_video_thumbs` loads textures), pumped in BOTH `app_ui` and
+  `logic` (first attempt only put it in `logic` = hidden path → the video gate
+  failed; the visible frame loop is `app_ui`). Limited to the newest 8 videos
+  (live `MEDIA_VIDEO_THUMBS`); absent/unreadable ffmpeg keeps the film placeholder.
+- 5 new gates: io routing-by-extension, real-frame extraction from a synthetic
+  testsrc clip (self-skip without ffmpeg), missing-file None; UI video tile gains
+  a texture (wall-time poll), image tile stays synchronous. Snapshot vision-verified
+  a real SMPTE frame + MP4 badge. w27 settings snapshot re-blessed (scrollbar fade
+  timing shifted once; stable ×3 after).
+- 550/0/11 twice serial, clippy/fmt clean, wasm 10/10. Commit 191ec78. AppImage
+  14.02 MB launch-tested (dist/w28/), CLI 51.
+- **Lesson:** the per-frame pump for the VISIBLE window is `app_ui`; `logic` runs
+  only while hidden. A worker polled only in `logic` never lands in normal use.
+
 ## Appendix — measured reality
 
 | Claim | Measured | What changed |

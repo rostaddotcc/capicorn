@@ -148,8 +148,8 @@ fn commands_list_exposes_the_whole_registry() {
     let commands = res["result"].as_array().expect("array of commands");
     assert_eq!(
         commands.len(),
-        52,
-        "W31 engine registry has 52 commands (51 + timelapse.ack_hide)"
+        53,
+        "W33 engine registry has 53 commands (52 + edit.restyle)"
     );
     assert_eq!(commands.len(), snagcraft_engine::registry().len());
     for entry in commands {

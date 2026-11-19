@@ -1044,6 +1044,17 @@ pub struct SnagCraftApp {
     pub crop: Option<GRect>,
     brush_pts: Vec<Point>,
     editing: Option<TextEdit>,
+    /// W33: the quick bar's object target (re-edited or selected caption).
+    /// `None` while placing new text or when no bar is up. On change, the
+    /// object's style is loaded into the mirror so the controls show it.
+    quick_bar_obj: Option<u64>,
+    /// W33: last style dispatched to `quick_bar_obj` (family, size, bold,
+    /// italic, color) — the diff that triggers `edit.restyle`.
+    quick_bar_last: Option<(String, f32, bool, bool, [u8; 4])>,
+    /// W33: typing focus to restore at the START of the next pass — egui's
+    /// end-of-pass click handling can clear a mid-pass request_focus, so the
+    /// bar's refocus survives by being re-applied before the next frame.
+    quick_bar_refocus: Option<egui::Id>,
     pub selected: Option<u64>,
     capture_rx: Option<mpsc::Receiver<CaptureMsg>>,
     /// The capture hid the app's windows; every outcome must restore them.
@@ -1232,6 +1243,9 @@ impl SnagCraftApp {
             crop: None,
             brush_pts: Vec::new(),
             editing: None,
+            quick_bar_obj: None,
+            quick_bar_last: None,
+            quick_bar_refocus: None,
             selected: None,
             capture_rx: None,
             capture_hidden: false,
@@ -1840,6 +1854,56 @@ impl SnagCraftApp {
         self.crop = None;
         self.tool = tool;
         self.status = format!("{} — {}", tool.label(), tool.hint());
+    }
+
+    /// W33: push mirror style changes into the quick bar's object target
+    /// (live TextBar "keeps styling the committed box"). Discrete controls →
+    /// one dispatch per change; colour waits for the picker to close.
+    fn sync_quick_bar_style(&mut self, color_popup_open: bool) {
+        let Some(id) = self.quick_bar_obj else {
+            return;
+        };
+        let Some(last) = self.quick_bar_last.clone() else {
+            return;
+        };
+        let fam = self.font_family.clone();
+        let size = self.font_size;
+        let bold = self.bold;
+        let italic = self.italic;
+        let color = self.color.to_array();
+        let mut patch = serde_json::Map::new();
+        if fam != last.0 {
+            patch.insert("family".into(), serde_json::json!(fam));
+        }
+        if size != last.1 {
+            patch.insert("size".into(), serde_json::json!(size));
+        }
+        if bold != last.2 {
+            patch.insert("bold".into(), serde_json::json!(bold));
+        }
+        if italic != last.3 {
+            patch.insert("italic".into(), serde_json::json!(italic));
+        }
+        let color_changed = color != last.4;
+        if color_changed && !color_popup_open {
+            patch.insert("color".into(), serde_json::json!(color));
+        }
+        if patch.is_empty() {
+            return;
+        }
+        patch.insert("id".into(), serde_json::json!(id));
+        self.dispatch("edit.restyle", serde_json::Value::Object(patch));
+        self.quick_bar_last = Some((
+            fam,
+            size,
+            bold,
+            italic,
+            if color_changed && !color_popup_open {
+                color
+            } else {
+                last.4
+            },
+        ));
     }
 
     fn commit_text(&mut self) {
@@ -6202,6 +6266,99 @@ fn font_controls(ui: &mut egui::Ui, app: &mut SnagCraftApp, salt: &str) {
     }
 }
 
+/// W33: the quick bar's controls — live TextBar layout: font, −/size/+, B,
+/// I, colour. Everything binds to the app mirror; the caller dispatches
+/// `edit.restyle` for object targets. Returns whether the colour picker
+/// popup is open (colour restyle waits for it to close — the live picker
+/// settles on close, and per-frame dispatch would flood undo history).
+///
+/// `text_edit_id`: while inline-editing, typing focus returns to the caption
+/// after every bar interaction (live preventDefaults pointerdown so focus
+/// survives B/size clicks; the font/colour popups need real focus, so focus
+/// goes back once they close). Without this, Enter/typing after a B click
+/// would land on the bar button, not the caption.
+fn quick_bar_controls(
+    ui: &mut egui::Ui,
+    app: &mut SnagCraftApp,
+    text_edit_id: Option<egui::Id>,
+) -> bool {
+    let refocus = |ui: &egui::Ui, app: &mut SnagCraftApp| {
+        if let Some(id) = text_edit_id {
+            ui.ctx().memory_mut(|m| m.request_focus(id));
+            app.quick_bar_refocus = Some(id);
+        }
+    };
+    let font_was_open = egui::ComboBox::is_open(
+        ui.ctx(),
+        ui.make_persistent_id(egui::IdSalt::new("quick-font")),
+    );
+    egui::ComboBox::from_id_salt("quick-font")
+        .width(126.0)
+        .selected_text(egui::RichText::new(&app.font_family).size(12.0))
+        .show_ui(ui, |ui| {
+            for family in FAMILIES {
+                ui.selectable_value(&mut app.font_family, family.to_string(), family);
+            }
+        });
+    let font_open_now = egui::ComboBox::is_open(
+        ui.ctx(),
+        ui.make_persistent_id(egui::IdSalt::new("quick-font")),
+    );
+    if font_was_open && !font_open_now {
+        refocus(ui, app);
+    }
+    // ASCII minus: the bundled fonts lack U+2212 (kittest panics on glyphs).
+    if ui.button("-").on_hover_text("Smaller text").clicked() {
+        app.font_size = (app.font_size - 2.0).max(FONT_MIN);
+        refocus(ui, app);
+    }
+    ui.label(egui::RichText::new(format!("{}", app.font_size.round() as i32)).size(12.0));
+    if ui.button("+").on_hover_text("Larger text").clicked() {
+        app.font_size = (app.font_size + 2.0).min(FONT_MAX);
+        refocus(ui, app);
+    }
+    if ui
+        .selectable_label(app.bold, egui::RichText::new("B").strong())
+        .on_hover_text("Bold")
+        .clicked()
+    {
+        app.bold = !app.bold;
+        refocus(ui, app);
+    }
+    if ui
+        .selectable_label(app.italic, egui::RichText::new("I").italics())
+        .on_hover_text("Italic")
+        .clicked()
+    {
+        app.italic = !app.italic;
+        refocus(ui, app);
+    }
+    let mut color_popup_open = false;
+    let custom = ui
+        .scope(|ui| {
+            ui.spacing_mut().interact_size = vec2(20.0, 20.0);
+            // Query INSIDE the scope, before the button: auto_id_with does
+            // not advance the counter, so this matches the popup id the
+            // color button derives as the scope's first widget. Capture the
+            // id once — after the button the counter has moved on.
+            let popup_id = ui.auto_id_with("popup");
+            let was_open = egui::Popup::is_id_open(ui.ctx(), popup_id);
+            let resp = ui.color_edit_button_srgba(&mut app.color);
+            color_popup_open = egui::Popup::is_id_open(ui.ctx(), popup_id);
+            if was_open
+                && !color_popup_open
+                && let Some(id) = text_edit_id
+            {
+                ui.ctx().memory_mut(|m| m.request_focus(id));
+                app.quick_bar_refocus = Some(id);
+            }
+            resp
+        })
+        .inner;
+    custom.on_hover_text("Text color");
+    color_popup_open
+}
+
 fn shadow_controls(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
     ui.separator();
     ui.checkbox(&mut app.shadow_enabled, "Shadow")
@@ -7459,6 +7616,11 @@ fn filmstrip(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
 /// The whole shell in one fn — shared by eframe and headless kittest.
 pub fn app_ui(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
     let ctx = ui.ctx().clone();
+    // W33: restore typing focus the bar asked for — applied BEFORE the pass
+    // so end-of-pass click handling cannot clear it again.
+    if let Some(id) = app.quick_bar_refocus.take() {
+        ctx.memory_mut(|m| m.request_focus(id));
+    }
     app.main_ctx = Some(ctx.clone());
     app.apply_settings();
     app.poll_platform(&ctx);
@@ -8309,26 +8471,96 @@ pub fn app_ui(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
                 }
             });
 
-            // ---- inline text editing ---------------------------------------
-            // W32: record the quick bar's screen rect on the edit state so the
-            // commit-on-lost-focus logic knows when focus moved INTO the bar
-            // (font dropdown / size / B / I) instead of away from the caption.
-            let quick_bar_rect = app
-                .editing
-                .as_ref()
-                .filter(|e| e.target.is_none())
-                .map(|edit| {
-                    let sp = to_screen(edit.pos);
-                    let bar_h = 30.0;
-                    let bar_y = if sp.y - bar_h - 10.0 > ui.clip_rect().top() {
-                        sp.y - bar_h - 8.0
-                    } else {
-                        sp.y + app.font_size * 1.5 + 14.0
-                    };
-                    Rect::from_min_size(pos2(sp.x, bar_y), vec2(340.0, bar_h))
+            // ---- text quick bar (W33: edited OR selected caption) ---------
+            // Live TextBar lifecycle: "shown while a text object is editing
+            // or selected … keeps styling the committed box". New captions
+            // style the app mirror (commit picks it up); re-edited/selected
+            // captions restyle the object live via edit.restyle.
+            let bar_spec: Option<(Point, Option<u64>)> = if let Some(edit) = &app.editing {
+                Some((edit.pos, edit.target))
+            } else if let Some(id) = app.selected {
+                app.sess().doc().and_then(|d| match d.get(id) {
+                    Some(AnnotObject::Text { pos, .. }) => {
+                        Some((Point::new(pos.x, pos.y), Some(id)))
+                    }
+                    Some(AnnotObject::Callout { rect, .. }) => {
+                        Some((Point::new(rect.x, rect.y), Some(id)))
+                    }
+                    _ => None,
+                })
+            } else {
+                None
+            };
+            // Sync the mirror when the bar's object target changes. Flush
+            // any pending style (e.g. colour still settling) into the OLD
+            // target first — Esc/deselect can tear the bar down before the
+            // picker-close dispatch would have run.
+            let bar_obj = bar_spec.and_then(|(_, t)| t);
+            if bar_obj != app.quick_bar_obj {
+                if app.quick_bar_obj.is_some() {
+                    app.sync_quick_bar_style(false);
+                }
+                app.quick_bar_obj = bar_obj;
+                app.quick_bar_last = None;
+                // Owned copy first — the session guard must drop before the
+                // mirror assignments.
+                let loaded = bar_obj.and_then(|id| {
+                    let guard = app.sess();
+                    let d = guard.doc()?;
+                    match d.get(id) {
+                        Some(AnnotObject::Text {
+                            family,
+                            size,
+                            bold,
+                            italic,
+                            color,
+                            ..
+                        }) => Some((family.clone(), *size, *bold, *italic, color.to_array())),
+                        Some(AnnotObject::Callout {
+                            family,
+                            size,
+                            color,
+                            ..
+                        }) => Some((family.clone(), *size, false, false, color.to_array())),
+                        _ => None,
+                    }
                 });
+                if let Some((fam, size, bold, italic, color)) = loaded {
+                    app.font_family = fam.clone();
+                    app.font_size = size;
+                    app.bold = bold;
+                    app.italic = italic;
+                    app.color =
+                        Color32::from_rgba_unmultiplied(color[0], color[1], color[2], color[3]);
+                    app.quick_bar_last = Some((fam, size, bold, italic, color));
+                }
+            }
+            if bar_spec.is_none() {
+                if app.quick_bar_obj.is_some() {
+                    app.sync_quick_bar_style(false);
+                }
+                app.quick_bar_obj = None;
+                app.quick_bar_last = None;
+            }
+            let quick_bar_rect = bar_spec.map(|(pos, _)| {
+                let sp = to_screen(pos);
+                let bar_h = 30.0;
+                let bar_y = if sp.y - bar_h - 10.0 > ui.clip_rect().top() {
+                    sp.y - bar_h - 8.0
+                } else {
+                    sp.y + app.font_size * 1.5 + 14.0
+                };
+                Rect::from_min_size(pos2(sp.x, bar_y), vec2(340.0, bar_h))
+            });
             if let Some(bar_rect) = quick_bar_rect {
                 let mut bar_popup_open = false;
+                let mut color_popup_open = false;
+                // The TextEdit's id derives from the CANVAS ui scope — compute
+                // it here, before the bar's nested scopes change the scope id.
+                let text_edit_id = app
+                    .editing
+                    .as_ref()
+                    .map(|_| ui.scope_id().with("text-edit"));
                 // W32: a STABLE id salt — without it the scope's auto
                 // "child" id shifts with the widget count before it, so the
                 // font popup's open state never persists across frames.
@@ -8347,8 +8579,8 @@ pub fn app_ui(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
                                     ui.spacing_mut().item_spacing = vec2(4.0, 2.0);
                                     // Sample BEFORE the combo paints: on the
                                     // frame an option is clicked the popup is
-                                    // still open here, and closes inside
-                                    // font_controls — the lost-focus guard below
+                                    // still open here, and closes inside the
+                                    // controls — the lost-focus guard below
                                     // needs that "was open" state.
                                     // NB: from_id_salt wraps the salt in IdSalt
                                     // internally, so the query must pass an
@@ -8357,7 +8589,7 @@ pub fn app_ui(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
                                         ui.ctx(),
                                         ui.make_persistent_id(egui::IdSalt::new("quick-font")),
                                     );
-                                    font_controls(ui, app, "quick-font");
+                                    color_popup_open = quick_bar_controls(ui, app, text_edit_id);
                                 });
                             });
                     },
@@ -8365,6 +8597,10 @@ pub fn app_ui(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
                 if let Some(edit) = app.editing.as_mut() {
                     edit.bar_rect = Some(bar_rect);
                     edit.bar_popup_open = bar_popup_open;
+                }
+                // Object targets: push mirror changes into the object.
+                if app.quick_bar_obj.is_some() {
+                    app.sync_quick_bar_style(color_popup_open);
                 }
             }
 
@@ -8398,10 +8634,19 @@ pub fn app_ui(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
                     // commits.
                     let bar = edit.bar_rect;
                     let popup_open = edit.bar_popup_open;
-                    let into_bar = ctx
-                        .input(|i| i.pointer.press_origin().or(i.pointer.interact_pos()))
-                        .zip(bar)
-                        .is_some_and(|(p, b)| b.expand(4.0).contains(p));
+                    // A CLICK inside the bar counts — not the lingering
+                    // hover position, or Enter while the pointer rests on
+                    // the bar would never commit. any_click + position: a
+                    // fast press+release can land in one frame, leaving
+                    // press_origin None by widget time.
+                    let (clicked, pos) = ctx.input(|i| {
+                        (
+                            i.pointer.any_click(),
+                            i.pointer.press_origin().or(i.pointer.interact_pos()),
+                        )
+                    });
+                    let into_bar =
+                        clicked && pos.zip(bar).is_some_and(|(p, b)| b.expand(4.0).contains(p));
                     let tabbed = ctx.input(|i| i.key_pressed(egui::Key::Tab));
                     if !into_bar && !tabbed && !popup_open {
                         app.commit_text();

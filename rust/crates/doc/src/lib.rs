@@ -68,6 +68,18 @@ fn clamp_offset(v: f32) -> f32 {
     }
 }
 
+/// W33: a partial text-style patch for [`Document::restyle`] — `None` fields
+/// keep the object's current value. Bold/italic only affect Text (Callout is
+/// never bold, live parity).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct TextStyle {
+    pub family: Option<String>,
+    pub size: Option<f32>,
+    pub bold: Option<bool>,
+    pub italic: Option<bool>,
+    pub color: Option<Rgba>,
+}
+
 /// Drop-shadow styling shared by Arrow / Shape / Text / Step / Callout.
 /// Off by default; the compositor draws it behind the object, export bakes it.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -430,6 +442,59 @@ impl Document {
             Some(AnnotObject::Text { text: t, .. })
             | Some(AnnotObject::Callout { text: t, .. }) => {
                 *t = text;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// W33: restyle a Text/Callout in place — the quick bar's live retune of
+    /// the edited/selected caption (live `TextBar` styles the committed box).
+    /// Only the provided fields change; bold/italic apply to Text only
+    /// (Callout is never bold, live parity). `false` for other kinds or an
+    /// unknown id. Non-finite sizes are ignored.
+    pub fn restyle(&mut self, id: ObjId, style: &TextStyle) -> bool {
+        match self.get_mut(id) {
+            Some(AnnotObject::Text {
+                family,
+                size,
+                bold,
+                italic,
+                color,
+                ..
+            }) => {
+                if let Some(f) = &style.family {
+                    *family = f.clone();
+                }
+                if let Some(s) = style.size.filter(|s| s.is_finite()) {
+                    *size = s;
+                }
+                if let Some(b) = style.bold {
+                    *bold = b;
+                }
+                if let Some(i) = style.italic {
+                    *italic = i;
+                }
+                if let Some(c) = style.color {
+                    *color = c;
+                }
+                true
+            }
+            Some(AnnotObject::Callout {
+                family,
+                size,
+                color,
+                ..
+            }) => {
+                if let Some(f) = &style.family {
+                    *family = f.clone();
+                }
+                if let Some(s) = style.size.filter(|s| s.is_finite()) {
+                    *size = s;
+                }
+                if let Some(c) = style.color {
+                    *color = c;
+                }
                 true
             }
             _ => false,

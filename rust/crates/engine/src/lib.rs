@@ -1220,6 +1220,57 @@ fn cmd_edit_set_text(s: &mut Session, p: Value) -> Result<Value, CommandError> {
     Ok(json!({"updated": d.set_text(id, text)}))
 }
 
+/// W33: restyle a Text/Callout in place — the quick bar retunes the edited or
+/// selected caption (live `TextBar` styles the committed box). Partial patch:
+/// absent fields keep their value; at least one field is required.
+fn cmd_edit_restyle(s: &mut Session, p: Value) -> Result<Value, CommandError> {
+    let id = p_u64(&p, "id")?;
+    let color = match p.get("color") {
+        Some(c) => {
+            let arr = c
+                .as_array()
+                .filter(|a| a.len() == 4)
+                .ok_or_else(|| CommandError::InvalidParams("'color' must be [r,g,b,a]".into()))?;
+            let mut out = [0u8; 4];
+            for (i, slot) in out.iter_mut().enumerate() {
+                *slot = arr
+                    .get(i)
+                    .and_then(Value::as_u64)
+                    .filter(|n| *n <= 255)
+                    .map(|n| n as u8)
+                    .ok_or_else(|| {
+                        CommandError::InvalidParams(format!("'color[{i}]' must be 0..255"))
+                    })?;
+            }
+            Some(snagcraft_color::Rgba::from_array(out))
+        }
+        None => None,
+    };
+    let style = snagcraft_doc::TextStyle {
+        family: p
+            .get("family")
+            .and_then(Value::as_str)
+            .map(|f| f.to_string()),
+        size: p
+            .get("size")
+            .and_then(Value::as_f64)
+            .map(|v| v as f32)
+            .filter(|v| v.is_finite())
+            .map(|v| v.clamp(8.0, 200.0)),
+        bold: p.get("bold").and_then(Value::as_bool),
+        italic: p.get("italic").and_then(Value::as_bool),
+        color,
+    };
+    if style == snagcraft_doc::TextStyle::default() {
+        return Err(CommandError::InvalidParams(
+            "restyle needs at least one of family/size/bold/italic/color".into(),
+        ));
+    }
+    let d = s.doc.as_mut().ok_or(CommandError::NoDoc)?;
+    s.history.record(d);
+    Ok(json!({"updated": d.restyle(id, &style)}))
+}
+
 /// W14: resize a rect-based object (select-mode corner handles). Point/path
 /// kinds report `resized: false` — they have no rect to set.
 fn cmd_edit_resize(s: &mut Session, p: Value) -> Result<Value, CommandError> {
@@ -1647,6 +1698,12 @@ pub fn registry() -> Vec<CommandSpec> {
             run: cmd_edit_set_text,
         },
         CommandSpec {
+            id: "edit.restyle",
+            label: "Restyle a Text/Callout (quick bar)",
+            params_doc: "{id, family?, size?, bold?, italic?, color?} — partial patch, at least one field",
+            run: cmd_edit_restyle,
+        },
+        CommandSpec {
             id: "edit.resize",
             label: "Resize object",
             params_doc: "{id, rect:{x,y,w,h}}",
@@ -1906,6 +1963,102 @@ mod tests {
         let quiet = Settings::default();
         let audio = record_audio_config(&json!({}), &quiet);
         assert_eq!(audio.input_count(), 0);
+    }
+
+    /// W33: the quick bar's restyle command — partial patches, Text-only
+    /// bold/italic, clamped size, history, and wrong-kind no-ops.
+    #[test]
+    fn edit_restyle_patches_text_and_callout_with_history() {
+        let mut s = Session::new();
+        s.dispatch("doc.new", json!({"w": 200, "h": 150})).unwrap();
+        s.dispatch(
+            "edit.add",
+            json!({"object": {"kind": "Text", "id": 0,
+                "pos": {"x": 10.0, "y": 10.0}, "text": "caption",
+                "color": [0, 0, 0, 255], "size": 20.0,
+                "bold": false, "italic": false, "family": "Inter"}}),
+        )
+        .unwrap();
+        s.dispatch(
+            "edit.add",
+            json!({"object": {"kind": "Callout", "id": 0,
+                "rect": {"x": 20.0, "y": 20.0, "w": 80.0, "h": 40.0},
+                "text": "note", "color": [0, 0, 0, 255], "size": 24.0,
+                "family": "Inter"}}),
+        )
+        .unwrap();
+        s.dispatch(
+            "edit.add",
+            json!({"object": {"kind": "Shape", "id": 0, "shape": "Rect",
+                "rect": {"x": 1.0, "y": 1.0, "w": 10.0, "h": 10.0},
+                "color": [0, 0, 0, 255], "width": 2.0}}),
+        )
+        .unwrap();
+
+        // Full patch on the Text lands.
+        let r = s
+            .dispatch(
+                "edit.restyle",
+                json!({"id": 1, "family": "Lato", "size": 500.0,
+                       "bold": true, "italic": true, "color": [255, 0, 0, 255]}),
+            )
+            .unwrap();
+        assert_eq!(r["updated"], true);
+        let d = s.doc.as_ref().unwrap();
+        match d.get(1) {
+            Some(AnnotObject::Text {
+                family,
+                size,
+                bold,
+                italic,
+                color,
+                ..
+            }) => {
+                assert_eq!(family, "Lato");
+                assert_eq!(*size, 200.0, "size clamps to the bar's range");
+                assert!(*bold && *italic);
+                assert_eq!(color.r, 255);
+            }
+            other => panic!("expected Text, got {other:?}"),
+        }
+
+        // Partial patch keeps the other fields; undo restores the style.
+        s.dispatch("edit.restyle", json!({"id": 1, "size": 30.0}))
+            .unwrap();
+        let d = s.doc.as_ref().unwrap();
+        assert!(
+            matches!(d.get(1), Some(AnnotObject::Text { family, size, .. })
+            if family == "Lato" && *size == 30.0)
+        );
+        s.dispatch("edit.undo", json!({})).unwrap();
+        let d = s.doc.as_ref().unwrap();
+        assert!(matches!(d.get(1), Some(AnnotObject::Text { size, .. }) if *size == 200.0));
+
+        // Callout takes family/size/color; bold is Text-only (no field).
+        let r = s
+            .dispatch(
+                "edit.restyle",
+                json!({"id": 2, "family": "Oswald", "size": 18.0, "bold": true}),
+            )
+            .unwrap();
+        assert_eq!(r["updated"], true);
+        let d = s.doc.as_ref().unwrap();
+        assert!(
+            matches!(d.get(2), Some(AnnotObject::Callout { family, size, .. })
+            if family == "Oswald" && *size == 18.0)
+        );
+
+        // Wrong kind: no-op, not an error. Empty patch: rejected.
+        let r = s
+            .dispatch("edit.restyle", json!({"id": 3, "size": 12.0}))
+            .unwrap();
+        assert_eq!(r["updated"], false);
+        assert!(s.dispatch("edit.restyle", json!({"id": 1})).is_err());
+        assert!(
+            s.dispatch("edit.restyle", json!({"id": 1, "color": [1, 2, 3]}))
+                .is_err(),
+            "malformed color rejected"
+        );
     }
 
     #[test]
@@ -2907,11 +3060,11 @@ mod tests {
     }
 
     #[test]
-    fn native_registry_keeps_all_52_commands() {
+    fn native_registry_keeps_all_53_commands() {
         // Desktop contract: every command the UI, CLI and MCP know is present.
         // Bump deliberately when a wave adds a command.
         let ids: Vec<&str> = registry().iter().map(|c| c.id).collect();
-        assert_eq!(ids.len(), 52, "native registry drifted: {ids:?}");
+        assert_eq!(ids.len(), 53, "native registry drifted: {ids:?}");
         for native_only in [
             "capture.full",
             "capture.monitors",

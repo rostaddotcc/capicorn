@@ -278,7 +278,7 @@ The WASM web build (`rust/apps/snagcraft-web`, trunk) is a working editor —
 browser-verified boot, full editor render, PNG export-download — but it is an MVP,
 not feature parity with the native app.
 
-### C1 — Web command surface is 25 of 52 commands
+### C1 — Web command surface is 26 of 53 commands
 
 > **W16 recount (2026-11-18):** the registry grew to 48 (W12–W14); the web
 > subset is 25 (counted from the `#[cfg(feature = "native")]` gates in
@@ -286,9 +286,10 @@ not feature parity with the native app.
 > (native-only) → 49 total, web subset unchanged at 25. **W25:** +capture.monitors
 > + capture.monitor (both native-only) → 51 total, web subset still 25.
 > **W31:** +timelapse.ack_hide (native-only) → 52 total, web subset still 25.
+> **W33:** +edit.restyle (all platforms — doc editing) → 53 total, web subset 26.
 
 - **What:** the web engine build (`--no-default-features --features web`)
-  registers 25 commands. Native-only (27): `capture.full`, `capture.monitors`,
+  registers 26 commands. Native-only (27): `capture.full`, `capture.monitors`,
   `capture.monitor`, `clipboard.copy/paste`, `diagnostics.copy`, `ocr.*` (3),
   `record.*` (6), `scroll.*` (4), `timelapse.*` (5), `upload.open/send`,
   `audio.sources`. `Capture`, OCR, widget and tray are hidden

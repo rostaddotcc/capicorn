@@ -1469,6 +1469,43 @@ live pass + gates (trim/relicense/cutover/external post). NO releases published.
   serial rerun 12/12), clippy/fmt clean both targets, wasm 10/10. No snapshot
   drift (the bar only paints while editing).
 
+### 2026-11-19 — W33: text quick bar reaches live TextBar parity (colour, selection, live restyle)
+- **Gap found walking the text flow against `textbar.ts`:** the live bar hugs
+  the caption being EDITED or SELECTED, carries font/size−+/B/I/**colour**,
+  and "keeps styling the committed box". The rebuild's bar was new-text-only,
+  had no colour, and styled nothing after commit.
+- **`edit.restyle {id, family?, size?, bold?, italic?, color?}`** — partial
+  patch, history-recorded, size clamped 8..200, bold/italic Text-only
+  (Callout never bold), wrong kinds no-op. All platforms (web subset 25→26,
+  registry 52→53, both count guards). doc::TextStyle + Document::restyle.
+- **UI:** the bar now shows for any inline edit (new OR re-edit) and for a
+  selected Text/Callout; on target change the object's style loads into the
+  mirror; control diffs dispatch restyle (discrete controls → one dispatch
+  per change, no undo flood). Colour waits for the picker to CLOSE (live's
+  native picker settles on close) and flushes on bar teardown/target switch
+  — Esc clears selection in handle_keys BEFORE the canvas paints, so the
+  close-frame dispatch would otherwise be lost.
+- **Live layout:** font, −/size/+ (step ±2), B, I, 20×20 colour chip. ASCII
+  minus (bundled fonts lack U+2212). egui's own colour picker carries a 📋
+  copy button the fonts lack — app default is Tofu (no crash); kittest needs
+  `.allow_missing_glyphs()` (it sets Panic AFTER context_setup).
+- **Typing focus returns after bar interactions** (live preventDefaults
+  pointerdown): B/I/stepper clicks refocus the TextEdit immediately AND via
+  a pending flag re-applied at the START of the next pass — egui's
+  end-of-pass click handling can clear a mid-pass request_focus (focused
+  went None in gates). The lost-focus guard now uses `any_click + position`
+  (a fast press+release lands in one frame → press_origin None by widget
+  time; the old hover fallback also blocked Enter while hovering the bar).
+- 4 new gates: engine restyle (patch/clamp/history/no-op), selection bar
+  restyles live (+ snapshot w33_selection_bar, vision-verified clean),
+  colour settles on picker close, re-edit bar restyles before commit. W32
+  gates re-pass. 581/0/11 twice serial, clippy/fmt clean both targets,
+  wasm 10/10, no snapshot drift.
+- **Lesson:** when a floating toolbar shares focus with an inline editor,
+  three things bite in sequence — the commit-on-lost-focus guard (W32), the
+  end-of-pass focus clear (needs next-pass re-request), and teardown paths
+  that run before the draw (flush pending style on target loss).
+
 ## Appendix — measured reality
 
 | Claim | Measured | What changed |

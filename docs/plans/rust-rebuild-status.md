@@ -1217,6 +1217,20 @@ live pass + gates (trim/relicense/cutover/external post). NO releases published.
   Windows evidence. The live interactive multi-monitor GRAB still needs a Windows
   desktop run (rostad or a CI artifact he runs). Not claimed as "works" yet.
 
+### 2026-11-19 — W26: compact dialog footers (design polish)
+- Vision audit found the monitor picker stretched to ~2× its content (~120px void
+  above Cancel). Root cause: a bare `ui.with_layout(right_to_left)` footer expands
+  to the egui Window's full available height. Fixed both the picker and New canvas
+  (airy ~50px) with `allocate_ui_with_layout` at a fixed row height (24/28px).
+- Audited the other three `right_to_left` uses: OCR Extract is in the top control
+  row; close-guard / shortcut-row / capture-menu are nested in `ui.horizontal` —
+  all already compact, left unchanged.
+- Snapshots re-blessed + vision-verified compact. 542/0/11 twice serial, clippy/fmt
+  clean. Commit 6f83a34. AppImage 14.01 MB launch-tested (dist/w26/), CLI 51.
+- **Lesson:** in an egui Window, right-align a footer with a fixed-height
+  `allocate_ui_with_layout`, never a bare `with_layout(right_to_left)` (it stretches
+  the window). Nested-in-horizontal uses are safe.
+
 ## Appendix — measured reality
 
 | Claim | Measured | What changed |

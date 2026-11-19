@@ -69,7 +69,10 @@ pub struct Session {
     /// `history.depth()` when the document was last saved/exported/replaced.
     /// Dirty state is derived from this pair, never from a hand-set flag, so
     /// undoing back to the saved state makes the document clean again.
-    saved_depth: usize,
+    /// W38: the save-point snapshot the dirty flag compares against.
+    /// Content equality (not history depth) — depth stalls at the 80-step
+    /// cap, which made edits past a full buffer look clean.
+    saved_doc: Option<Document>,
     /// Bundled OFL faces for CPU text raster (family, bold, face). Built once
     /// from the text crate's embedded FontDb — identical in UI, CLI and export.
     faces: Vec<(String, bool, ab_glyph::FontArc)>,
@@ -139,7 +142,7 @@ impl Session {
         Self {
             doc: None,
             history: History::default(),
-            saved_depth: 0,
+            saved_doc: None,
             faces,
             settings: snagcraft_io::settings::load(),
             #[cfg(feature = "native")]
@@ -193,7 +196,13 @@ impl Session {
     /// Undo back to the save point reports clean again, which a sticky flag
     /// could never do.
     pub fn dirty(&self) -> bool {
-        self.history.depth() != self.saved_depth
+        // W38: compare against the save-point snapshot. The old depth
+        // comparison broke at the history cap (depth stalls at 80, so
+        // edits past a full buffer looked clean) and on redo branches.
+        match &self.doc {
+            Some(d) => self.saved_doc.as_ref().is_some_and(|saved| d != saved),
+            None => false,
+        }
     }
 
     /// Number of undo steps held — what `dirty` compares against.
@@ -211,9 +220,9 @@ impl Session {
     }
 
     fn replace_doc(&mut self, doc: Document) {
+        self.saved_doc = Some(doc.clone());
         self.doc = Some(doc);
         self.history.clear();
-        self.saved_depth = 0;
     }
 
     /// Test seam: simulate the portal-picker phase (a pending recording
@@ -243,10 +252,13 @@ impl Session {
             Some(c) => (c.run)(self, params),
             None => Err(CommandError::UnknownCommand(id.to_string())),
         };
-        // A successful write to disk is the save point the dirty flag compares
+        // A successful SAVE is the save point the dirty flag compares
         // against; `doc.open`/`doc.new`/captures reset it in `replace_doc`.
-        if result.is_ok() && matches!(id, "doc.save" | "doc.save_as" | "doc.export") {
-            self.saved_depth = self.history.depth();
+        // W38: export is NOT a save point — it writes a flat image, the
+        // annotations stay unsaved (live parity; clearing dirty here risked
+        // losing edits through the close guard).
+        if result.is_ok() && matches!(id, "doc.save" | "doc.save_as") {
+            self.saved_doc = self.doc.clone();
         }
         result
     }
@@ -2188,7 +2200,83 @@ mod tests {
         assert_eq!(info["width"], 64);
     }
 
-    /// Dirty state is derived from history depth vs the last save point, so an
+    /// W38: dirty is CONTENT equality against the save-point snapshot.
+    /// The old depth comparison broke at the 80-step history cap (depth
+    /// stalls at 80, so edits past a full buffer looked clean) and on redo
+    /// branches (edit after undo landed on the same depth). Export must NOT
+    /// clear dirty — it writes a flat image, the annotations stay unsaved.
+    #[test]
+    fn dirty_survives_the_history_cap_and_redo_branches() {
+        let dir = std::env::temp_dir().join(format!("snagcraft-w38-dirty-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut s = Session::new();
+        s.dispatch("doc.new", json!({"w": 32, "h": 32})).unwrap();
+        let add = |s: &mut Session| {
+            s.dispatch(
+                "edit.add",
+                json!({"object": {"kind": "Shape", "id": 0, "shape": "Rect",
+                    "rect": {"x": 1.0, "y": 1.0, "w": 4.0, "h": 4.0},
+                    "color": [0, 0, 0, 255], "width": 1.0}}),
+            )
+            .unwrap();
+        };
+        // Fill the buffer past the cap, then save.
+        for _ in 0..(snagcraft_ops::MAX_HISTORY + 5) {
+            add(&mut s);
+        }
+        let path = dir.join("cap.snagcraft");
+        s.dispatch("doc.save", json!({"path": path.to_string_lossy()}))
+            .unwrap();
+        assert!(!s.dirty(), "saved at a full buffer is clean");
+        // One more edit: depth stays at the cap, content changed -> dirty.
+        add(&mut s);
+        assert!(
+            s.dirty(),
+            "an edit past the history cap must still be dirty"
+        );
+
+        // Undo back to the saved content is clean even at the cap; redo
+        // re-dirties.
+        s.dispatch("edit.undo", json!({})).unwrap();
+        assert!(
+            !s.dirty(),
+            "undo back to the save point is clean at the cap"
+        );
+        s.dispatch("edit.redo", json!({})).unwrap();
+        assert!(s.dirty(), "redo away from the save point is dirty");
+        s.dispatch("edit.undo", json!({})).unwrap();
+
+        // Redo branch: undo past the save point, then a DIFFERENT edit lands
+        // on the save-point depth with different content -> still dirty.
+        s.dispatch("edit.undo", json!({})).unwrap();
+        s.dispatch(
+            "edit.add",
+            json!({"object": {"kind": "Shape", "id": 0, "shape": "Rect",
+                "rect": {"x": 9.0, "y": 9.0, "w": 4.0, "h": 4.0},
+                "color": [255, 0, 0, 255], "width": 1.0}}),
+        )
+        .unwrap();
+        assert!(
+            s.dirty(),
+            "a branched edit at the save-point depth is dirty"
+        );
+
+        // Export writes a flat image; the annotations remain unsaved.
+        s.dispatch("doc.save", json!({"path": path.to_string_lossy()}))
+            .unwrap();
+        assert!(!s.dirty());
+        add(&mut s);
+        let png = dir.join("out.png");
+        s.dispatch(
+            "doc.export",
+            json!({"path": png.to_string_lossy(), "format": "png"}),
+        )
+        .unwrap();
+        assert!(s.dirty(), "export must not clear the editable dirty state");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Dirty state compares the document against the last save point, so an
     /// edit dirties, an undo back to the save point cleans, and a fresh
     /// document/capture starts clean.
     #[test]
@@ -2243,7 +2331,13 @@ mod tests {
             json!({"path": path.to_string_lossy(), "format": "png", "quality": 90}),
         )
         .unwrap();
-        assert!(!s.dirty(), "export is a save point");
+        // W38: export writes a flat image — the annotations stay unsaved
+        // (live parity; the old "export is a save point" risked edit loss).
+        assert!(s.dirty(), "export does not save the editable document");
+        let native = dir.join("dirty.snagcraft");
+        s.dispatch("doc.save", json!({"path": native.to_string_lossy()}))
+            .unwrap();
+        assert!(!s.dirty(), "a real save is the save point");
         s.dispatch(
             "edit.add",
             json!({"object": {"kind": "Shape", "id": 0, "shape": "Rect",

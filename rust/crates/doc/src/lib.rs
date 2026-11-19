@@ -369,7 +369,7 @@ impl AnnotObject {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Document {
     pub size: Size,
     pub base: Arc<Surface>,

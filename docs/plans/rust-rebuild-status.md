@@ -1612,6 +1612,36 @@ live pass + gates (trim/relicense/cutover/external post). NO releases published.
   wasm 10/10. Web drop still images-only (bytes path, no fs) — C-section
   MVP limit, noted.
 
+### 2026-11-19 — W38: dirty tracking broke at the history cap (and on redo branches, and export lied)
+- **Walked undo/redo + clipboard.** History itself is sound (80-step cap =
+  live parity, redo branch clears on record, Arc-shared base snapshots;
+  clipboard copy/paste paths correct: paste = new doc via replace_doc,
+  Ctrl+V while typing belongs to the TextEdit, Ctrl+Alt+V = record).
+- **Real bug: `dirty()` compared history DEPTH against the save-point
+  depth.** At the 80-step cap the depth stalls (record pushes then removes
+  the oldest), so every edit past a full buffer looked CLEAN — the close
+  guard would not prompt and Save said "no changes". Redo branches had the
+  same class: undo + new edit landed on the save-point depth with different
+  content, also "clean".
+- **Fix:** dirty is now CONTENT equality against a save-point snapshot
+  (`saved_doc: Option<Document>`, Document gained PartialEq; base pixels
+  included, so blur/bucket count). replace_doc and doc.save/save_as set the
+  snapshot; undo/redo keep it. Bulletproof against cap, branches, resizes.
+- **Second fix: `doc.export` no longer clears dirty.** It writes a flat
+  image — the annotations stay unsaved (live parity). The old behavior
+  risked silent edit loss: annotate → export → close → no guard. The W12
+  test that encoded "export is a save point" was updated to the new
+  semantics (export stays dirty, doc.save cleans).
+- 1 new gate (dirty_survives_the_history_cap_and_redo_branches: cap edit,
+  undo/redo at the cap, branched edit at save-point depth, export-stays-
+  dirty). Cap-bug failure on the old code is provable by inspection
+  (History::record's remove(0) stalls depth at 80); the gate lives in the
+  same file as the fix so a stash negative-check isn't possible.
+- 596/0/11 twice serial, clippy/fmt clean both targets, wasm 10/10.
+- **Lesson:** a dirty flag derived from a CAPPED counter is wrong at the
+  cap — compare content (or use a monotonic counter), and never let a
+  flat-image export masquerade as saving the editable document.
+
 ## Appendix — measured reality
 
 | Claim | Measured | What changed |

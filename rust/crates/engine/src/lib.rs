@@ -599,6 +599,22 @@ fn scale_rect(rect: &mut Rect, sx: f32, sy: f32) {
 
 fn cmd_doc_open(s: &mut Session, p: Value) -> Result<Value, CommandError> {
     let path = p_str(&p, "path")?;
+    // W37: editable documents round-trip through the SAME open path — the
+    // Open dialog, drag & drop, Recent and CLI args all land here. Before
+    // this, .snagcraft files were fed to the image decoder and failed, so
+    // "Save editable… reopen and keep editing later" could never reopen.
+    let is_editable = std::path::Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("snagcraft"));
+    if is_editable {
+        let bytes = std::fs::read(path).map_err(|e| CommandError::Io(e.to_string()))?;
+        let doc =
+            snagcraft_format::load(&bytes).map_err(|e| CommandError::Format(e.to_string()))?;
+        let (w, h) = (doc.size.w, doc.size.h);
+        s.replace_doc(doc);
+        return Ok(json!({"width": w, "height": h, "editable": true}));
+    }
     let surface = snagcraft_io::open(std::path::Path::new(path))
         .map_err(|e| CommandError::Io(e.to_string()))?;
     let (w, h) = (surface.width(), surface.height());
@@ -2250,6 +2266,54 @@ mod tests {
             }
             _ => panic!("expected blur object"),
         }
+    }
+
+    /// W37: `doc.open` is extension-aware — a .snagcraft path loads the
+    /// editable document (objects intact), not the image decoder. Every UI
+    /// open path (dialog, drop, Recent, CLI) goes through doc.open.
+    #[test]
+    fn doc_open_round_trips_an_editable_document() {
+        let dir = std::env::temp_dir().join(format!("snagcraft-w37-open-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("rt-open.snagcraft");
+        let mut s = Session::new();
+        s.dispatch("doc.new", json!({"w": 24, "h": 16})).unwrap();
+        s.dispatch(
+            "edit.add",
+            json!({"object": {"kind": "Text", "id": 0,
+                "pos": {"x": 2.0, "y": 3.0}, "text": "kept",
+                "color": [1, 2, 3, 255], "size": 18.0,
+                "bold": true, "italic": false, "family": "Oswald"}}),
+        )
+        .unwrap();
+        s.dispatch("doc.save", json!({"path": path.to_str().unwrap()}))
+            .unwrap();
+        s.dispatch("doc.close", json!({})).unwrap();
+
+        let r = s
+            .dispatch("doc.open", json!({"path": path.to_str().unwrap()}))
+            .unwrap();
+        assert_eq!(r["editable"], true);
+        assert_eq!(r["width"], 24);
+        let d = s.doc().unwrap();
+        assert_eq!(d.objects.len(), 1);
+        match &d.objects[0] {
+            AnnotObject::Text {
+                text, family, bold, ..
+            } => {
+                assert_eq!(text, "kept");
+                assert_eq!(family, "Oswald");
+                assert!(*bold);
+            }
+            other => panic!("expected Text, got {other:?}"),
+        }
+        // A corrupt .snagcraft is an honest format error, not a panic.
+        std::fs::write(&path, b"not json").unwrap();
+        assert!(
+            s.dispatch("doc.open", json!({"path": path.to_str().unwrap()}))
+                .is_err()
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

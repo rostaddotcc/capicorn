@@ -2055,6 +2055,7 @@ impl SnagCraftApp {
     fn open_dialog(&mut self) -> bool {
         if let Some(path) = rfd::FileDialog::new()
             .add_filter("Images", &["png", "jpg", "jpeg", "webp"])
+            .add_filter("SnagCraft document", &["snagcraft"])
             .pick_file()
         {
             self.dispatch(
@@ -7845,10 +7846,23 @@ pub fn app_ui(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
 
     handle_keys(&ctx, app);
 
+    // W37: native drag & drop (live app.ts:5099 drop → loadImageFile).
+    // doc.open is extension-aware: images and .snagcraft documents alike.
     let dropped = ctx.input(|i| i.raw.dropped_files.clone());
     if let Some(file) = dropped.first() {
-        let path = file.path().to_string_lossy().to_string();
-        app.dispatch("doc.open", serde_json::json!({"path": path}));
+        let path = file.path().to_path_buf();
+        match app.exec(
+            "doc.open",
+            serde_json::json!({"path": path.to_string_lossy()}),
+        ) {
+            Ok(_) => {
+                app.doc_dirty = false;
+                app.selected = None;
+                app.status = format!("Opened {} — annotate away.", path.display());
+                app.redraw = true;
+            }
+            Err(err) => app.status = format!("Open failed: {err}"),
+        }
     }
 
     egui::CentralPanel::default()

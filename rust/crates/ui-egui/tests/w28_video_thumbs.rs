@@ -74,6 +74,13 @@ fn video_recent_tile_gets_a_first_frame_thumbnail() {
     }
     let dir = scratch_dir("tile");
     let clip = make_clip(&dir);
+    // W37: pin the caption clock — ts=now drifted the HH:MM caption across
+    // minute boundaries (the W22 lesson). Pin the file mtime too, so the
+    // folder scan cannot re-stamp it.
+    let pinned = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
+    if let Ok(f) = std::fs::File::open(&clip) {
+        let _ = f.set_modified(pinned);
+    }
 
     let mut app = SnagCraftApp::seeded();
     app.push_settings(SettingsView {
@@ -84,7 +91,7 @@ fn video_recent_tile_gets_a_first_frame_thumbnail() {
     app.recent.push(RecentItem {
         path: clip.clone(),
         name: "take.mp4".into(),
-        ts: std::time::SystemTime::now(),
+        ts: pinned,
         thumb: None,
     });
     app.film_open = true;
@@ -118,6 +125,7 @@ fn image_recent_tile_still_loads_synchronously() {
     let img = snagcraft_raster::Surface::from_pixel(40, 30, image::Rgba([10, 20, 30, 255]));
     let png = dir.join("shot.png");
     snagcraft_io::save(&img, &png, snagcraft_io::ImageFormat::Png, 90).unwrap();
+    let pinned = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
 
     let mut app = SnagCraftApp::seeded();
     app.push_settings(SettingsView {
@@ -128,7 +136,7 @@ fn image_recent_tile_still_loads_synchronously() {
     app.recent.push(RecentItem {
         path: png.clone(),
         name: "shot.png".into(),
-        ts: std::time::SystemTime::now(),
+        ts: pinned,
         thumb: None,
     });
     app.film_open = true;

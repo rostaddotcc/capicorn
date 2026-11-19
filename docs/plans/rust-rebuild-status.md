@@ -1582,6 +1582,36 @@ live pass + gates (trim/relicense/cutover/external post). NO releases published.
   (web-only bindings moved into the native cfg block), wasm 10/10.
 - W35 CI fully green; the apt-mirrors.txt fix run (8fac16d) in progress.
 
+### 2026-11-19 — W37: editable documents could never be reopened (doc.open ignored .snagcraft)
+- **Real bug found walking the file-I/O flows:** `doc.save {path}` writes the
+  editable .snagcraft format and the File menu promises "reopen and keep
+  editing later" — but `doc.open` fed EVERY path to the image decoder, so
+  opening a .snagcraft failed with a decode error. The dedicated `doc.load`
+  command existed but no UI path called it (Open dialog filtered to images,
+  Recent/drop/CLI all use doc.open). The save-editable feature was a one-way
+  street since W1.
+- **Fix:** `doc.open` is extension-aware — `.snagcraft` (case-insensitive)
+  routes through `snagcraft_format::load` and replaces the doc with objects
+  intact (`editable: true` in the reply); corrupt files give an honest
+  format error. Every open path (dialog, drop, Recent, CLI args) now
+  round-trips editable documents. Open dialog gains a "SnagCraft document"
+  filter.
+- **Native drag & drop audited:** a handler ALREADY existed at the end of
+  app_ui (bare dispatch, no status) — my first pass wrongly concluded it
+  was missing and added a duplicate; removed the duplicate and upgraded the
+  existing one (exec-based "Opened … — annotate away." / "Open failed: …",
+  clean dirty flag + selection). Lesson: grep ALL consumers of an input
+  before declaring a gap.
+- **W28 video-thumb gate determinism fixed:** the tile's HH:MM caption came
+  from `ts: SystemTime::now()` → drifted across minute boundaries (81-px
+  snapshot diff, the W22 lesson recurring). Pinned ts AND the clip file's
+  mtime (folder scan re-stamps from mtime); re-blessed, stable ×3.
+- 4 new gates: engine doc.open round-trip (objects + style intact, corrupt
+  file errors), UI drop image / drop editable round-trip / drop non-image
+  honest failure. 595/0/11 twice serial, clippy/fmt clean both targets,
+  wasm 10/10. Web drop still images-only (bytes path, no fs) — C-section
+  MVP limit, noted.
+
 ## Appendix — measured reality
 
 | Claim | Measured | What changed |

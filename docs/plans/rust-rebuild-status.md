@@ -1642,6 +1642,28 @@ live pass + gates (trim/relicense/cutover/external post). NO releases published.
   cap — compare content (or use a monotonic counter), and never let a
   flat-image export masquerade as saving the editable document.
 
+### 2026-11-19 — W39: verification wake — settings/CLI sound, design pass clean (no change)
+- **Settings persistence walked end-to-end and is sound:** io round-trip
+  (13 tests), engine settings.set merge+validate (7), UI dirty flag (1),
+  and the app-layer hook `persist_settings` runs in BOTH `Shell::ui` and
+  `Shell::logic` (hidden tray/widget path) — so a settings change made
+  while hidden still flushes. No gap.
+- **CLI / single-instance:** acquire_or_forward + socket-path override
+  tests pass (4). --capture/--region/image-path argv handling intact.
+- **Fresh design vision pass** on the shortcuts sheet + monitor picker:
+  every flag triaged as a FALSE positive via WCAG math + code inspection —
+  muted resolution/helper text 6.24:1, Primary badge 5.8:1 (both pass AA;
+  vision misjudged contrast again, as in W30); shortcuts "mid-glyph
+  clipping" = the normal scroll fold, "column collision" = an 18px grid
+  gap already in code, scrollbar = W17 AlwaysVisible + dormant thumb.
+  Monitor-picker footer compactness = W26 fix holding. No fixes warranted
+  (the skill's vision-false-positive discipline applied).
+- W38 CI fully green (gates + windows + appimage). No code change this
+  wake; the W38 AppImage remains current.
+- **Lesson:** a verification wake that finds nothing is a valid outcome —
+  measure contrast and read the layout code before "fixing" vision flags;
+  don't manufacture cosmetic churn on already-audited surfaces.
+
 ## Appendix — measured reality
 
 | Claim | Measured | What changed |

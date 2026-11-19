@@ -148,8 +148,8 @@ fn commands_list_exposes_the_whole_registry() {
     let commands = res["result"].as_array().expect("array of commands");
     assert_eq!(
         commands.len(),
-        49,
-        "W20 engine registry has 49 commands (48 + scroll.cancel)"
+        51,
+        "W25 engine registry has 51 commands (49 + capture.monitors + capture.monitor)"
     );
     assert_eq!(commands.len(), snagcraft_engine::registry().len());
     for entry in commands {

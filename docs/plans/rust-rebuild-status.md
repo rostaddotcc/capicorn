@@ -1164,6 +1164,33 @@ live pass + gates (trim/relicense/cutover/external post). NO releases published.
   (rostad or CI windows-latest). Next: W25b monitor enumeration + per-monitor
   capture, W25c engine commands, W25d in-app picker, W25e CI.
 
+### 2026-11-19 — W25b/c/d: monitor enumeration + commands + in-app picker (issue #1)
+- **W25b (capture crate):** `MonitorInfo` (plain serde, no xcap leak),
+  `list_monitors()` (xcap `Monitor::all` on Windows/macOS; empty on Linux — the
+  portal is the picker there), `capture_monitor_index(index)` (xcap per-monitor;
+  Linux → Unsupported routing to the portal). serde added to the crate.
+- **W25c (engine):** `capture.monitors {}` + `capture.monitor {index}` commands
+  (native). Registry 49→51; BOTH count guards bumped (automation + engine).
+- **W25d (ui):** Capture → "Choose screen…" → `open_monitor_picker` (queries
+  capture.monitors; empty → system-picker note; non-empty → picker dialog).
+  `monitor_picker_dialog` lists monitor cards (name, resolution, Primary badge),
+  click → `capture_monitor(index)` through the SAME off-thread pipeline as a full
+  capture (autosave + Recent + load for free). Esc/Cancel close. `capture_in_flight`
+  test seam. Native-only (web has no capture).
+- **Gates:** 5 new (tests/w25_monitor_picker.rs): picker list + Primary badge
+  (snapshot, vision-verified), click→capture dispatch, Esc/Cancel, Linux empty-list
+  fallback note, engine commands (monitors array, missing-index reject, Linux
+  portal routing). w4_capture_menu + w4_timelapse_dialog re-blessed (new menu item;
+  diff vision-checked = clean insertion). Two consecutive full serial runs green.
+- Parent-verified: workspace **542 passed / 0 failed / 11 ignored** (×2 serial),
+  clippy/fmt clean, layers legal, xtask wasm 10/10, **Windows `cargo check` Finished**.
+- Docs: 2 new parity rows (monitor selection + cross-platform backend), summary
+  recounted (162 rows, 1 pending = Trim). Plan W25b/c/d marked done.
+- **Still honest:** the picker + dispatch are proven headless; the actual Windows
+  multi-monitor GRAB needs a Windows run (rostad/CI). W25e (CI windows-latest) next.
+- Minor cosmetic note: the picker dialog has extra vertical whitespace below the
+  last card (egui window sizing) — polish follow-up, not a defect.
+
 ## Appendix — measured reality
 
 | Claim | Measured | What changed |

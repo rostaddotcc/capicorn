@@ -35,7 +35,7 @@ MISSING for issue #1 is monitor choice, not a from-scratch port.
   unchanged (tests green); Windows writes without Unix mode bits.
 - Whole app `cargo check`s for x86_64-pc-windows-msvc.
 
-### W25b — capture backend: monitor enumeration + per-monitor/window capture
+### W25b — capture backend: monitor enumeration + per-monitor capture (DONE 2026-11-19)
 - `crates/capture` (non-Linux): `list_monitors() -> Vec<MonitorInfo>` via
   `xcap::Monitor::all()` (id/index, friendly_name, x/y/width/height, is_primary,
   scale_factor). `capture_monitor(index)` and `capture_window(...)` via xcap.
@@ -43,14 +43,14 @@ MISSING for issue #1 is monitor choice, not a from-scratch port.
   picker is non-Linux-only (Linux already has the OS picker).
 - `MonitorInfo` is a plain serde struct (no xcap type leaks past the crate).
 
-### W25c — engine commands
+### W25c — engine commands (DONE 2026-11-19)
 - `capture.monitors {}` → `{monitors:[MonitorInfo]}` (native).
 - `capture.monitor {index}` → capture that output (native; Linux uses the portal
   MONITOR picker OR direct index if the portal can target one).
 - `capture.window` non-Linux path (xcap Window::all + pick). Registry grows →
   bump BOTH count guards (automation + engine) per the skill.
 
-### W25d — UI: in-app monitor picker
+### W25d — UI: in-app monitor picker (DONE 2026-11-19)
 - Where no OS picker exists (Windows/macOS), Capture → "Choose screen" opens an
   egui dialog listing monitors (friendly name + resolution + primary badge);
   clicking one captures it. On Linux the existing portal picker stays.

@@ -14,6 +14,7 @@ snagcraft-geom = { path = "../geom" }
 thiserror.workspace = true
 tracing.workspace = true
 image.workspace = true
+serde.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 ashpd = { workspace = true }

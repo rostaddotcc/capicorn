@@ -1018,6 +1018,13 @@ pub struct SnagCraftApp {
     editing: Option<TextEdit>,
     pub selected: Option<u64>,
     capture_rx: Option<mpsc::Receiver<Result<Surface, String>>>,
+    /// W25: in-app monitor picker (Windows/macOS, where no OS picker exists).
+    /// `monitors` is the `capture.monitors` list; the dialog opens only when it
+    /// is non-empty. Native-only — the web build has no screen capture.
+    #[cfg(feature = "native")]
+    pub monitor_picker_open: bool,
+    #[cfg(feature = "native")]
+    pub monitors: Vec<snagcraft_capture::MonitorInfo>,
     /// W4d live layer.
     pub rec: RecordState,
     pub scroll: ScrollState,
@@ -1184,6 +1191,10 @@ impl SnagCraftApp {
             editing: None,
             selected: None,
             capture_rx: None,
+            #[cfg(feature = "native")]
+            monitor_picker_open: false,
+            #[cfg(feature = "native")]
+            monitors: Vec::new(),
             rec: RecordState::default(),
             scroll: ScrollState::default(),
             timelapse: TimelapseState::default(),
@@ -1370,11 +1381,58 @@ impl SnagCraftApp {
         self.start_capture();
     }
 
+    /// W25: is a screen grab in flight? (test seam for the monitor picker)
+    pub fn capture_in_flight(&self) -> bool {
+        self.capture_rx.is_some()
+    }
+
     /// Capture and switch straight into the crop tool (Region button/hotkey).
     pub fn capture_region(&mut self) {
         self.last_capture = Some(CaptureKind::Region);
         self.select_tool(Tool::Crop);
         self.start_capture();
+    }
+
+    /// W25: Capture → "Choose screen…". Query the connected outputs; where the
+    /// OS provides no picker (Windows/macOS) open the in-app monitor picker.
+    /// On Linux the list is empty and the system portal picker is the selector.
+    #[cfg(feature = "native")]
+    pub fn open_monitor_picker(&mut self) {
+        match self.exec("capture.monitors", serde_json::json!({})) {
+            Ok(v) => {
+                let monitors: Vec<snagcraft_capture::MonitorInfo> =
+                    serde_json::from_value(v["monitors"].clone()).unwrap_or_default();
+                if monitors.is_empty() {
+                    self.status =
+                        "Monitor selection uses the system picker here — start a recording or scrolling capture to choose a screen."
+                            .into();
+                } else {
+                    self.monitors = monitors;
+                    self.monitor_picker_open = true;
+                }
+                self.redraw = true;
+            }
+            Err(err) => self.status = format!("Cannot list monitors: {err}"),
+        }
+    }
+
+    /// W25: capture the monitor the user picked, through the same off-thread
+    /// pipeline as a full capture (autosave + Recent + load come for free).
+    #[cfg(feature = "native")]
+    pub fn capture_monitor(&mut self, index: usize) {
+        self.monitor_picker_open = false;
+        if self.capture_rx.is_some() || !self.capture_enabled {
+            return;
+        }
+        self.last_capture = Some(CaptureKind::Full);
+        let (tx, rx) = mpsc::channel();
+        self.capture_rx = Some(rx);
+        self.status = "Capturing the selected monitor…".into();
+        self.redraw = true;
+        std::thread::spawn(move || {
+            let result = snagcraft_capture::capture_monitor_index(index).map_err(|e| e.to_string());
+            let _ = tx.send(result);
+        });
     }
 
     fn poll_capture(&mut self) {
@@ -3617,6 +3675,114 @@ impl SnagCraftApp {
             });
         if close || !open {
             self.about_open = false;
+        }
+    }
+
+    /// W25: the in-app monitor picker (Windows/macOS). Lists the connected
+    /// outputs as cards — name, resolution, a Primary badge — and capturing the
+    /// clicked one. This is the issue #1 fix where no OS picker exists.
+    #[cfg(feature = "native")]
+    fn monitor_picker_dialog(&mut self, ctx: &egui::Context) {
+        if !self.monitor_picker_open {
+            return;
+        }
+        let mut open = true;
+        let mut cancel = false;
+        let mut pick: Option<usize> = None;
+        egui::Window::new("Choose a screen")
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .default_width(360.0)
+            .show(ctx, |ui| {
+                ui.label(
+                    egui::RichText::new("Pick the monitor to capture.")
+                        .size(11.5)
+                        .weak(),
+                );
+                ui.add_space(6.0);
+                let monitors = self.monitors.clone();
+                for m in &monitors {
+                    let (rect, resp) =
+                        ui.allocate_exact_size(vec2(332.0, 46.0), egui::Sense::click());
+                    let hovered = resp.hovered();
+                    let fill = if hovered {
+                        pal_hover(ui)
+                    } else {
+                        ui.visuals().faint_bg_color
+                    };
+                    let border = if hovered {
+                        pal_accent(ui)
+                    } else {
+                        pal_border(ui)
+                    };
+                    ui.painter().rect_filled(rect, CornerRadius::same(6), fill);
+                    ui.painter().rect_stroke(
+                        rect,
+                        CornerRadius::same(6),
+                        Stroke::new(1.0, border),
+                        StrokeKind::Inside,
+                    );
+                    ui.painter().text(
+                        pos2(rect.left() + 12.0, rect.top() + 8.0),
+                        egui::Align2::LEFT_TOP,
+                        &m.name,
+                        egui::FontId::proportional(12.5),
+                        pal_fg(ui),
+                    );
+                    ui.painter().text(
+                        pos2(rect.left() + 12.0, rect.top() + 26.0),
+                        egui::Align2::LEFT_TOP,
+                        format!("{} × {}", m.width, m.height),
+                        egui::FontId::proportional(11.0),
+                        pal_muted(ui),
+                    );
+                    if m.is_primary {
+                        let badge = "Primary";
+                        let galley = ui.painter().layout_no_wrap(
+                            badge.to_string(),
+                            egui::FontId::proportional(9.0),
+                            pal_accent(ui),
+                        );
+                        let badge_rect = Rect::from_min_size(
+                            pos2(rect.right() - galley.size().x - 20.0, rect.top() + 8.0),
+                            galley.size() + vec2(8.0, 2.0),
+                        );
+                        ui.painter().rect_filled(
+                            badge_rect,
+                            CornerRadius::same(4),
+                            pal_surface(ui),
+                        );
+                        ui.painter().galley(
+                            pos2(badge_rect.left() + 4.0, badge_rect.top() + 1.0),
+                            galley,
+                            pal_accent(ui),
+                        );
+                    }
+                    resp.widget_info(|| {
+                        egui::WidgetInfo::labeled(
+                            egui::Role::Button,
+                            true,
+                            format!("{} {} × {}", m.name, m.width, m.height),
+                        )
+                    });
+                    let resp = resp.on_hover_text("Capture this monitor");
+                    if resp.clicked() {
+                        pick = Some(m.index);
+                    }
+                    ui.add_space(6.0);
+                }
+                ui.add_space(2.0);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button("Cancel").clicked() {
+                        cancel = true;
+                    }
+                });
+            });
+        if let Some(index) = pick {
+            self.capture_monitor(index);
+        } else if cancel || !open {
+            self.monitor_picker_open = false;
         }
     }
 
@@ -5970,6 +6136,15 @@ fn handle_keys(ctx: &egui::Context, app: &mut SnagCraftApp) {
         return;
     }
 
+    // W25: the monitor picker owns Esc while it is up (native only).
+    #[cfg(feature = "native")]
+    if app.monitor_picker_open {
+        if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape)) {
+            app.monitor_picker_open = false;
+        }
+        return;
+    }
+
     // A canvas dialog owns Esc (and the keyboard) while it is up.
     if app.new_canvas_open || app.resize_open {
         if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape)) {
@@ -6375,6 +6550,16 @@ fn capture_menu(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
                 .clicked()
             {
                 app.capture_region();
+                ui.close();
+            }
+            // W25: pick one monitor — in-app picker where no OS picker exists
+            // (Windows/macOS); on Linux the system portal picker is used.
+            if ui
+                .add_enabled(!capturing, egui::Button::new("Choose screen…"))
+                .on_hover_text("Capture one specific monitor")
+                .clicked()
+            {
+                app.open_monitor_picker();
                 ui.close();
             }
             ui.separator();
@@ -7754,6 +7939,8 @@ pub fn app_ui(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
     app.timelapse_dialog(&ctx);
     app.new_canvas_dialog(&ctx);
     app.resize_dialog(&ctx);
+    #[cfg(feature = "native")]
+    app.monitor_picker_dialog(&ctx);
     app.floating_widget(&ctx);
 
     if let Some(st) = &mut app.selftest {

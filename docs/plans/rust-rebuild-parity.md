@@ -138,6 +138,11 @@ Effects are applied to the **image layer at export resolution** (scene px × exp
 
 **Capture sources** (mode union `full | region | window | monitor | scrolling | interval`, `app.ts:36`): full-screen `capture.rs:15-29`, window `capture.rs:46-99`, monitor `capture.rs:54-104`; Linux portal path `portal_capture.rs:80` (`ashpd` Screenshot); commands `capture_screenshot`/`capture_window`/`capture_monitor` `commands.rs:78-145`; Capture-menu modes and labels `app.ts:838-870`.
 
+| Feature | Evidence | rust |
+|---|---|---|
+| **Monitor selection** — "Choose screen…" lists connected outputs (name, resolution, Primary badge) and captures the picked one; in-app picker where no OS picker exists (Windows/macOS, xcap `Monitor::all`), system portal picker on Linux | issue #1; live `capture_monitor` `capture.rs:54-104`; xcap `Monitor::all`/`friendly_name`/`is_primary` | W25 (Rust edition: `capture.monitors`/`capture.monitor` + in-app picker; the stable Tauri Windows path was primary-only with no picker — development cut, fix lands here) |
+| Cross-platform capture backend — Windows/macOS via xcap (per-monitor + full), Linux via portal; whole app cross-compiles for x86_64-pc-windows-msvc | xcap README implementation table (Windows ≥8.1 ✅); `crates/capture` cfg split | W25 (W25a token-file portability + compile probe; live Windows capture proof needs a Windows host/CI) |
+
 ---
 
 ## 6. Recording
@@ -301,13 +306,13 @@ Sections rendered: General, Capture, Recording audio, Global hotkeys, Save locat
 
 ---
 
-## Wave coverage at W24 (2026-11-19)
+## Wave coverage at W25 (2026-11-19)
 
 The W1-era scope note that used to sit here ("not started at all: shell, recording,
 scrolling, OCR, timelapse, upload, settings, themes, shortcuts, About") is obsolete —
-W2–W5 landed most of it, and W7–W24 closed the rest. The W6b summary that used to
+W2–W5 landed most of it, and W7–W25 closed the rest. The W6b summary that used to
 sit here (45 `pending`) was stale: those rows were closed by W7–W14 but the table
-was never recounted. Current state of the checklist (recounted row-by-row at W24):
+was never recounted. Current state of the checklist (recounted row-by-row at W25):
 
 | Status | Rows |
 |--------|------|
@@ -328,9 +333,10 @@ was never recounted. Current state of the checklist (recounted row-by-row at W24
 | `W19` | 1 |
 | `W22` | 1 |
 | `W24` | 1 |
+| `W25` | 2 |
 | `pending` (Trim — rostad-gated) | 1 |
 | `n/a` | 1 |
-| **total** | **160** |
+| **total** | **162** |
 
 What the waves delivered, per `docs/plans/rust-rebuild-status.md`: 13-tool annotation
 parity with 10 object kinds and 5 shape variants (W2); tray, global hotkeys,
@@ -374,14 +380,17 @@ preset cards that fill the fields and highlight the match, and remembered size/b
 (the live localStorage prefs, now persisted settings).** **W24 gave the close-guard
 modal the live hierarchy ("Save changes before closing?", Cancel left, ghost-danger
 Discard + accent "Save & close" right) and made the OCR Copy text button the accent
-primary it is in the live app.**
+primary it is in the live app.** **W25 opened the Windows-capture wave (issue #1):
+the whole app cross-compiles for Windows, the token file is cross-platform, and
+"Choose screen…" now lists monitors (xcap) with an in-app picker + per-monitor
+capture where no OS picker exists; Linux keeps the portal picker.**
 
 The single `pending` row is **Trim** — deliberately out of parity (the live v1.5.3
 has no trim) and gated on rostad's build-or-drop decision (`docs/gaps.md` A2).
 Every other row is backed by live code. The remaining open items in `docs/gaps.md`
 are rostad gates (A1–A4), web-MVP limits (C1–C3) and future platform ports (D1–D2).
 
-**Coverage:** 160 rows across 14 sections. Every TS line number came from a grep/read
+**Coverage:** 162 rows across 14 sections. Every TS line number came from a grep/read
 against commit `3cec2ee` (baseline v1.5.3) during W1; the only exceptions are the two
 `CHANGELOG.md` citations, marked as such. Rust statuses were re-audited at W6b as
-described at the top of this file, recounted at W15, and flow-audited at W18–W24.
+described at the top of this file, recounted at W15, and flow-audited at W18–W25.

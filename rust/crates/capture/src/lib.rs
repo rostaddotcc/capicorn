@@ -113,6 +113,93 @@ pub fn capture_full_blocking() -> Result<Surface, CaptureError> {
     capture_full_native()
 }
 
+/// W25: one connected output, as the in-app monitor picker lists it.
+///
+/// A plain serde value so no `xcap` type leaks past this crate — the engine
+/// serializes it straight to the UI, and kittest seeds it for picker gates.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct MonitorInfo {
+    /// Stable index into `Monitor::all()` order (the capture selector).
+    pub index: usize,
+    /// Human label (xcap `friendly_name`, falling back to `name`).
+    pub name: String,
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
+    pub is_primary: bool,
+    pub scale_factor: f32,
+}
+
+/// W25: enumerate connected outputs for the in-app monitor picker.
+///
+/// Windows/macOS: `xcap::Monitor::all()`. Linux returns an empty list — the
+/// desktop portal provides its own screen picker there (a Wayland-native
+/// in-app enumeration needs output-management protocols; that is a later
+/// sub-wave). An empty list tells the UI "use the system picker".
+pub fn list_monitors() -> Result<Vec<MonitorInfo>, CaptureError> {
+    #[cfg(target_os = "linux")]
+    {
+        Ok(Vec::new())
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let monitors = xcap::Monitor::all()
+            .map_err(|err| CaptureError::Io(format!("cannot enumerate monitors: {err}")))?;
+        let mut out = Vec::with_capacity(monitors.len());
+        for (index, m) in monitors.iter().enumerate() {
+            let name = m
+                .friendly_name()
+                .or_else(|_| m.name())
+                .unwrap_or_else(|_| format!("Monitor {}", index + 1));
+            out.push(MonitorInfo {
+                index,
+                name,
+                x: m.x().unwrap_or(0),
+                y: m.y().unwrap_or(0),
+                width: m.width().unwrap_or(0),
+                height: m.height().unwrap_or(0),
+                is_primary: m.is_primary().unwrap_or(false),
+                scale_factor: m.scale_factor().unwrap_or(1.0),
+            });
+        }
+        Ok(out)
+    }
+}
+
+/// W25: capture one specific output by its `list_monitors` index.
+///
+/// Windows/macOS: `xcap` per-monitor capture (this is the issue #1 fix — the
+/// user picks the screen in-app where no OS picker exists). Linux: the portal
+/// picker is the selector, so a direct index is unsupported here.
+pub fn capture_monitor_index(index: usize) -> Result<Surface, CaptureError> {
+    #[cfg(target_os = "linux")]
+    {
+        let _ = index;
+        Err(CaptureError::Unsupported(
+            "monitor selection on Linux uses the system portal picker".into(),
+        ))
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let monitors = xcap::Monitor::all()
+            .map_err(|err| CaptureError::Io(format!("cannot enumerate monitors: {err}")))?;
+        let monitor = monitors
+            .get(index)
+            .ok_or_else(|| CaptureError::Io(format!("monitor index {index} is out of range")))?;
+        let surface = monitor
+            .capture_image()
+            .map_err(|err| CaptureError::Io(format!("monitor capture failed: {err}")))?;
+        let (w, h) = surface.dimensions();
+        if !dims_ok(w, h) {
+            return Err(CaptureError::Io(format!(
+                "captured frame is {w}x{h}, outside the supported range"
+            )));
+        }
+        Ok(surface)
+    }
+}
+
 /// Decode PNG/JPEG/WebP bytes into a validated RGBA surface.
 ///
 /// Split out from [`capture_full`] so the decode + cap rules are testable

@@ -430,6 +430,32 @@ fn cmd_capture_full(s: &mut Session, _p: Value) -> Result<Value, CommandError> {
     Ok(json!({"width": w, "height": h}))
 }
 
+/// W25: `capture.monitors {}` — list connected outputs for the in-app picker.
+/// Empty on Linux (the portal provides its own picker); populated on
+/// Windows/macOS via xcap. The UI opens the picker only when this is non-empty.
+#[cfg(feature = "native")]
+fn cmd_capture_monitors(_s: &mut Session, _p: Value) -> Result<Value, CommandError> {
+    let monitors =
+        snagcraft_capture::list_monitors().map_err(|e| CommandError::Capture(e.to_string()))?;
+    Ok(json!({ "monitors": monitors }))
+}
+
+/// W25: `capture.monitor {index}` — capture one specific output and open it.
+/// The issue #1 fix: where no OS picker exists (Windows/macOS) the user picks
+/// the screen in-app. Linux routes monitor choice through the portal picker.
+#[cfg(feature = "native")]
+fn cmd_capture_monitor(s: &mut Session, p: Value) -> Result<Value, CommandError> {
+    let index =
+        p.get("index")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| CommandError::InvalidParams("missing 'index'".into()))? as usize;
+    let surface = snagcraft_capture::capture_monitor_index(index)
+        .map_err(|e| CommandError::Capture(e.to_string()))?;
+    let (w, h) = (surface.width(), surface.height());
+    s.replace_doc(Document::new(surface));
+    Ok(json!({"width": w, "height": h, "index": index}))
+}
+
 fn cmd_doc_new(s: &mut Session, p: Value) -> Result<Value, CommandError> {
     let w = p_f32(&p, "w")?;
     let h = p_f32(&p, "h")?;
@@ -1494,6 +1520,20 @@ pub fn registry() -> Vec<CommandSpec> {
             label: "Capture full screen",
             params_doc: "{}",
             run: cmd_capture_full,
+        },
+        #[cfg(feature = "native")]
+        CommandSpec {
+            id: "capture.monitors",
+            label: "List connected monitors",
+            params_doc: "{} — empty on Linux (system picker); xcap list on Windows/macOS",
+            run: cmd_capture_monitors,
+        },
+        #[cfg(feature = "native")]
+        CommandSpec {
+            id: "capture.monitor",
+            label: "Capture one monitor by index",
+            params_doc: "{index} — the in-app picker's choice (Windows/macOS)",
+            run: cmd_capture_monitor,
         },
         CommandSpec {
             id: "doc.new",
@@ -2824,13 +2864,15 @@ mod tests {
     }
 
     #[test]
-    fn native_registry_keeps_all_49_commands() {
+    fn native_registry_keeps_all_51_commands() {
         // Desktop contract: every command the UI, CLI and MCP know is present.
         // Bump deliberately when a wave adds a command.
         let ids: Vec<&str> = registry().iter().map(|c| c.id).collect();
-        assert_eq!(ids.len(), 49, "native registry drifted: {ids:?}");
+        assert_eq!(ids.len(), 51, "native registry drifted: {ids:?}");
         for native_only in [
             "capture.full",
+            "capture.monitors",
+            "capture.monitor",
             "record.start",
             "scroll.poll",
             "scroll.cancel",

@@ -653,6 +653,14 @@ struct TextEdit {
     /// W14: `Some(id)` re-edits an existing Text/Callout in place (set_text on
     /// commit, remove when emptied); `None` places a new caption.
     target: Option<u64>,
+    /// W32: screen rect of the floating quick bar (font/size/B/I), recorded
+    /// each frame it paints. Focus moving INTO the bar must not commit the
+    /// caption — that is what made the font dropdown vanish on click.
+    bar_rect: Option<Rect>,
+    /// W32: the bar's font dropdown was open at the start of this frame's
+    /// bar paint — clicking one of its options is editing, not a click-away
+    /// (the option sits OUTSIDE the bar rect, below it).
+    bar_popup_open: bool,
 }
 
 pub struct SelfTest {
@@ -7792,6 +7800,8 @@ pub fn app_ui(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
                                         buf: text,
                                         focus_requested: false,
                                         target: Some(id),
+                                        bar_rect: None,
+                                        bar_popup_open: false,
                                     });
                                 }
                                 Some(AnnotObject::Callout {
@@ -7813,6 +7823,8 @@ pub fn app_ui(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
                                         buf: text,
                                         focus_requested: false,
                                         target: Some(id),
+                                        bar_rect: None,
+                                        bar_popup_open: false,
                                     });
                                 }
                                 _ => {}
@@ -7954,15 +7966,41 @@ pub fn app_ui(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
                 Tool::Text => {
                     if resp.clicked()
                         && let Some(p) = hover_img
-                        && app.editing.is_none()
                     {
-                        app.commit_text();
-                        app.editing = Some(TextEdit {
-                            pos: p,
-                            buf: String::new(),
-                            focus_requested: false,
-                            target: None,
-                        });
+                        if app.editing.is_none() {
+                            app.commit_text();
+                            app.editing = Some(TextEdit {
+                                pos: p,
+                                buf: String::new(),
+                                focus_requested: false,
+                                target: None,
+                                bar_rect: None,
+                                bar_popup_open: false,
+                            });
+                        } else {
+                            // W32: after a font/size pick the focus sits on
+                            // the quick bar, not the TextEdit — lost_focus
+                            // cannot fire, so a canvas click outside the bar
+                            // and the edit box commits here instead.
+                            let ptr = ui.input(|i| i.pointer.interact_pos());
+                            let keep = app.editing.as_ref().is_some_and(|e| {
+                                let box_rect = Rect::from_min_size(
+                                    to_screen(e.pos),
+                                    vec2(320.0, app.font_size * 1.5 + 10.0),
+                                );
+                                ptr.is_some_and(|p| {
+                                    box_rect.contains(p)
+                                        || e.bar_rect.is_some_and(|b| b.expand(4.0).contains(p))
+                                })
+                            });
+                            // An open font popup owns the click even if the
+                            // canvas interact sees it too (the option sits
+                            // below the bar rect).
+                            let popup_open = app.editing.as_ref().is_some_and(|e| e.bar_popup_open);
+                            if !keep && !popup_open {
+                                app.commit_text();
+                            }
+                        }
                     }
                 }
                 Tool::Crop => {
@@ -8272,29 +8310,62 @@ pub fn app_ui(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
             });
 
             // ---- inline text editing ---------------------------------------
-            if let Some(edit) = app.editing.as_ref().filter(|e| e.target.is_none()) {
-                let pos = edit.pos;
-                let sp = to_screen(pos);
-                let bar_h = 30.0;
-                let bar_y = if sp.y - bar_h - 10.0 > ui.clip_rect().top() {
-                    sp.y - bar_h - 8.0
-                } else {
-                    sp.y + app.font_size * 1.5 + 14.0
-                };
-                let bar_rect = Rect::from_min_size(pos2(sp.x, bar_y), vec2(340.0, bar_h));
-                ui.scope_builder(egui::UiBuilder::new().max_rect(bar_rect), |ui| {
-                    egui::Frame::new()
-                        .fill(Color32::WHITE)
-                        .stroke(Stroke::new(1.0, BORDER))
-                        .corner_radius(CornerRadius::same(6))
-                        .inner_margin(egui::Margin::symmetric(6, 3))
-                        .show(ui, |ui| {
-                            ui.horizontal(|ui| {
-                                ui.spacing_mut().item_spacing = vec2(4.0, 2.0);
-                                font_controls(ui, app, "quick-font");
-                            });
-                        });
+            // W32: record the quick bar's screen rect on the edit state so the
+            // commit-on-lost-focus logic knows when focus moved INTO the bar
+            // (font dropdown / size / B / I) instead of away from the caption.
+            let quick_bar_rect = app
+                .editing
+                .as_ref()
+                .filter(|e| e.target.is_none())
+                .map(|edit| {
+                    let sp = to_screen(edit.pos);
+                    let bar_h = 30.0;
+                    let bar_y = if sp.y - bar_h - 10.0 > ui.clip_rect().top() {
+                        sp.y - bar_h - 8.0
+                    } else {
+                        sp.y + app.font_size * 1.5 + 14.0
+                    };
+                    Rect::from_min_size(pos2(sp.x, bar_y), vec2(340.0, bar_h))
                 });
+            if let Some(bar_rect) = quick_bar_rect {
+                let mut bar_popup_open = false;
+                // W32: a STABLE id salt — without it the scope's auto
+                // "child" id shifts with the widget count before it, so the
+                // font popup's open state never persists across frames.
+                ui.scope_builder(
+                    egui::UiBuilder::new()
+                        .id_salt("snagcraft-text-quickbar")
+                        .max_rect(bar_rect),
+                    |ui| {
+                        egui::Frame::new()
+                            .fill(Color32::WHITE)
+                            .stroke(Stroke::new(1.0, BORDER))
+                            .corner_radius(CornerRadius::same(6))
+                            .inner_margin(egui::Margin::symmetric(6, 3))
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.spacing_mut().item_spacing = vec2(4.0, 2.0);
+                                    // Sample BEFORE the combo paints: on the
+                                    // frame an option is clicked the popup is
+                                    // still open here, and closes inside
+                                    // font_controls — the lost-focus guard below
+                                    // needs that "was open" state.
+                                    // NB: from_id_salt wraps the salt in IdSalt
+                                    // internally, so the query must pass an
+                                    // IdSalt too — a bare &str hashes differently.
+                                    bar_popup_open = egui::ComboBox::is_open(
+                                        ui.ctx(),
+                                        ui.make_persistent_id(egui::IdSalt::new("quick-font")),
+                                    );
+                                    font_controls(ui, app, "quick-font");
+                                });
+                            });
+                    },
+                );
+                if let Some(edit) = app.editing.as_mut() {
+                    edit.bar_rect = Some(bar_rect);
+                    edit.bar_popup_open = bar_popup_open;
+                }
             }
 
             if let Some(edit) = &mut app.editing {
@@ -8318,7 +8389,23 @@ pub fn app_ui(ui: &mut egui::Ui, app: &mut SnagCraftApp) {
                     edit.focus_requested = true;
                 }
                 if resp.lost_focus() {
-                    app.commit_text();
+                    // W32: focus moving into the quick bar (font dropdown,
+                    // size slider, B/I) is part of editing, not a click-away
+                    // — committing here is what made the bar vanish the
+                    // moment the font dropdown was clicked. An open font
+                    // popup counts too: its options sit below the bar rect.
+                    // Tab keeps the editor open; only a real click-away
+                    // commits.
+                    let bar = edit.bar_rect;
+                    let popup_open = edit.bar_popup_open;
+                    let into_bar = ctx
+                        .input(|i| i.pointer.press_origin().or(i.pointer.interact_pos()))
+                        .zip(bar)
+                        .is_some_and(|(p, b)| b.expand(4.0).contains(p));
+                    let tabbed = ctx.input(|i| i.key_pressed(egui::Key::Tab));
+                    if !into_bar && !tabbed && !popup_open {
+                        app.commit_text();
+                    }
                 }
             }
         });

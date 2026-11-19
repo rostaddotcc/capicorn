@@ -4439,6 +4439,7 @@ name = "snagcraft-ui-egui"
 version = "0.1.0"
 dependencies = [
  "ab_glyph",
+ "accesskit",
  "chrono",
  "eframe",
  "egui",

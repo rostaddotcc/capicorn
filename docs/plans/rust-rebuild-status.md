@@ -1434,6 +1434,41 @@ live pass + gates (trim/relicense/cutover/external post). NO releases published.
   ack wait so the worker never depends on the UI being alive, and always pair
   every hide with a restore on every exit path.
 
+### 2026-11-19 — W32: rostad's text quick-bar bug — the font dropdown killed the popup
+- **Report:** "när man ska välja typsnitt i det lilla popupverktyget för text
+  så försvinner den när man klickar på font-rullgardinen". Root cause: the
+  inline TextEdit commits on `lost_focus`; clicking the quick bar's font
+  ComboBox moved focus out of the TextEdit → commit → `editing = None` → the
+  bar (gated on `editing.is_some()`) vanished before the popup could be used.
+- **Fix (three guards, one per escape path):**
+  1. `lost_focus` no longer commits when the pointer click landed inside the
+     quick bar rect (recorded on the edit state each frame) or Tab was used.
+  2. The font popup's open state is sampled BEFORE the bar paints (on the
+     option-click frame the popup closes inside `font_controls`) and blocks
+     both commit paths — options sit BELOW the bar rect.
+  3. A canvas click while focus sits on the bar (TextEdit not focused, so
+     lost_focus cannot fire) commits via the Tool::Text click path — unless
+     the click is inside the bar/box or the popup is open (first outside
+     click just closes the popup, standard dropdown behavior).
+- **Two egui traps found on the way (both now in the skill):**
+  - The bar's `scope_builder` had NO id salt → its auto "child" id shifted
+    with the widget count before it, so the combo's popup state never
+    persisted across frames. Fixed with `.id_salt("snagcraft-text-quickbar")`.
+  - `ComboBox::from_id_salt("x")` wraps the salt in `IdSalt` internally;
+    querying `ComboBox::is_open(ctx, ui.make_persistent_id("x"))` with a bare
+    &str hashes DIFFERENTLY and always returns false. Must pass
+    `ui.make_persistent_id(egui::IdSalt::new("x"))`.
+- 3 gates (w32_text_quickbar): dropdown click keeps the editor + family pick
+  reaches the committed object, B-toggle keeps the editor, popup-close click
+  then click-away commits. All three FAIL on the pre-fix code (stash-proven).
+  kittest notes: combo buttons have no accesskit label (query Role::ComboBox,
+  filter by rect — the Text rail carries a twin); popup options below the
+  scroll fold have virtual rects (click a top option); Esc cancels the whole
+  editor even with a popup open.
+- 577/0/11 (run 2 hit the known parallel wgpu-teardown SIGSEGV in w4_live;
+  serial rerun 12/12), clippy/fmt clean both targets, wasm 10/10. No snapshot
+  drift (the bar only paints while editing).
+
 ## Appendix — measured reality
 
 | Claim | Measured | What changed |

@@ -59,3 +59,4 @@ workspace = true
 
 [dev-dependencies]
 egui_kittest.workspace = true
+accesskit = "0.25"

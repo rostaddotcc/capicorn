@@ -159,9 +159,10 @@ caret render variance (real regressions still fail).
 Filename token expansion ({date}/{time}/{datetime}), Save As (Ctrl+Shift+S,
 doc.save_as), default save dir (HOME/Pictures/SnagCraft + Change/Reset), and
 the Recent strip (newest-first cap 12, in-session + folder scan, click-to-open,
-toggle chip + count + Hide). Recording thumbnails use a film-icon placeholder
-(real video first-frame thumb deferred). Still pending: separate recording
-folder, New-canvas presets, Resize dialog, settings filename live-preview.
+toggle chip + count + Hide). **W28 update: the deferred video first-frame thumb
+is now done** (ffmpeg off-thread, newest 8). The former "still pending" list is
+also closed: separate recording folder + settings filename live-preview (W11),
+New-canvas presets (W10/W23) and Resize dialog (W10).
 
 ### B4 — The nine reverted parity rows
 
@@ -189,16 +190,17 @@ folder, New-canvas presets, Resize dialog, settings filename live-preview.
 
 At W4 close, nine checklist rows were **bulk-ticked and then reverted** after
 audit because the code did not back them (see
-`docs/plans/rust-rebuild-parity.md`). They remain pending:
+`docs/plans/rust-rebuild-parity.md`). **All nine are now closed** (W7/W8/W15);
+the table records the closing wave:
 
 | # | Row | What exists now | What is missing |
 |---|-----|-----------------|-----------------|
 | 1 | OCR language select (UI) | **CLOSED W7**: ComboBox from `ocr.languages`, persisted `ocr_lang` | — |
 | 2 | OCR busy modal | **CLOSED W7**: off-thread worker, spinner + disabled Extract, cleared on result/error/dead worker | — |
 | 3 | Timelapse video assembly (`make_timelapse`) | **CLOSED W7**: `timelapse.assemble` ffmpeg glob → h264 mp4 (ffprobe: 34×22 yuv420p, 5 frames). **W15**: the live app has no "Make video" button — it auto-assembles on stop (`app.ts:3019-3047`); the rebuild now does the same (off-thread encode, 10 fps, live status wording, recent-rail pickup) | — |
-| 4 | `Ctrl+.` stop hotkey | stop via HUD button / `record.stop` | the live app's `Ctrl+.` global-ish stop shortcut |
-| 5 | Shrunk countdown HUD | countdown HUD before recording starts | the shrunk/compact countdown variant |
-| 6–9 | Upload POST-to-endpoint flow | `upload.open` opens an `http(s)` URL only (scheme-guarded) | POSTing the file bytes to an endpoint via `curl` as the live app does |
+| 4 | `Ctrl+.` stop hotkey | **CLOSED W8**: `Ctrl+.` ends a running interval capture (`consume_key(CTRL, Period)`, live `app.ts:5181`) | — |
+| 5 | Shrunk countdown HUD | **CLOSED W8**: compact 3-2-1 countdown before a delayed grab (`countdown_hud`, B4#5) | — |
+| 6–9 | Upload POST-to-endpoint flow | **CLOSED W8**: `io::upload_image` POSTs the PNG as `multipart/form-data` via curl, engine `upload.send` + File→Upload, mock-server tested | — |
 
 Rows 6–9 are one feature counted as four checklist rows (endpoint config,
 request construction, response handling, error surfacing).
@@ -242,17 +244,19 @@ The WASM web build (`rust/apps/snagcraft-web`, trunk) is a working editor —
 browser-verified boot, full editor render, PNG export-download — but it is an MVP,
 not feature parity with the native app.
 
-### C1 — Web command surface is 25 of 49 commands
+### C1 — Web command surface is 25 of 51 commands
 
 > **W16 recount (2026-11-18):** the registry grew to 48 (W12–W14); the web
 > subset is 25 (counted from the `#[cfg(feature = "native")]` gates in
 > `registry()`). The old "21 of 41" figure was stale. **W20:** +scroll.cancel
-> (native-only) → 49 total, web subset unchanged at 25.
+> (native-only) → 49 total, web subset unchanged at 25. **W25:** +capture.monitors
+> + capture.monitor (both native-only) → 51 total, web subset still 25.
 
 - **What:** the web engine build (`--no-default-features --features web`)
-  registers 25 commands. Native-only (24): `capture.full`, `clipboard.copy/paste`,
-  `diagnostics.copy`, `ocr.*` (3), `record.*` (6), `scroll.*` (4), `timelapse.*` (4),
-  `upload.open/send`, `audio.sources`. `Capture`, OCR, widget and tray are hidden
+  registers 25 commands. Native-only (26): `capture.full`, `capture.monitors`,
+  `capture.monitor`, `clipboard.copy/paste`, `diagnostics.copy`, `ocr.*` (3),
+  `record.*` (6), `scroll.*` (4), `timelapse.*` (4), `upload.open/send`,
+  `audio.sources`. `Capture`, OCR, widget and tray are hidden
   in the web UI. **W16 note:** web Copy/Paste no longer need the engine's
   `clipboard.*` commands — the UI talks to the browser Clipboard API directly.
 - **Why:** those commands need Linux platform backends (portal, PipeWire,

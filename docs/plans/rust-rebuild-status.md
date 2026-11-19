@@ -1307,6 +1307,20 @@ live pass + gates (trim/relicense/cutover/external post). NO releases published.
 - **Lesson:** the per-frame pump for the VISIBLE window is `app_ui`; `logic` runs
   only while hidden. A worker polled only in `logic` never lands in normal use.
 
+### 2026-11-19 — gaps.md reconciliation (stale "pending" claims vs verified code)
+- Audited gaps.md against the code and corrected stale records (no code change):
+  - B4 table rows 4/5/6–9 still listed "what is missing" though the W7/W8/W15
+    notes said all nine closed. Verified each in code (Ctrl+. `consume_key(CTRL,
+    Period)`, `countdown_hud`, `io::upload_image` POST multipart) and marked the
+    table rows CLOSED with the closing wave.
+  - W9 "still pending" list (separate recording folder, New-canvas presets, Resize
+    dialog, filename live-preview, video thumb) — all done W10/W11/W23/W28; updated.
+  - C1 web command count "25 of 49" → **25 of 51** (W25 added capture.monitors +
+    capture.monitor, both native-only). Verified by counting the registry: 51
+    CommandSpec, 26 native-gated, 25 web. Native-only list 24 → 26.
+- The honest record now matches the code: the only open items are the rostad gates
+  (A1 KDE live pass, A2 Trim, A3 relicense, A4 cutover) + inherent web MVP limits.
+
 ## Appendix — measured reality
 
 | Claim | Measured | What changed |

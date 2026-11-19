@@ -1252,6 +1252,22 @@ live pass + gates (trim/relicense/cutover/external post). NO releases published.
   current code before trusting a vision "defect". And the parity doc can overclaim
   (said pills, code had a slider); verify code against the claim, not just the doc.
 
+### 2026-11-19 — CI: root-caused the recurring apt hang (dead regional mirror)
+- The intermittent gates/appimage red runs (incl. the bbac24e release commit) were
+  NOT code: the runner's regional cloud mirror `*.ec2.archive.ubuntu.com` was
+  unreachable and apt hung retrying it for package lists until the 10-min step
+  timeout. The `archive.ubuntu.com` fallback worked for InRelease but apt kept
+  hitting the dead EC2 mirror for Packages.
+- Fix (commit f2f82f3): rewrite the cloud-mirror URIs to `https://archive.ubuntu.com`
+  in `/etc/apt/sources.list.d/ubuntu.sources` + `sources.list` before `apt-get
+  update`, in all three apt steps (gates, appimage, rust-release). Kept Acquire
+  retries + step timeouts as a backstop.
+- Verified: run 44504960038 fully GREEN — gates + windows + appimage all success;
+  the apt step completed in ~4 min (normal, no hang).
+- **Lesson:** a timed-out apt step on a GitHub ubuntu runner is usually the regional
+  cloud mirror, not a dpkg lock — read the apt log (Ign: lines on the dead mirror),
+  then force the canonical archive mirror.
+
 ## Appendix — measured reality
 
 | Claim | Measured | What changed |

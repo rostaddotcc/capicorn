@@ -25,6 +25,9 @@ jobs:
           # The runner's regional cloud mirror (*.ec2/azure.archive.ubuntu.com) is
           # intermittently unreachable and hangs apt for minutes (it keeps retrying
           # the dead mirror for package lists). Force the canonical archive mirror.
+          # Newer ubuntu-24.04 runner images select mirrors via apt-mirrors.txt
+          # (mirrorlist) — rewrite that file too, or the seds below are no-ops.
+          sudo sed -i -E 's|https?://[a-z0-9.-]*\.(ec2|azure)\.archive\.ubuntu\.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' /etc/apt/apt-mirrors.txt 2>/dev/null || true
           sudo sed -i -E 's|https?://[a-z0-9.-]*\.(ec2|azure)\.archive\.ubuntu\.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' /etc/apt/sources.list.d/ubuntu.sources 2>/dev/null || true
           sudo sed -i -E 's|https?://[a-z0-9.-]*\.(ec2|azure)\.archive\.ubuntu\.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' /etc/apt/sources.list 2>/dev/null || true
           sudo apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=30

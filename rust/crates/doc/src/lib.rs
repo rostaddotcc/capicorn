@@ -380,6 +380,12 @@ impl Document {
         Self::new(snagcraft_raster::filled(size, Rgba::WHITE))
     }
 
+    /// W23: a blank canvas with a fully transparent base (the live New-canvas
+    /// dialog's white/transparent choice, `blankCanvasDataUrl`).
+    pub fn transparent(size: Size) -> Self {
+        Self::new(snagcraft_raster::filled(size, Rgba::TRANSPARENT))
+    }
+
     /// Assigns a fresh id, appends, returns the id. Sanitizes hostile geometry first.
     pub fn add(&mut self, mut obj: AnnotObject) -> ObjId {
         obj.sanitize();

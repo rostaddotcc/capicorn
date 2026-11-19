@@ -77,9 +77,19 @@ fn ctrl_n_and_file_menu_open_the_dialog_and_a_preset_creates_its_canvas() {
             "preset {name} is offered"
         );
     }
+    // W23: presets are radios — clicking fills the size fields, Create applies
+    // (the live newPresetsEl click handler + syncNewSelection).
     // HD, not QHD: the kittest renderer caps texture sides at 2048 px, so a
     // bigger canvas would fail on the harness's texture upload, not our code.
-    h.get_by_label_contains("HD  1280").click();
+    h.get_by_label_contains("HD 1280").click();
+    h.run_steps(2);
+    assert!(
+        h.state().new_canvas_open,
+        "a preset fills the fields; the dialog stays up"
+    );
+    assert_eq!(h.state().new_canvas_w, 1280.0);
+    assert_eq!(h.state().new_canvas_h, 720.0);
+    h.get_by_label("Create").click();
     h.run_steps(2);
     assert_eq!(doc_size(&h), Some((1280, 720)), "HD created its canvas");
     assert!(!h.state().new_canvas_open, "creating closes the dialog");
@@ -110,7 +120,7 @@ fn custom_width_and_height_create_that_canvas() {
     assert!(!h.state().doc_dirty, "a fresh canvas starts clean");
 
     // Hostile values are clamped to the live 16..=8192 window, not passed on.
-    h.state_mut().create_new_canvas(1.0, 99_999.0);
+    h.state_mut().create_new_canvas(1.0, 99_999.0, "white");
     assert_eq!(doc_size(&h), Some((16, 8192)));
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -137,7 +147,10 @@ fn a_dirty_document_is_saved_before_the_new_canvas_replaces_it() {
     }
     h.state_mut().open_new_canvas();
     h.run_steps(2);
+    // W23: preset fills the fields, Create applies (radio semantics).
     h.get_by_label_contains("Small").click();
+    h.run_steps(2);
+    h.get_by_label("Create").click();
     h.run_steps(2);
     assert_eq!(doc_size(&h), Some((800, 600)), "Small preset applied");
     assert!(!h.state().doc_dirty, "the replace leaves a clean document");

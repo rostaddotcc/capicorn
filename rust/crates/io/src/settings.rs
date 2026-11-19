@@ -87,6 +87,11 @@ pub struct Settings {
     pub split_folders: bool,
     /// Recording folder override (`None` = follow [`Settings::save_dir`]). W11.
     pub recording_dir: Option<String>,
+    /// W23: the New-canvas dialog remembers the last size/background (the live
+    /// `snagcraft.newCanvas` localStorage prefs). 16..=8192, white|transparent.
+    pub new_canvas_w: u32,
+    pub new_canvas_h: u32,
+    pub new_canvas_bg: String,
 }
 
 impl Default for Settings {
@@ -116,6 +121,9 @@ impl Default for Settings {
             recording_format: "mp4".to_string(),
             split_folders: false,
             recording_dir: None,
+            new_canvas_w: 1280,
+            new_canvas_h: 800,
+            new_canvas_bg: "white".to_string(),
         }
     }
 }
@@ -148,6 +156,13 @@ impl Settings {
             return Err(IoError::Unsupported);
         }
         if !(1..=3_600).contains(&self.interval_secs) {
+            return Err(IoError::Unsupported);
+        }
+        // W23: New-canvas prefs — the live clampDim range and bg whitelist.
+        if !(16..=8_192).contains(&self.new_canvas_w)
+            || !(16..=8_192).contains(&self.new_canvas_h)
+            || !matches!(self.new_canvas_bg.as_str(), "white" | "transparent")
+        {
             return Err(IoError::Unsupported);
         }
         if !is_supported_recording_format(&self.recording_format) {
@@ -323,6 +338,9 @@ mod tests {
             recording_format: "gif".to_string(),
             split_folders: true,
             recording_dir: Some("/tmp/rec".to_string()),
+            new_canvas_w: 1920,
+            new_canvas_h: 1080,
+            new_canvas_bg: "transparent".to_string(),
         }
     }
 

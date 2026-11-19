@@ -1054,6 +1054,36 @@ live pass + gates (trim/relicense/cutover/external post). NO releases published.
   rust/dist/w22/, CLI smoke 49 commands. Delivered to rostad.
 - Awaiting rostad unchanged: KDE live pass, trim decision, relicense, cutover.
 
+### 2026-11-19 — wake #112: W23 New-canvas dialog — the transparent overclaim
+- Fresh re-check: tree clean at 397945d, suite green (527/0/11 serial). Design
+  pass on the dialogs/menus. Vision flagged the New-canvas preset grid; the
+  code audit against the live design (style.css:4661-4706, app.ts:4979-5080)
+  found a REAL functional overclaim: parity row 94 said "white or transparent"
+  (ticked W10) but `doc.new` was white-ONLY — no transparent option existed.
+- **Fixes (all live-anchored):**
+  1. **Transparent background**: `Document::transparent`, `doc.new {bg}`
+     (white default, unknown values fall back to white — never a transparent
+     surprise), dialog White/Transparent selectable pair.
+  2. **Radio preset semantics** (live newPresetsEl click + syncNewSelection):
+     clicking a preset FILLS the W/H fields (no immediate create); the card
+     matching the current fields gets the accent ring; Create applies.
+  3. **Vertical preset cards** (live .new-preset): name 12.5 strong over dims
+     11 muted, two equal columns, 8px gaps, hover/active states.
+  4. **Remembered size/bg** (live readNewPrefs localStorage): three new
+     persisted settings (new_canvas_w/h/bg, validated 16..=8192 + bg
+     whitelist); the dialog reopen prefills from them.
+  5. Create is the accent-filled primary, right-aligned (live btn-primary).
+- **Gates:** 5 UI (tests/w23_new_canvas.rs: transparent alpha-0 base, white
+  default + hostile-bg fallback, remembered prefs round trip + reopen prefill,
+  preset highlight snapshots ×2, Transparent-through-dialog flow) + 1 engine
+  (doc.new bg matrix). w10 tests updated to the radio flow; w10_new_canvas +
+  w23 snapshots vision-verified. io settings custom() fixture gained the fields.
+- Parent-verified: workspace **533 passed / 0 failed / 11 ignored** (serial),
+  clippy/fmt clean incl. wasm target, layers legal, xtask wasm 10/10.
+- Docs: parity row 94 → W10 + W23 (overclaim noted), summary prose updated
+  (159 rows unchanged, 1 pending = Trim).
+- Awaiting rostad unchanged: KDE live pass, trim decision, relicense, cutover.
+
 ## Appendix — measured reality
 
 | Claim | Measured | What changed |

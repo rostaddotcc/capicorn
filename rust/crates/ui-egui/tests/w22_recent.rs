@@ -115,7 +115,7 @@ fn opening_a_tile_marks_it_active_and_new_canvas_clears_it() {
     h.snapshot("w22_recent_active");
 
     // A blank canvas is not a recent capture — the highlight clears.
-    h.state_mut().create_new_canvas(200.0, 150.0);
+    h.state_mut().create_new_canvas(200.0, 150.0, "white");
     h.run_steps(2);
     assert!(h.state().recent_active.is_none());
     let _ = std::fs::remove_dir_all(&dir);

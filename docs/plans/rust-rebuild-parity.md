@@ -91,7 +91,7 @@ Effects are applied to the **image layer at export resolution** (scene px × exp
 | **Copy to clipboard as PNG** (`Ctrl+C`) | `app.ts:4422-4432`, `copy_png` `commands.rs:299-303`, `clipboard.rs:6` | W2 |
 | **Paste** an image from the clipboard into the editor (`Ctrl+V`, `paste` event, first `image/*` item) | `app.ts:5081-5094` | W2 |
 | **Watermark on export** — text, opacity 2–100 (default 45 %), corner bottom-right/bottom-left/top-right/top-left | `watermark.ts:13-49` (`DEFAULT_WATERMARK` :28-33 = opacity 0.45, bottom-right), draw :62-90 (Inter 600), UI `settings.ts:972-984` | W4 |
-| **New blank canvas** (`Ctrl+N`) — 8 presets (Default 1280×800, HD, Full HD, QHD, 4K UHD, Square 1080², Story 1080×1920, Small 800×600), white or transparent, dims clamped 16–8192 | `app.ts:4939-4975` (`NEW_PRESETS` :4941-4950, `clampDim` :4952, `blankCanvasDataUrl` :4956-4969, `newCanvas` :4962) | W10 |
+| **New blank canvas** (`Ctrl+N`) — 8 presets (Default 1280×800, HD, Full HD, QHD, 4K UHD, Square 1080², Story 1080×1920, Small 800×600) as radio cards (click fills the fields, matching card highlights), white or transparent background, dims clamped 16–8192, last size/bg remembered | `app.ts:4939-4975` (`NEW_PRESETS` :4941-4950, `clampDim` :4952, `blankCanvasDataUrl` :4956-4969, `newCanvas` :4962), `syncNewSelection` :5004, `readNewPrefs` :4984, `style.css:4661-4706` | W10 + W23 (the W10 tick overclaimed "white or transparent": doc.new was white-only and presets created immediately; W23 adds the bg choice, radio semantics, vertical cards, remembered prefs) |
 | **Resize** the canvas (dialog opened from the toolbar, closes on Esc) | `openResize` `app.ts:3622`, popover `:5118-5121` | W10 |
 | **Recent strip** — newest-first, in-session cap `RECENT_LIMIT = 12`, plus a folder scan of the save (and recording) folder with thumbnails; clicking reads from disk, recordings open in the OS player | `app.ts:672` (`RECENT_LIMIT`), `refreshRecentFromFolder` `:3946-3980`, `list_folder_media` `commands.rs:386-429`, `open_path` `commands.rs:503-532` | W9 |
 | **Recent tile = live vertical film-item** — thumbnail on top, format badge + time caption below, accent ring on the loaded capture (`loadedRecentId`), hover lift; video/unreadable gets a painter-drawn film placeholder | `style.css:3411-3490` (`film-item`/`film-thumb`/`film-caption`/`film-badge`/`film-time`), `renderFilm` `app.ts:3909-3940` | W22 (was a horizontal image-and-text chip; badge/time/active all missing) |
@@ -300,13 +300,14 @@ Sections rendered: General, Capture, Recording audio, Global hotkeys, Save locat
 
 ---
 
-## Wave coverage at W22 (2026-11-19)
+## Wave coverage at W23 (2026-11-19)
 
 The W1-era scope note that used to sit here ("not started at all: shell, recording,
 scrolling, OCR, timelapse, upload, settings, themes, shortcuts, About") is obsolete —
-W2–W5 landed most of it, and W7–W22 closed the rest. The W6b summary that used to
+W2–W5 landed most of it, and W7–W23 closed the rest. The W6b summary that used to
 sit here (45 `pending`) was stale: those rows were closed by W7–W14 but the table
-was never recounted. Current state of the checklist (recounted row-by-row at W22):
+was never recounted. Current state of the checklist (recounted row-by-row at W22,
+W23 extended existing rows without adding new ones):
 
 | Status | Rows |
 |--------|------|
@@ -322,7 +323,7 @@ was never recounted. Current state of the checklist (recounted row-by-row at W22
 | `W7` (incl. `W7 + W21`) | 3 |
 | `W20` | 3 |
 | `W1` | 2 |
-| `W10` | 2 |
+| `W10` (incl. `W10 + W23`) | 2 |
 | `W15` | 1 |
 | `W19` | 1 |
 | `W22` | 1 |
@@ -366,6 +367,10 @@ their subprocesses WITHOUT the session lock (the toolbar locks it every frame).
 format badge + time caption, accent ring on the loaded capture, hover lift) — the
 rebuild had a horizontal chip with none of that — and replaced the ▶ video
 placeholder with a painter-drawn film icon (the bundled fonts have no ▶ glyph).**
+**W23 finished the New-canvas dialog against the live design: the white/transparent
+background choice (the W10 tick overclaimed it — doc.new was white-only), radio
+preset cards that fill the fields and highlight the match, and remembered size/bg
+(the live localStorage prefs, now persisted settings).**
 
 The single `pending` row is **Trim** — deliberately out of parity (the live v1.5.3
 has no trim) and gated on rostad's build-or-drop decision (`docs/gaps.md` A2).
@@ -375,4 +380,4 @@ are rostad gates (A1–A4), web-MVP limits (C1–C3) and future platform ports (
 **Coverage:** 159 rows across 14 sections. Every TS line number came from a grep/read
 against commit `3cec2ee` (baseline v1.5.3) during W1; the only exceptions are the two
 `CHANGELOG.md` citations, marked as such. Rust statuses were re-audited at W6b as
-described at the top of this file, recounted at W15, and flow-audited at W18–W22.
+described at the top of this file, recounted at W15, and flow-audited at W18–W23.

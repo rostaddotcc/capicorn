@@ -440,7 +440,14 @@ fn cmd_doc_new(s: &mut Session, p: Value) -> Result<Value, CommandError> {
     {
         return Err(CommandError::InvalidParams("size out of range".into()));
     }
-    s.replace_doc(Document::white(Size::new(w as u32, h as u32)));
+    // W23: the live dialog's white/transparent choice (default white).
+    let transparent = p.get("bg").and_then(Value::as_str) == Some("transparent");
+    let size = Size::new(w as u32, h as u32);
+    s.replace_doc(if transparent {
+        Document::transparent(size)
+    } else {
+        Document::white(size)
+    });
     Ok(json!({"width": w as u32, "height": h as u32}))
 }
 
@@ -1490,8 +1497,8 @@ pub fn registry() -> Vec<CommandSpec> {
         },
         CommandSpec {
             id: "doc.new",
-            label: "New white canvas",
-            params_doc: "{w, h}",
+            label: "New blank canvas",
+            params_doc: "{w, h, bg?} — bg \"white\" (default) or \"transparent\"",
             run: cmd_doc_new,
         },
         CommandSpec {
@@ -2046,6 +2053,36 @@ mod tests {
         assert_ne!(second, saved, "same-second saves must not overwrite");
         assert!(std::path::Path::new(&second).is_file());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// W23: `doc.new` honors the live white/transparent background choice.
+    #[test]
+    fn doc_new_background_white_or_transparent() {
+        let mut s = Session::new();
+        s.dispatch("doc.new", json!({"w": 8, "h": 8})).unwrap();
+        assert_eq!(
+            s.doc().unwrap().base.get_pixel(0, 0).0[3],
+            255,
+            "default white"
+        );
+        s.dispatch("doc.new", json!({"w": 8, "h": 8, "bg": "transparent"}))
+            .unwrap();
+        assert_eq!(s.doc().unwrap().base.get_pixel(0, 0).0[3], 0, "transparent");
+        s.dispatch("doc.new", json!({"w": 8, "h": 8, "bg": "white"}))
+            .unwrap();
+        assert_eq!(
+            s.doc().unwrap().base.get_pixel(0, 0).0[3],
+            255,
+            "explicit white"
+        );
+        // Unknown bg falls back to white, never a transparent surprise.
+        s.dispatch("doc.new", json!({"w": 8, "h": 8, "bg": "bogus"}))
+            .unwrap();
+        assert_eq!(
+            s.doc().unwrap().base.get_pixel(0, 0).0[3],
+            255,
+            "fallback white"
+        );
     }
 
     /// W19: the Save suffix lands before the extension, and a hostile suffix

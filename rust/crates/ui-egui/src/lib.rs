@@ -179,6 +179,10 @@ pub struct SettingsView {
     pub split_folders: bool,
     /// Recording folder override (`None` = follow `save_dir`). W11.
     pub recording_dir: Option<String>,
+    /// W23: New-canvas dialog's remembered size/background (live prefs).
+    pub new_canvas_w: u32,
+    pub new_canvas_h: u32,
+    pub new_canvas_bg: String,
 }
 
 impl Default for SettingsView {
@@ -208,6 +212,9 @@ impl Default for SettingsView {
             recording_format: "mp4".to_string(),
             split_folders: false,
             recording_dir: None,
+            new_canvas_w: 1280,
+            new_canvas_h: 800,
+            new_canvas_bg: "white".to_string(),
         }
     }
 }
@@ -299,6 +306,22 @@ impl SettingsView {
                 .and_then(|x| x.as_str())
                 .map(str::to_string)
                 .filter(|dir| !dir.trim().is_empty()),
+            new_canvas_w: v
+                .get("new_canvas_w")
+                .and_then(|x| x.as_u64())
+                .filter(|n| (16..=8_192).contains(n))
+                .map(|n| n as u32)
+                .unwrap_or(d.new_canvas_w),
+            new_canvas_h: v
+                .get("new_canvas_h")
+                .and_then(|x| x.as_u64())
+                .filter(|n| (16..=8_192).contains(n))
+                .map(|n| n as u32)
+                .unwrap_or(d.new_canvas_h),
+            new_canvas_bg: match v.get("new_canvas_bg").and_then(|x| x.as_str()) {
+                Some(bg @ ("white" | "transparent")) => bg.to_string(),
+                _ => d.new_canvas_bg,
+            },
         }
     }
 
@@ -329,6 +352,9 @@ impl SettingsView {
             "recording_format": self.recording_format,
             "split_folders": self.split_folders,
             "recording_dir": self.recording_dir,
+            "new_canvas_w": self.new_canvas_w,
+            "new_canvas_h": self.new_canvas_h,
+            "new_canvas_bg": self.new_canvas_bg,
         })
     }
 }
@@ -942,6 +968,8 @@ pub struct SnagCraftApp {
     pub new_canvas_open: bool,
     pub new_canvas_w: f32,
     pub new_canvas_h: f32,
+    /// W23: the dialog's background choice — "white" | "transparent".
+    pub new_canvas_bg: String,
     /// Resize dialog (toolbar Resize…): prefilled with the current canvas.
     pub resize_open: bool,
     pub resize_w: f32,
@@ -1123,6 +1151,7 @@ impl SnagCraftApp {
             new_canvas_open: false,
             new_canvas_w: 1280.0,
             new_canvas_h: 800.0,
+            new_canvas_bg: "white".to_string(),
             resize_open: false,
             resize_w: 0.0,
             resize_h: 0.0,
@@ -3368,22 +3397,37 @@ impl SnagCraftApp {
         if self.new_canvas_open {
             return;
         }
-        self.new_canvas_w = 1280.0;
-        self.new_canvas_h = 800.0;
+        // W23: the live dialog reopens with the last-used size/background
+        // (readNewPrefs); the rebuild keeps them in the persisted settings.
+        self.new_canvas_w = self.settings.new_canvas_w as f32;
+        self.new_canvas_h = self.settings.new_canvas_h as f32;
+        self.new_canvas_bg = self.settings.new_canvas_bg.clone();
         self.new_canvas_open = true;
     }
 
-    /// Replace the document with a blank white canvas. Mirrors the live
+    /// Replace the document with a blank canvas. Mirrors the live
     /// `newCanvas()`: a dirty document is saved into the save folder first
     /// (no prompt, no work lost), then `doc.new` swaps in the blank canvas.
-    pub fn create_new_canvas(&mut self, w: f32, h: f32) {
+    /// W23: `bg` is "white" or "transparent"; the choice is remembered.
+    pub fn create_new_canvas(&mut self, w: f32, h: f32, bg: &str) {
         let w = clamp_canvas_dim(w);
         let h = clamp_canvas_dim(h);
+        let bg = if bg == "transparent" {
+            "transparent"
+        } else {
+            "white"
+        };
         #[cfg(feature = "native")]
         if self.doc_dirty {
             self.save_now();
         }
-        match self.exec("doc.new", serde_json::json!({"w": w, "h": h})) {
+        // W23: remember the size/background like the live localStorage prefs.
+        let mut next = self.settings.clone();
+        next.new_canvas_w = w as u32;
+        next.new_canvas_h = h as u32;
+        next.new_canvas_bg = bg.to_string();
+        self.push_settings(next);
+        match self.exec("doc.new", serde_json::json!({"w": w, "h": h, "bg": bg})) {
             Ok(_) => {
                 self.doc_dirty = false;
                 self.selected = None;
@@ -3578,33 +3622,75 @@ impl SnagCraftApp {
             .default_width(400.0)
             .show(ctx, |ui| {
                 ui.label(
-                    egui::RichText::new("A blank white canvas — pick a size, or type your own.")
+                    egui::RichText::new("A blank canvas — pick a size, or type your own.")
                         .size(11.5)
                         .weak(),
                 );
-                ui.add_space(4.0);
+                ui.add_space(6.0);
+                // W23: the live preset grid (style.css:4661) — two equal
+                // columns of vertical cards (name over dims), radio semantics:
+                // clicking fills the size fields, the matching card lights up.
                 egui::Grid::new("new-canvas-presets")
                     .num_columns(2)
-                    .spacing([6.0, 6.0])
+                    .spacing([8.0, 8.0])
                     .show(ui, |ui| {
                         for (i, (name, w, h)) in NEW_CANVAS_PRESETS.iter().enumerate() {
-                            let label = format!("{name}  {w} × {h}");
-                            if ui
-                                .add_sized(
-                                    vec2(188.0, 26.0),
-                                    egui::Button::new(egui::RichText::new(label).size(12.0)),
+                            let active =
+                                self.new_canvas_w == *w as f32 && self.new_canvas_h == *h as f32;
+                            let (rect, resp) =
+                                ui.allocate_exact_size(vec2(186.0, 44.0), egui::Sense::click());
+                            let accent = pal_accent(ui);
+                            let fill = if active {
+                                accent.linear_multiply(0.14)
+                            } else if resp.hovered() {
+                                pal_hover(ui)
+                            } else {
+                                ui.visuals().faint_bg_color
+                            };
+                            let border = if active || resp.hovered() {
+                                accent
+                            } else {
+                                pal_border(ui)
+                            };
+                            ui.painter().rect_filled(rect, CornerRadius::same(6), fill);
+                            ui.painter().rect_stroke(
+                                rect,
+                                CornerRadius::same(6),
+                                Stroke::new(1.0, border),
+                                StrokeKind::Inside,
+                            );
+                            ui.painter().text(
+                                pos2(rect.left() + 10.0, rect.top() + 7.0),
+                                egui::Align2::LEFT_TOP,
+                                *name,
+                                egui::FontId::proportional(12.5),
+                                if active { accent } else { pal_fg(ui) },
+                            );
+                            ui.painter().text(
+                                pos2(rect.left() + 10.0, rect.top() + 24.0),
+                                egui::Align2::LEFT_TOP,
+                                format!("{w} × {h}"),
+                                egui::FontId::proportional(11.0),
+                                pal_muted(ui),
+                            );
+                            resp.widget_info(|| {
+                                egui::WidgetInfo::labeled(
+                                    egui::Role::RadioButton,
+                                    active,
+                                    format!("{name} {w} × {h}"),
                                 )
-                                .on_hover_text("Create this canvas now")
-                                .clicked()
-                            {
-                                create = Some((*w as f32, *h as f32));
+                            });
+                            let resp = resp.on_hover_text("Fill in this size");
+                            if resp.clicked() {
+                                self.new_canvas_w = *w as f32;
+                                self.new_canvas_h = *h as f32;
                             }
                             if i % 2 == 1 {
                                 ui.end_row();
                             }
                         }
                     });
-                ui.add_space(6.0);
+                ui.add_space(8.0);
                 ui.horizontal(|ui| {
                     ui.label("Width");
                     ui.add(
@@ -3614,6 +3700,7 @@ impl SnagCraftApp {
                             .max_decimals(0)
                             .suffix(" px"),
                     );
+                    ui.add_space(8.0);
                     ui.label("Height");
                     ui.add(
                         egui::DragValue::new(&mut self.new_canvas_h)
@@ -3624,8 +3711,26 @@ impl SnagCraftApp {
                     );
                 });
                 ui.add_space(6.0);
+                // W23: the live white/transparent background choice.
                 ui.horizontal(|ui| {
-                    if ui.button("Create").clicked() {
+                    ui.label("Background");
+                    ui.selectable_value(&mut self.new_canvas_bg, "white".to_string(), "White");
+                    ui.selectable_value(
+                        &mut self.new_canvas_bg,
+                        "transparent".to_string(),
+                        "Transparent",
+                    );
+                });
+                ui.add_space(8.0);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    // W23: Create is the primary action (live btn-primary).
+                    if ui
+                        .add(
+                            egui::Button::new(egui::RichText::new("Create").color(Color32::WHITE))
+                                .fill(pal_accent(ui)),
+                        )
+                        .clicked()
+                    {
                         create = Some((self.new_canvas_w, self.new_canvas_h));
                     }
                     if ui.button("Cancel").clicked() {
@@ -3634,7 +3739,8 @@ impl SnagCraftApp {
                 });
             });
         if let Some((w, h)) = create {
-            self.create_new_canvas(w, h);
+            let bg = self.new_canvas_bg.clone();
+            self.create_new_canvas(w, h, &bg);
         } else if cancel || !open {
             self.new_canvas_open = false;
         }

@@ -1231,6 +1231,27 @@ live pass + gates (trim/relicense/cutover/external post). NO releases published.
   `allocate_ui_with_layout`, never a bare `with_layout(right_to_left)` (it stretches
   the window). Nested-in-horizontal uses are safe.
 
+### 2026-11-19 — W27: Settings Capture delay = live pill group + Capture section
+- Fresh vision audit of Settings (triaged against the live authority, not blind
+  fixes): the "clipped bottom row / no scrollbar" flag was a STALE w3 snapshot —
+  the code already has `.vscroll(true)` + AlwaysVisible (W11/W17). "Recording format
+  under Export" matches the live app (false flag). The REAL gap: the parity doc
+  claimed "capture delay pills" + a Capture section (W3/W4) but the rebuild had a
+  continuous 0..10 slider merged into General.
+- Fixed to match live: a dedicated **Capture** section (delay + interval + the live
+  help line) and `TIMER_CHOICES [0,3,5,10]` as **uniform segmented pills** (Off / 3 s
+  / 5 s / 10 s). selectable_value alone left unselected options as bare text, so each
+  pill is a Button with a neutral container (accent fill when selected).
+- 3 new gates (tests/w27_capture_delay.rs): pills render, a pick persists through
+  `settings.set`, the Capture section groups delay+interval. ("Capture" alone is an
+  ambiguous label — also the toolbar menu — so the section gate keys on the unique
+  help line.) Settings snapshots re-blessed + vision-verified uniform pills.
+- 545/0/11 twice serial, clippy/fmt clean. Commit 30cb150. AppImage 14.01 MB
+  launch-tested (dist/w27/). Parity rows corrected (W3/W4 + W27).
+- **Lesson:** audit snapshots can be STALE (predate later fixes) — re-render with
+  current code before trusting a vision "defect". And the parity doc can overclaim
+  (said pills, code had a slider); verify code against the claim, not just the doc.
+
 ## Appendix — measured reality
 
 | Claim | Measured | What changed |

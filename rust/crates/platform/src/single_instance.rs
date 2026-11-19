@@ -204,7 +204,7 @@ fn handle_connection(stream: std::os::unix::net::UnixStream, tx: &Sender<Vec<Str
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
     use std::io::Write;

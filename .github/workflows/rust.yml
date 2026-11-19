@@ -44,6 +44,7 @@ jobs:
   appimage:
     needs: gates
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
       - name: System dependencies (PipeWire bindgen)
@@ -70,3 +71,25 @@ jobs:
         with:
           name: snagcraft-rust-appimage
           path: rust/dist/*.AppImage
+
+  # W25e: real Windows verification (issue #1). Proves the whole app compiles for
+  # Windows and the cross-platform logic crates pass their tests on a Windows
+  # runner. The egui/kittest UI suite is GPU/display-dependent and stays gated on
+  # Linux (the `gates` job); here we exclude it. No system deps needed: ashpd/
+  # PipeWire/hotkeys are cfg(linux), xcap uses the pure-Rust `windows` crate.
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      - name: Build (whole app compiles for Windows)
+        run: cargo build --workspace
+      - name: Logic tests (UI kittest is Linux-gated; no GPU needed here)
+        run: cargo test --workspace --exclude snagcraft-ui-egui

@@ -374,6 +374,7 @@ fn screenshot_without_a_document_errors_cleanly() {
 }
 
 #[test]
+#[cfg(unix)]
 fn token_file_round_trip_is_0600_and_repairs_mode() {
     use std::os::unix::fs::PermissionsExt;
 

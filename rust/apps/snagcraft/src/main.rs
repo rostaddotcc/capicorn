@@ -253,13 +253,18 @@ mod tests {
         let path = token_path("reuse");
         let first = control_token(&path).expect("mint a token");
         assert!(snagcraft_automation::is_valid_token(&first));
-        use std::os::unix::fs::PermissionsExt as _;
-        let mode = std::fs::metadata(&path)
-            .expect("stat token")
-            .permissions()
-            .mode()
-            & 0o777;
-        assert_eq!(mode, 0o600, "token file must be private");
+        // The 0600 privacy guarantee is a Unix mode-bit concept; on Windows the
+        // token lives in user-scoped app data (ACL-protected) instead.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            let mode = std::fs::metadata(&path)
+                .expect("stat token")
+                .permissions()
+                .mode()
+                & 0o777;
+            assert_eq!(mode, 0o600, "token file must be private");
+        }
         // A second launch keeps the token: a client's stored copy stays valid.
         assert_eq!(control_token(&path).expect("reuse the token"), first);
     }

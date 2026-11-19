@@ -57,12 +57,26 @@ MISSING for issue #1 is monitor choice, not a from-scratch port.
 - kittest gates: picker lists seeded MonitorInfo, click → capture.monitor dispatch,
   Esc closes. Snapshot + vision.
 
-### W25e — verification + CI
-- `cargo check`/`clippy` for the Windows target stays clean (add to xtask or CI).
-- GitHub Actions `windows-latest`: build + `cargo test` (headless logic) + a capture
-  smoke if a virtual display is available. Live interactive Windows pass = rostad
-  (or a CI artifact he runs) — pn53 cannot run Windows.
-- Linux suite stays green throughout (no regression to the portal path).
+### W25e — verification + CI (DONE 2026-11-19)
+- GitHub Actions `windows-latest` job added (rust.yml `windows`): `cargo build
+  --workspace` (whole app compiles for Windows) + `cargo test --workspace
+  --exclude snagcraft-ui-egui --no-fail-fast` (headless logic crates; the
+  GPU/display-dependent kittest UI suite stays Linux-gated). **GREEN** on run
+  44487918920 (commit bed5487): build success + all logic tests pass on a real
+  Windows runner.
+- Cross-platform test gating to get there: `cargo check --workspace --tests
+  --target x86_64-pc-windows-msvc` (catches test-COMPILE issues plain check
+  misses). cfg(unix): 0600 token-mode asserts, Unix-socket single_instance tests,
+  file_uri percent-decode tests, XDG autostart test. Self-skip when tool absent:
+  io OCR x4 + recording ffmpeg (no tesseract/ffmpeg on the Windows runner).
+  Runtime fixes: timelapse "impossible folder" uses a dir under a regular temp
+  file (not /proc); recording a_sane_config uses the real temp dir (validate
+  checks parent-is-dir). engine ocr.available asserts a bool, not a host value.
+- CI hardening: timeout-minutes on gates/appimage/windows jobs + step-level apt
+  timeouts + Acquire::Retries (an apt-get install hung 30min+ on a runner).
+- Linux suite stays green throughout (542/0/11, no portal-path regression).
+- Live interactive Windows multi-monitor pass = rostad (or a CI artifact he runs)
+  — pn53 cannot run Windows. Compile + logic tests are the offline evidence.
 
 ## Verification limits (honest)
 

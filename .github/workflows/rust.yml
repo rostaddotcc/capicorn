@@ -13,15 +13,17 @@ on:
 jobs:
   gates:
     runs-on: ubuntu-24.04
+    timeout-minutes: 25
     defaults:
       run:
         working-directory: rust
     steps:
       - uses: actions/checkout@v5
       - name: System dependencies (PipeWire bindgen, OCR/ffmpeg tests, software Vulkan for kittest)
+        timeout-minutes: 10
         run: |
-          sudo apt-get update
-          sudo apt-get install -y libpipewire-0.3-dev libspa-0.2-dev clang tesseract-ocr ffmpeg libvulkan1 mesa-vulkan-drivers
+          sudo apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=30
+          sudo apt-get install -y --no-install-recommends -o Acquire::Retries=3 -o Acquire::http::Timeout=30 libpipewire-0.3-dev libspa-0.2-dev clang tesseract-ocr ffmpeg libvulkan1 mesa-vulkan-drivers
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -48,9 +50,10 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - name: System dependencies (PipeWire bindgen)
+        timeout-minutes: 10
         run: |
-          sudo apt-get update
-          sudo apt-get install -y libpipewire-0.3-dev libspa-0.2-dev clang
+          sudo apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=30
+          sudo apt-get install -y --no-install-recommends -o Acquire::Retries=3 -o Acquire::http::Timeout=30 libpipewire-0.3-dev libspa-0.2-dev clang
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:

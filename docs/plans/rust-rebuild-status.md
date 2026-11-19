@@ -1195,6 +1195,28 @@ live pass + gates (trim/relicense/cutover/external post). NO releases published.
   only) in rust/dist/w25/, CLI smoke 51 commands incl. capture.monitors +
   capture.monitor. Delivered to rostad.
 
+### 2026-11-19 — W25e: Windows CI verification GREEN (issue #1 offline proof)
+- Added the `windows` job (windows-latest): whole-app `cargo build --workspace` +
+  `cargo test --workspace --exclude snagcraft-ui-egui --no-fail-fast`. **GREEN**
+  (run 44487918920, commit bed5487) — the app compiles for Windows and every
+  logic-crate test passes on a real Windows runner. The kittest UI suite stays
+  Linux-gated (GPU/display-dependent).
+- The first Windows run compiled but 8 tests across 4 crates carried Linux/host
+  assumptions; fixed (commits 2700126, bed5487): cfg(unix) the 0600 token-mode,
+  Unix-socket, file_uri percent-decode and XDG-autostart tests; self-skip the
+  tesseract/ffmpeg-dependent tests when the binary is absent (Windows runner has
+  neither); timelapse impossible-folder + recording sane-config use real temp
+  paths (not /proc or /tmp); engine ocr.available asserts a bool not a host value.
+  Recipe: `cargo check --workspace --tests --target x86_64-pc-windows-msvc` catches
+  test-COMPILE issues a plain check misses; runtime-only failures need CI to surface.
+- CI hardening: an apt-get install hung 30min+ on a runner (intermittent infra).
+  Added timeout-minutes to gates/appimage/windows jobs, step-level apt timeouts,
+  Acquire::Retries=3 + http Timeout, --no-install-recommends.
+- Linux suite green throughout: 542/0/11 serial, clippy/fmt clean, layers legal.
+- **Honest limit unchanged:** compile + headless logic tests are the offline
+  Windows evidence. The live interactive multi-monitor GRAB still needs a Windows
+  desktop run (rostad or a CI artifact he runs). Not claimed as "works" yet.
+
 ## Appendix — measured reality
 
 | Claim | Measured | What changed |
